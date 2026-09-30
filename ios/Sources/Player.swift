@@ -138,7 +138,7 @@ import UIKit
             var request = URLRequest(url: url)
             request.timeoutInterval = 120
             request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-            let transfer = DownloadTransfer { [weak self] progress in
+            let transfer = DownloadTransfer(identifier: "com.seph.capyflow.download.\(track.id)") { [weak self] progress in
                 Task { @MainActor in self?.downloadProgress[track.id] = progress }
             }
             let (temporary, response) = try await transfer.start(request)
@@ -251,14 +251,21 @@ private extension UIImage {
 }
 
 private final class DownloadTransfer: NSObject, URLSessionDownloadDelegate {
+    private let identifier: String
     private let progress: (Double) -> Void
     private var continuation: CheckedContinuation<(URL, URLResponse), Error>?
     private var session: URLSession?
-    init(progress: @escaping (Double) -> Void) { self.progress = progress }
+    init(identifier: String, progress: @escaping (Double) -> Void) {
+        self.identifier = identifier; self.progress = progress
+    }
     func start(_ request: URLRequest) async throws -> (URL, URLResponse) {
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
-            let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+            let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
+            configuration.sessionSendsLaunchEvents = true
+            configuration.isDiscretionary = false
+            configuration.allowsCellularAccess = true
+            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
             self.session = session
             session.downloadTask(with: request).resume()
         }

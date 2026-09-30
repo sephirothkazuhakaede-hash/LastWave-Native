@@ -168,7 +168,8 @@ private struct PlaylistLibraryView: View {
     @State private var importing = false
     @State private var playlistName = ""
     var body: some View {
-        ScrollView {
+      NavigationStack {
+       ScrollView {
             LazyVStack(spacing: 14) {
                 HStack { Text("Playlists").font(.system(size: 40, weight: .black, design: .rounded)); Spacer() }
                 HStack {
@@ -184,19 +185,63 @@ private struct PlaylistLibraryView: View {
                     }.disabled(link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || importing)
                 }.padding(16).waveGlass(radius: 22)
                 ForEach(player.playlists) { playlist in
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            VStack(alignment: .leading) { Text(playlist.name).font(.title3.bold()); Text("\(playlist.tracks.count) songs").foregroundStyle(.secondary) }
-                            Spacer()
-                            Button { Task { await player.downloadPlaylist(playlist) } } label: { Label("Download all", systemImage: "arrow.down.circle.fill") }
-                                .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
-                        }
-                        ForEach(playlist.tracks.prefix(8)) { TrackCard(track: $0) }
-                        if playlist.tracks.count > 8 { Text("+ \(playlist.tracks.count - 8) more songs").font(.caption).foregroundStyle(.secondary) }
-                    }.padding(16).waveGlass(radius: 26)
+                    NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: { PlaylistLibraryRow(playlist: playlist) }
+                        .buttonStyle(.plain)
                 }
             }.padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
         }.scrollIndicators(.hidden)
+       .toolbar(.hidden, for: .navigationBar)
+      }
+    }
+}
+
+private struct PlaylistLibraryRow: View {
+    let playlist: ImportedPlaylist
+    var body: some View {
+        HStack(spacing: 14) {
+            if let first = playlist.tracks.first { Artwork(track: first, size: 68, radius: 18) }
+            else { Image(systemName: "music.note.list").font(.title).frame(width: 68, height: 68).background(Color.waveBlue.opacity(0.18), in: RoundedRectangle(cornerRadius: 18)) }
+            VStack(alignment: .leading, spacing: 5) {
+                Text(playlist.name).font(.title3.bold()).lineLimit(1)
+                Text("\(playlist.tracks.count) songs").font(.subheadline).foregroundStyle(.secondary)
+            }
+            Spacer(); Image(systemName: "chevron.right").foregroundStyle(.secondary)
+        }.padding(12).contentShape(Rectangle()).waveGlass(radius: 24)
+    }
+}
+
+private struct PlaylistDetailView: View {
+    @EnvironmentObject var player: WavePlayer
+    @Environment(\.dismiss) private var dismiss
+    let playlistID: String
+    private var playlist: ImportedPlaylist? { player.playlists.first { $0.id == playlistID } }
+    var body: some View {
+        ZStack {
+            WaveBackdrop()
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    HStack {
+                        Button { dismiss() } label: { Image(systemName: "chevron.left").frame(width: 48, height: 48).contentShape(Rectangle()) }.waveGlass(radius: 19)
+                        Spacer()
+                    }
+                    if let playlist {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(playlist.name).font(.system(size: 38, weight: .black, design: .rounded))
+                            Text("\(playlist.tracks.count) songs").foregroundStyle(.secondary)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        HStack {
+                            Button { player.queue = Array(playlist.tracks.dropFirst()); if let first = playlist.tracks.first { Task { await player.play(first) } } } label: {
+                                Label("Play all", systemImage: "play.fill").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
+                            }.buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
+                            Button { Task { await player.downloadPlaylist(playlist) } } label: {
+                                Label("Download all", systemImage: "arrow.down.circle.fill").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
+                            }.buttonStyle(.bordered)
+                        }
+                        ForEach(playlist.tracks) { TrackCard(track: $0) }
+                    }
+                }.padding(18).padding(.bottom, 120)
+            }.scrollIndicators(.hidden)
+        }.navigationBarBackButtonHidden()
     }
 }
 
