@@ -18,6 +18,7 @@ import UIKit
     @Published var downloading: Set<String> = []
     @Published var downloadProgress: [String: Double] = [:]
     @Published var playlists: [ImportedPlaylist] = []
+    @Published var downloadingPlaylists: Set<String> = []
     let catalog = Catalog()
     private let lyricsService = LyricsService()
     private let player = AVPlayer()
@@ -128,10 +129,16 @@ import UIKit
         if queue.isEmpty { player.pause(); playing = false; return }
         await play(queue.removeFirst())
     }
-    func download(_ track: Track) async {
-        guard !downloading.contains(track.id), !downloads.contains(track) else { return }
+    func isDownloaded(_ track: Track) -> Bool { downloads.contains { $0.id == track.id } }
+    func isPlaylistDownloaded(_ playlist: ImportedPlaylist) -> Bool {
+        !playlist.tracks.isEmpty && playlist.tracks.allSatisfy { isDownloaded($0) }
+    }
+    @discardableResult func download(_ track: Track) async -> Bool {
+        if isDownloaded(track) { return true }
+        guard !downloading.contains(track.id) else { return false }
         downloading.insert(track.id)
         downloadProgress[track.id] = 0
+        error = nil
         defer { downloading.remove(track.id); downloadProgress.removeValue(forKey: track.id) }
         do {
             let url = try await catalog.stream(for: track)
@@ -152,7 +159,8 @@ import UIKit
             downloads.append(track)
             try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
             _ = try? await lyricsService.lyrics(for: track)
-        } catch { self.error = error.localizedDescription }
+            return true
+        } catch { self.error = error.localizedDescription; return false }
     }
     func importPlaylist(_ input: String) async {
         do {
@@ -178,17 +186,28 @@ import UIKit
         if let data = try? JSONEncoder().encode(playlists) { UserDefaults.standard.set(data, forKey: "importedPlaylists") }
     }
     func downloadPlaylist(_ playlist: ImportedPlaylist) async {
-        let pending = playlist.tracks.filter { !downloads.contains($0) }
-        for start in stride(from: 0, to: pending.count, by: 2) {
-            let batch = pending[start..<min(start + 2, pending.count)]
-            await withTaskGroup(of: Void.self) { group in
-                for track in batch {
-                    group.addTask { @MainActor [weak self] in
-                        guard let self else { return }
-                        await self.download(track)
-                    }
+        guard !downloadingPlaylists.contains(playlist.id) else { return }
+        downloadingPlaylists.insert(playlist.id)
+        defer { downloadingPlaylists.remove(playlist.id) }
+        var failures: [String] = []
+        for track in playlist.tracks where !isDownloaded(track) {
+            var succeeded = false
+            for attempt in 0..<3 {
+                if await download(track) {
+                    succeeded = true
+                    break
+                }
+                if attempt < 2 {
+                    let delay = UInt64(700_000_000 * (attempt + 1))
+                    try? await Task.sleep(nanoseconds: delay)
                 }
             }
+            if !succeeded { failures.append(track.title) }
+        }
+        if failures.isEmpty {
+            error = nil
+        } else {
+            error = "Couldn't download \(failures.count) song\(failures.count == 1 ? "" : "s"). Tap Download all to retry."
         }
     }
     func lyricSearch(_ query: String) async throws -> [Track] {

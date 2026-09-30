@@ -8,9 +8,9 @@ import SwiftUI
 }
 
 private enum WaveTab: String, CaseIterable {
-    case home = "Home", playlists = "Playlists", offline = "Offline", queue = "Queue"
+    case home = "Home", playlists = "Playlists"
     var icon: String {
-        switch self { case .home: "house.fill"; case .playlists: "rectangle.stack.fill"; case .offline: "arrow.down.circle.fill"; case .queue: "music.note.list" }
+        switch self { case .home: "house.fill"; case .playlists: "rectangle.stack.fill" }
     }
 }
 
@@ -28,8 +28,6 @@ struct RootView: View {
                 switch tab {
                 case .home: SearchHomeView(query: $searchQuery, results: $searchResults, searching: $searching)
                 case .playlists: PlaylistLibraryView()
-                case .offline: TrackCollectionView(title: "Offline", subtitle: "Saved on this iPhone", tracks: player.downloads, isOffline: true)
-                case .queue: TrackCollectionView(title: "Queue", subtitle: "\(player.queue.count) tracks waiting", tracks: player.queue)
                 }
             }
         }
@@ -196,6 +194,7 @@ private struct PlaylistLibraryView: View {
 }
 
 private struct PlaylistLibraryRow: View {
+    @EnvironmentObject var player: WavePlayer
     let playlist: ImportedPlaylist
     var body: some View {
         HStack(spacing: 14) {
@@ -205,7 +204,9 @@ private struct PlaylistLibraryRow: View {
                 Text(playlist.name).font(.title3.bold()).lineLimit(1)
                 Text("\(playlist.tracks.count) songs").font(.subheadline).foregroundStyle(.secondary)
             }
-            Spacer(); Image(systemName: "chevron.right").foregroundStyle(.secondary)
+            Spacer()
+            if player.isPlaylistDownloaded(playlist) { Image(systemName: "arrow.down.circle.fill").foregroundStyle(Color.waveBlue) }
+            Image(systemName: "chevron.right").foregroundStyle(.secondary)
         }.padding(12).contentShape(Rectangle()).waveGlass(radius: 24)
     }
 }
@@ -234,8 +235,8 @@ private struct PlaylistDetailView: View {
                                 Label("Play all", systemImage: "play.fill").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
                             }.buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
                             Button { Task { await player.downloadPlaylist(playlist) } } label: {
-                                Label("Download all", systemImage: "arrow.down.circle.fill").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
-                            }.buttonStyle(.bordered)
+                                Label(player.downloadingPlaylists.contains(playlist.id) ? "Downloading…" : "Download all", systemImage: "arrow.down.circle.fill").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
+                            }.buttonStyle(.bordered).disabled(player.downloadingPlaylists.contains(playlist.id))
                         }
                         ForEach(playlist.tracks) { TrackCard(track: $0) }
                     }
@@ -296,6 +297,8 @@ private struct TrackCard: View {
                     ProgressView(value: progress).tint(Color.waveBlue).frame(width: 42)
                     Text("\(Int(progress * 100))%").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
                 }
+            } else if player.isDownloaded(track) {
+                Image(systemName: "arrow.down.circle.fill").foregroundStyle(Color.waveBlue).accessibilityLabel("Downloaded")
             }
             Menu {
                 Button { Task { await player.play(track) } } label: { Label("Play now", systemImage: "play.fill") }
@@ -402,6 +405,7 @@ struct PlayerView: View {
     @State private var scrubPosition = 0.0
     @State private var isScrubbing = false
     @State private var showLyrics = false
+    @State private var showQueue = false
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -453,6 +457,7 @@ struct PlayerView: View {
                             .waveGlass(radius: 20, highlighted: showLyrics)
                     }.buttonStyle(.plain)
                     Button { if let track = player.current { Task { await player.download(track) } } } label: { Image(systemName: "arrow.down.circle.fill").frame(width: 54, height: 50) }.waveGlass(radius: 20)
+                    Button { showQueue = true } label: { Image(systemName: "list.bullet").frame(width: 54, height: 50) }.waveGlass(radius: 20)
                 }.font(.subheadline.weight(.bold))
                 if showLyrics { LyricsPanel().frame(height: min(geometry.size.height * 0.55, 420)) }
                 }
@@ -468,10 +473,32 @@ struct PlayerView: View {
         .tint(Color.waveBlue)
         .onAppear { scrubPosition = player.elapsed }
         .onChange(of: player.elapsed) { value in if !isScrubbing { scrubPosition = value } }
+        .sheet(isPresented: $showQueue) { QueueSheet().presentationDetents([.medium, .large]) }
     }
     private func time(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "0:00" }
         return String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
+    }
+}
+
+private struct QueueSheet: View {
+    @EnvironmentObject var player: WavePlayer
+    var body: some View {
+        NavigationStack {
+            List {
+                if let current = player.current {
+                    Section("Now playing") { TrackCard(track: current) }
+                }
+                Section("Next") {
+                    if player.queue.isEmpty { Text("The queue is empty").foregroundStyle(.secondary) }
+                    ForEach(player.queue) { TrackCard(track: $0) }
+                    .onDelete { player.queue.remove(atOffsets: $0) }
+                    .onMove { player.queue.move(fromOffsets: $0, toOffset: $1) }
+                }
+            }
+            .scrollContentBackground(.hidden).background(WaveBackdrop())
+            .navigationTitle("Queue").toolbar { EditButton() }
+        }
     }
 }
 

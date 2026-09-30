@@ -6,10 +6,11 @@ struct Track: Identifiable, Codable, Equatable {
     let title: String
     let artist: String
     let duration: Double?
-    init(id: String, title: String, artist: String, duration: Double? = nil) {
-        self.id = id; self.title = title; self.artist = artist; self.duration = duration
+    let artworkURL: URL?
+    init(id: String, title: String, artist: String, duration: Double? = nil, artworkURL: URL? = nil) {
+        self.id = id; self.title = title; self.artist = artist; self.duration = duration; self.artworkURL = artworkURL
     }
-    var artwork: URL? { URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg") }
+    var artwork: URL? { artworkURL ?? URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg") }
 }
 
 enum WaveError: LocalizedError {
@@ -81,7 +82,9 @@ actor Catalog {
                        !results.contains(where: { $0.id == id }) {
                         let artist = runs(columns[1]).first?["text"] as? String ?? "Unknown artist"
                         let duration = columns.flatMap(runs).compactMap { ($0["text"] as? String).flatMap(parseDuration) }.first
-                        results.append(Track(id: id, title: title, artist: artist, duration: duration))
+                        let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
+                        let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
+                        results.append(Track(id: id, title: title, artist: artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:))))
                     }
                 }
                 for value in object.values { walk(value) }
@@ -126,7 +129,9 @@ actor Catalog {
                         let flex = column["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any]
                         return renderedText(flex?["text"])
                     }
-                    if let title = values.first { tracks.append(Track(id: id, title: title, artist: values.dropFirst().first ?? "Unknown artist")) }
+                    let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
+                    let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
+                    if let title = values.first { tracks.append(Track(id: id, title: title, artist: values.dropFirst().first ?? "Unknown artist", artworkURL: artwork.flatMap(URL.init(string:)))) }
                 }
                 object.values.forEach(walk)
             } else if let array = node as? [Any] { array.forEach(walk) }
