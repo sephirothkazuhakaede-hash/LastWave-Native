@@ -5,6 +5,10 @@ struct Track: Identifiable, Codable, Equatable {
     let id: String
     let title: String
     let artist: String
+    let duration: Double?
+    init(id: String, title: String, artist: String, duration: Double? = nil) {
+        self.id = id; self.title = title; self.artist = artist; self.duration = duration
+    }
     var artwork: URL? { URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg") }
 }
 
@@ -14,6 +18,10 @@ enum WaveError: LocalizedError {
 }
 
 actor Catalog {
+    struct ResolvedStream {
+        let url: URL
+        let duration: Double?
+    }
     private struct ClientConfig {
         let apiKey: String
         let version: String
@@ -23,6 +31,7 @@ actor Catalog {
     private let fallbackKey = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30"
     private let fallbackVersion = "1.20260707.12.00"
     private let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148"
+    private var streamCache: [String: (ResolvedStream, Date)] = [:]
 
     func search(_ query: String) async throws -> [Track] {
         let config = await loadClientConfig()
@@ -71,7 +80,8 @@ actor Catalog {
                        let title = titleRuns.first?["text"] as? String,
                        !results.contains(where: { $0.id == id }) {
                         let artist = runs(columns[1]).first?["text"] as? String ?? "Unknown artist"
-                        results.append(Track(id: id, title: title, artist: artist))
+                        let duration = columns.flatMap(runs).compactMap { ($0["text"] as? String).flatMap(parseDuration) }.first
+                        results.append(Track(id: id, title: title, artist: artist, duration: duration))
                     }
                 }
                 for value in object.values { walk(value) }
@@ -80,6 +90,12 @@ actor Catalog {
         walk(root)
         if results.isEmpty { throw WaveError.message("No songs were returned for that search.") }
         return results
+    }
+
+    private func parseDuration(_ value: String) -> Double? {
+        let parts = value.split(separator: ":").compactMap { Double($0) }
+        guard parts.count == 2 || parts.count == 3 else { return nil }
+        return parts.reduce(0) { $0 * 60 + $1 }
     }
 
     private func loadClientConfig() async -> ClientConfig {
@@ -123,7 +139,10 @@ actor Catalog {
         return nil
     }
 
-    func stream(for track: Track) async throws -> URL {
+    func stream(for track: Track) async throws -> URL { try await resolvedStream(for: track).url }
+
+    func resolvedStream(for track: Track) async throws -> ResolvedStream {
+        if let cached = streamCache[track.id], Date().timeIntervalSince(cached.1) < 900 { return cached.0 }
         // Prefer on-device extraction, then use YouTubeKit's maintained fallback when
         // YouTube changes its player response before an app update can ship.
         let streams = try await YouTube(videoID: track.id, methods: [.local, .remote]).streams
@@ -133,6 +152,8 @@ actor Catalog {
                 ?? streams.filterVideoAndAudio().filter(\.isNativelyPlayable).highestAudioBitrateStream() else {
             throw WaveError.message("No compatible audio stream. YouTube may have changed its extractor requirements.")
         }
-        return stream.url
+        let resolved = ResolvedStream(url: stream.url, duration: track.duration)
+        streamCache[track.id] = (resolved, Date())
+        return resolved
     }
 }

@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import MediaPlayer
 import Combine
+import UIKit
 
 @MainActor final class WavePlayer: ObservableObject {
     @Published var current: Track?
@@ -15,10 +16,14 @@ import Combine
     @Published var lyricsLoading = false
     @Published var error: String?
     @Published var downloading: Set<String> = []
+    @Published var downloadProgress: [String: Double] = [:]
     let catalog = Catalog()
     private let lyricsService = LyricsService()
     private let player = AVPlayer()
     private var generation = UUID()
+    private var expectedDuration: Double?
+    private var nowPlayingArtwork: MPMediaItemArtwork?
+    private var didReachExpectedEnd = false
     private var timer: Any?
     private var endObserver: NSObjectProtocol?
     private var statusObserver: NSKeyValueObservation?
@@ -30,6 +35,7 @@ import Combine
     func localURL(_ track: Track) -> URL { folder.appendingPathComponent(track.id + ".m4a") }
 
     init() {
+        player.automaticallyWaitsToMinimizeStalling = false
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         if let data = try? Data(contentsOf: index), let tracks = try? JSONDecoder().decode([Track].self, from: data) {
             downloads = tracks.filter { FileManager.default.fileExists(atPath: localURL($0).path) }
@@ -38,10 +44,15 @@ import Combine
             Task { @MainActor in
                 guard let self else { return }
                 self.elapsed = time.seconds.isFinite ? time.seconds : 0
-                let length = self.player.currentItem?.duration.seconds ?? 0
+                let length = self.expectedDuration ?? self.player.currentItem?.duration.seconds ?? 0
                 self.duration = length.isFinite ? length : 0
                 self.playing = self.player.rate > 0
                 self.publishNowPlaying()
+                if let expected = self.expectedDuration, expected > 0,
+                   self.elapsed >= expected - 0.35, !self.didReachExpectedEnd {
+                    self.didReachExpectedEnd = true
+                    Task { await self.next() }
+                }
             }
         }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] note in
@@ -71,25 +82,34 @@ import Combine
         let token = UUID(); generation = token
         loading = true; error = nil
         player.pause()
+        current = track; elapsed = 0; duration = track.duration ?? 0; expectedDuration = track.duration
+        didReachExpectedEnd = false; lyrics = []; nowPlayingArtwork = nil
+        publishNowPlaying()
+        Task { await loadLyrics(for: track, token: token) }
+        Task { await loadArtwork(for: track, token: token) }
         do {
             let url: URL
             if FileManager.default.fileExists(atPath: localURL(track).path) { url = localURL(track) }
-            else { url = try await catalog.stream(for: track) }
+            else {
+                let resolved = try await catalog.resolvedStream(for: track)
+                url = resolved.url; expectedDuration = resolved.duration
+            }
             guard token == generation else { return }
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
             try AVAudioSession.sharedInstance().setActive(true)
             let item = AVPlayerItem(url: url)
-            statusObserver = item.observe(\.status, options: [.new]) { [weak self] item, _ in
-                if item.status == .failed {
+            statusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+                if item.status == .readyToPlay {
+                    Task { @MainActor in self?.loading = false; self?.player.play() }
+                } else if item.status == .failed {
                     let message = item.error?.localizedDescription ?? "Playback failed."
                     Task { @MainActor in self?.error = message; self?.loading = false }
                 }
             }
             player.replaceCurrentItem(with: item)
-            current = track; elapsed = 0; duration = 0; lyrics = []
             player.play(); playing = true
             publishNowPlaying()
-            Task { await loadLyrics(for: track, token: token) }
+            if let nextTrack = queue.first { Task { _ = try? await catalog.resolvedStream(for: nextTrack) } }
         } catch { if token == generation { self.error = error.localizedDescription } }
         if token == generation { loading = false }
     }
@@ -108,13 +128,17 @@ import Combine
     func download(_ track: Track) async {
         guard !downloading.contains(track.id), !downloads.contains(track) else { return }
         downloading.insert(track.id)
-        defer { downloading.remove(track.id) }
+        downloadProgress[track.id] = 0
+        defer { downloading.remove(track.id); downloadProgress.removeValue(forKey: track.id) }
         do {
             let url = try await catalog.stream(for: track)
             var request = URLRequest(url: url)
             request.timeoutInterval = 120
             request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-            let (temporary, response) = try await URLSession.shared.download(for: request)
+            let transfer = DownloadTransfer { [weak self] progress in
+                Task { @MainActor in self?.downloadProgress[track.id] = progress }
+            }
+            let (temporary, response) = try await transfer.start(request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw WaveError.message("Download failed.") }
             let attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
             let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
@@ -125,6 +149,14 @@ import Combine
             downloads.append(track)
             try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
         } catch { self.error = error.localizedDescription }
+    }
+    private func loadArtwork(for track: Track, token: UUID) async {
+        guard let url = track.artwork,
+              let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let image = UIImage(data: data), token == generation else { return }
+        nowPlayingArtwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        publishNowPlaying()
     }
     private func loadLyrics(for track: Track, token: UUID) async {
         lyricsLoading = true
@@ -146,11 +178,50 @@ import Combine
     }
     private func publishNowPlaying() {
         guard let current else { return }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = [
+        var info: [String: Any] = [
             MPMediaItemPropertyTitle: current.title, MPMediaItemPropertyArtist: current.artist,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyPlaybackRate: player.rate
         ]
+        if let nowPlayingArtwork { info[MPMediaItemPropertyArtwork] = nowPlayingArtwork }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+}
+
+private final class DownloadTransfer: NSObject, URLSessionDownloadDelegate {
+    private let progress: (Double) -> Void
+    private var continuation: CheckedContinuation<(URL, URLResponse), Error>?
+    private var session: URLSession?
+    init(progress: @escaping (Double) -> Void) { self.progress = progress }
+    func start(_ request: URLRequest) async throws -> (URL, URLResponse) {
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+            self.session = session
+            session.downloadTask(with: request).resume()
+        }
+    }
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        progress(min(1, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
+    }
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        guard let response = downloadTask.response else { return }
+        let durable = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        do {
+            try FileManager.default.moveItem(at: location, to: durable)
+            continuation?.resume(returning: (durable, response))
+        } catch {
+            continuation?.resume(throwing: error)
+        }
+        continuation = nil
+        session.finishTasksAndInvalidate()
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error, let continuation { continuation.resume(throwing: error); self.continuation = nil }
     }
 }

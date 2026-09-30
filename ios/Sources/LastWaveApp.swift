@@ -18,12 +18,15 @@ struct RootView: View {
     @EnvironmentObject var player: WavePlayer
     @State private var tab: WaveTab = .home
     @State private var showPlayer = false
+    @State private var searchQuery = ""
+    @State private var searchResults: [Track] = []
+    @State private var searching = false
     var body: some View {
         ZStack {
             WaveBackdrop()
             Group {
                 switch tab {
-                case .home: SearchHomeView()
+                case .home: SearchHomeView(query: $searchQuery, results: $searchResults, searching: $searching)
                 case .offline: TrackCollectionView(title: "Offline", subtitle: "Saved on this iPhone", tracks: player.downloads, isOffline: true)
                 case .queue: TrackCollectionView(title: "Queue", subtitle: "\(player.queue.count) tracks waiting", tracks: player.queue)
                 }
@@ -49,9 +52,9 @@ struct RootView: View {
 
 private struct SearchHomeView: View {
     @EnvironmentObject var player: WavePlayer
-    @State private var query = ""
-    @State private var results: [Track] = []
-    @State private var searching = false
+    @Binding var query: String
+    @Binding var results: [Track]
+    @Binding var searching: Bool
     @FocusState private var focused: Bool
     var body: some View {
         ScrollView {
@@ -191,7 +194,12 @@ private struct TrackCard: View {
                 }
             }.buttonStyle(.plain)
             Spacer(minLength: 6)
-            if player.downloading.contains(track.id) { ProgressView().tint(Color.waveBlue) }
+            if let progress = player.downloadProgress[track.id] {
+                VStack(spacing: 2) {
+                    ProgressView(value: progress).tint(Color.waveBlue).frame(width: 42)
+                    Text("\(Int(progress * 100))%").font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }
             Menu {
                 Button { Task { await player.play(track) } } label: { Label("Play now", systemImage: "play.fill") }
                 Button { player.queue.insert(track, at: 0) } label: { Label("Play next", systemImage: "text.insert") }
@@ -291,8 +299,7 @@ struct PlayerView: View {
                         .blur(radius: 75).opacity(0.28).scaleEffect(1.25)
                 }
                 LinearGradient(colors: [.black.opacity(0.10), .black.opacity(0.72), .black], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
-                ScrollView {
-                    VStack(spacing: 18) {
+                VStack(spacing: 14) {
                 HStack {
                     Button { dismiss() } label: { Image(systemName: "chevron.down").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
                     Spacer()
@@ -300,10 +307,15 @@ struct PlayerView: View {
                     Spacer()
                     Menu { Button("Clear queue", role: .destructive) { player.queue.removeAll() } } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
                 }
-                if let track = player.current {
-                    Artwork(track: track, size: min(geometry.size.width - 48, geometry.size.height * 0.42, 390), radius: 34)
-                        .shadow(color: Color.waveBlue.opacity(0.20), radius: 38, y: 20)
+                Group {
+                    if showLyrics {
+                        LyricsPanel()
+                    } else if let track = player.current {
+                        Artwork(track: track, size: min(geometry.size.width - 48, geometry.size.height * 0.38, 390), radius: 34)
+                            .shadow(color: Color.waveBlue.opacity(0.20), radius: 38, y: 20)
+                    }
                 }
+                .frame(maxHeight: .infinity)
                 VStack(alignment: .leading, spacing: 7) {
                     Text(player.current?.title ?? "LastWave").font(.system(size: 31, weight: .black, design: .rounded)).lineLimit(2)
                     Text(player.current?.artist ?? "").font(.title3.weight(.semibold)).foregroundStyle(Color.waveBlue)
@@ -330,15 +342,12 @@ struct PlayerView: View {
                     }.buttonStyle(.plain).waveGlass(radius: 20, highlighted: showLyrics)
                     Button { if let track = player.current { Task { await player.download(track) } } } label: { Image(systemName: "arrow.down.circle.fill").frame(width: 54, height: 50) }.waveGlass(radius: 20)
                 }.font(.subheadline.weight(.bold))
-                if showLyrics { LyricsPanel() }
-                    }
-                    .frame(maxWidth: 620)
-                    .padding(.horizontal, max(18, geometry.safeAreaInsets.leading + 18))
-                    .padding(.top, max(8, geometry.safeAreaInsets.top))
-                    .padding(.bottom, max(18, geometry.safeAreaInsets.bottom))
-                    .frame(maxWidth: .infinity)
                 }
-                .scrollIndicators(.hidden)
+                .frame(maxWidth: 620)
+                .padding(.horizontal, max(18, geometry.safeAreaInsets.leading + 18))
+                .padding(.top, max(8, geometry.safeAreaInsets.top))
+                .padding(.bottom, max(12, geometry.safeAreaInsets.bottom))
+                .frame(maxWidth: .infinity)
             }
         }
         .tint(Color.waveBlue)
@@ -358,7 +367,8 @@ private struct LyricsPanel: View {
     }
     var body: some View {
         ScrollViewReader { proxy in
-            VStack(alignment: .leading, spacing: 14) {
+            ScrollView(.vertical) {
+              VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Text("Lyrics").font(.title2.weight(.black))
                     Spacer()
@@ -371,18 +381,33 @@ private struct LyricsPanel: View {
                         Button { if let time = line.time { player.seek(time) } } label: {
                             Text(line.text)
                                 .font(.title3.weight(index == activeIndex ? .bold : .semibold))
-                                .foregroundStyle(index == activeIndex ? Color.waveBlue : .white.opacity(0.48))
+                                .foregroundStyle(index == activeIndex ? Color.waveBlue : .white)
+                                .opacity(lineOpacity(index))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.vertical, 3)
                         }.buttonStyle(.plain).id(index)
                     }
                 }
+              }
+              .padding(20)
             }
-            .padding(20).waveGlass(radius: 26)
+            .scrollIndicators(.hidden)
+            .defaultScrollAnchor(.center)
+            .mask(LinearGradient(stops: [
+                .init(color: .clear, location: 0), .init(color: .black, location: 0.10),
+                .init(color: .black, location: 0.88), .init(color: .clear, location: 1)
+            ], startPoint: .top, endPoint: .bottom))
+            .waveGlass(radius: 26)
             .onChange(of: activeIndex) { index in
                 guard let index else { return }
                 withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(index, anchor: .center) }
             }
         }
+    }
+    private func lineOpacity(_ index: Int) -> Double {
+        guard let activeIndex else { return 0.48 }
+        if index == activeIndex { return 1 }
+        if index < activeIndex { return max(0.10, 0.34 - Double(activeIndex - index) * 0.06) }
+        return max(0.32, 0.64 - Double(index - activeIndex) * 0.04)
     }
 }
