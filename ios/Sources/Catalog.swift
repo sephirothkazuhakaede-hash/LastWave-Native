@@ -344,13 +344,14 @@ actor Catalog {
 
     func resolvedStream(for track: Track, quality: AudioQuality = .automatic) async throws -> ResolvedStream {
         let cacheKey = track.id + ":" + quality.rawValue
-        if let cached = streamCache[cacheKey], Date().timeIntervalSince(cached.1) < 900 { return cached.0 }
+        if let cached = streamCache[cacheKey], cacheIsUsable(cached) { return cached.0 }
+        streamCache.removeValue(forKey: cacheKey)
         if let existing = resolutionTasks[cacheKey] { return try await existing.value }
         let task = Task { () throws -> ResolvedStream in
             async let exactDuration = self.duration(for: track)
-            // Local extraction avoids a server round-trip. YouTubeKit's maintained
-            // Cloudflare-backed remote method remains a fallback when YouTube changes.
-            let streams = try await YouTube(videoID: track.id, methods: [.local, .remote]).streams
+            // The maintained Cloudflare edge resolver avoids the slower local JS
+            // decipher path. On-device extraction remains the automatic fallback.
+            let streams = try await YouTube(videoID: track.id, methods: [.remote, .local]).streams
             let audio = streams.filterAudioOnly().filter(\.isNativelyPlayable)
             let preferred = audio.filter { $0.fileExtension == .m4a }
             let selected = quality == .dataSaver
@@ -367,6 +368,22 @@ actor Catalog {
         let resolved = try await task.value
         streamCache[cacheKey] = (resolved, Date())
         return resolved
+    }
+
+    func invalidateStream(for track: Track, quality: AudioQuality) {
+        let key = track.id + ":" + quality.rawValue
+        streamCache.removeValue(forKey: key)
+        resolutionTasks[key]?.cancel()
+        resolutionTasks.removeValue(forKey: key)
+    }
+
+    private func cacheIsUsable(_ cached: (ResolvedStream, Date)) -> Bool {
+        if let expiryText = URLComponents(url: cached.0.url, resolvingAgainstBaseURL: false)?
+            .queryItems?.first(where: { $0.name == "expire" })?.value,
+           let expiry = TimeInterval(expiryText) {
+            return Date(timeIntervalSince1970: expiry).timeIntervalSinceNow > 300
+        }
+        return Date().timeIntervalSince(cached.1) < 1_800
     }
 
     func duration(for track: Track) async -> Double? {

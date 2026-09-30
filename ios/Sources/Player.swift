@@ -219,14 +219,20 @@ import UIKit
             var request = URLRequest(url: url)
             request.timeoutInterval = 120
             request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-            let transfer = DownloadTransfer(identifier: "com.seph.capyflow.download.\(track.id).\(UUID().uuidString)") { [weak self] progress in
+            let transfer = DownloadCoordinator.shared
+            let (temporary, response) = try await transfer.start(request) { [weak self] progress in
                 Task { @MainActor in self?.downloadProgress[track.id] = progress }
             }
-            let (temporary, response) = try await transfer.start(request)
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw WaveError.message("Download failed.") }
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                try? FileManager.default.removeItem(at: temporary)
+                throw WaveError.message("Download failed.")
+            }
             let attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
             let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
-            guard size > 16_384 else { throw WaveError.message("The downloaded audio was incomplete. Please retry.") }
+            guard size > 16_384 else {
+                try? FileManager.default.removeItem(at: temporary)
+                throw WaveError.message("The downloaded audio was incomplete. Please retry.")
+            }
             let target = localURL(track)
             if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
             try FileManager.default.moveItem(at: temporary, to: target)
@@ -236,6 +242,7 @@ import UIKit
             Task { _ = try? await lyricsService.lyrics(for: track) }
             return true
         } catch {
+            await catalog.invalidateStream(for: track, quality: audioQuality)
             if reportError { self.error = error.localizedDescription }
             return false
         }
@@ -348,9 +355,9 @@ import UIKit
         }
     }
     private func downloadWithRetries(_ track: Track) async -> Bool {
-        for attempt in 0..<3 {
+        for attempt in 0..<5 {
             if await download(track, reportError: false) { return true }
-            if attempt < 2 { try? await Task.sleep(nanoseconds: UInt64(650_000_000 * (attempt + 1))) }
+            if attempt < 4 { try? await Task.sleep(nanoseconds: UInt64(650_000_000 * (attempt + 1))) }
         }
         return false
     }
@@ -424,46 +431,72 @@ private extension UIImage {
     }
 }
 
-private final class DownloadTransfer: NSObject, URLSessionDownloadDelegate {
-    private let identifier: String
-    private let progress: (Double) -> Void
-    private var continuation: CheckedContinuation<(URL, URLResponse), Error>?
-    private var session: URLSession?
-    init(identifier: String, progress: @escaping (Double) -> Void) {
-        self.identifier = identifier; self.progress = progress
-    }
-    func start(_ request: URLRequest) async throws -> (URL, URLResponse) {
+private final class DownloadCoordinator: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    static let shared = DownloadCoordinator()
+    private let lock = NSLock()
+    private var continuations: [Int: CheckedContinuation<(URL, URLResponse), Error>] = [:]
+    private var progressHandlers: [Int: (Double) -> Void] = [:]
+    private lazy var session: URLSession = {
+        let configuration = URLSessionConfiguration.background(withIdentifier: "com.seph.capyflow.downloads")
+        configuration.sessionSendsLaunchEvents = true
+        configuration.isDiscretionary = false
+        configuration.allowsCellularAccess = true
+        configuration.httpMaximumConnectionsPerHost = 4
+        configuration.timeoutIntervalForRequest = 120
+        configuration.timeoutIntervalForResource = 900
+        let queue = OperationQueue()
+        queue.name = "CapyFlow.DownloadCoordinator"
+        queue.maxConcurrentOperationCount = 1
+        return URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
+    }()
+
+    private override init() { super.init() }
+
+    func start(_ request: URLRequest, progress: @escaping (Double) -> Void) async throws -> (URL, URLResponse) {
         try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-            let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
-            configuration.sessionSendsLaunchEvents = true
-            configuration.isDiscretionary = false
-            configuration.allowsCellularAccess = true
-            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-            self.session = session
-            session.downloadTask(with: request).resume()
+            let task = session.downloadTask(with: request)
+            lock.lock()
+            continuations[task.taskIdentifier] = continuation
+            progressHandlers[task.taskIdentifier] = progress
+            lock.unlock()
+            task.resume()
         }
     }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                     didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
                     totalBytesExpectedToWrite: Int64) {
         guard totalBytesExpectedToWrite > 0 else { return }
-        progress(min(1, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
+        lock.lock()
+        let progress = progressHandlers[downloadTask.taskIdentifier]
+        lock.unlock()
+        progress?(min(1, Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)))
     }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
-        guard let response = downloadTask.response else { return }
+        guard let response = downloadTask.response else {
+            finish(taskID: downloadTask.taskIdentifier, result: .failure(WaveError.message("Download returned no response.")))
+            return
+        }
         let durable = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         do {
             try FileManager.default.moveItem(at: location, to: durable)
-            continuation?.resume(returning: (durable, response))
+            finish(taskID: downloadTask.taskIdentifier, result: .success((durable, response)))
         } catch {
-            continuation?.resume(throwing: error)
+            finish(taskID: downloadTask.taskIdentifier, result: .failure(error))
         }
-        continuation = nil
-        session.finishTasksAndInvalidate()
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let error, let continuation { continuation.resume(throwing: error); self.continuation = nil }
+        if let error { finish(taskID: task.taskIdentifier, result: .failure(error)) }
+    }
+    private func finish(taskID: Int, result: Result<(URL, URLResponse), Error>) {
+        lock.lock()
+        let continuation = continuations.removeValue(forKey: taskID)
+        progressHandlers.removeValue(forKey: taskID)
+        lock.unlock()
+        guard let continuation else { return }
+        switch result {
+        case .success(let value): continuation.resume(returning: value)
+        case .failure(let error): continuation.resume(throwing: error)
+        }
     }
 }
