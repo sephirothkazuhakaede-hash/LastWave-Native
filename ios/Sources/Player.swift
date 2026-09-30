@@ -161,6 +161,22 @@ import UIKit
             if let data = try? JSONEncoder().encode(playlists) { UserDefaults.standard.set(data, forKey: "importedPlaylists") }
         } catch { self.error = error.localizedDescription }
     }
+    func createPlaylist(named name: String) {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        playlists.append(ImportedPlaylist(id: UUID().uuidString, name: cleaned, tracks: []))
+        savePlaylists()
+    }
+    func add(_ track: Track, to playlistID: String) {
+        guard let index = playlists.firstIndex(where: { $0.id == playlistID }),
+              !playlists[index].tracks.contains(where: { $0.id == track.id }) else { return }
+        var tracks = playlists[index].tracks; tracks.append(track)
+        playlists[index] = ImportedPlaylist(id: playlists[index].id, name: playlists[index].name, tracks: tracks)
+        savePlaylists()
+    }
+    private func savePlaylists() {
+        if let data = try? JSONEncoder().encode(playlists) { UserDefaults.standard.set(data, forKey: "importedPlaylists") }
+    }
     func downloadPlaylist(_ playlist: ImportedPlaylist) async {
         let pending = playlist.tracks.filter { !downloads.contains($0) }
         for start in stride(from: 0, to: pending.count, by: 2) {

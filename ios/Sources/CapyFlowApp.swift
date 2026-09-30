@@ -155,7 +155,10 @@ private struct SearchHomeView: View {
         if showSpinner { focused = false }; searching = true
         defer { searching = false }
         do { results = lyricMode ? try await player.lyricSearch(term) : try await player.catalog.search(term) }
-        catch { player.error = error.localizedDescription }
+        catch {
+            let code = (error as NSError).code
+            if !Task.isCancelled && code != NSURLErrorCancelled { player.error = error.localizedDescription }
+        }
     }
 }
 
@@ -163,10 +166,17 @@ private struct PlaylistLibraryView: View {
     @EnvironmentObject var player: WavePlayer
     @State private var link = ""
     @State private var importing = false
+    @State private var playlistName = ""
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
                 HStack { Text("Playlists").font(.system(size: 40, weight: .black, design: .rounded)); Spacer() }
+                HStack {
+                    TextField("New playlist name", text: $playlistName)
+                    Button("Create") { player.createPlaylist(named: playlistName); playlistName = "" }
+                        .disabled(playlistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }.padding(16).waveGlass(radius: 22)
+                Text("Or import a public YouTube playlist").font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 HStack {
                     TextField("Paste a public YouTube playlist link", text: $link).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button { Task { importing = true; await player.importPlaylist(link); importing = false; if player.error == nil { link = "" } } } label: {
@@ -246,6 +256,13 @@ private struct TrackCard: View {
                 Button { Task { await player.play(track) } } label: { Label("Play now", systemImage: "play.fill") }
                 Button { player.queue.insert(track, at: 0) } label: { Label("Play next", systemImage: "text.insert") }
                 Button { player.queue.append(track) } label: { Label("Add to queue", systemImage: "text.append") }
+                if !player.playlists.isEmpty {
+                    Menu("Add to playlist", systemImage: "rectangle.stack.badge.plus") {
+                        ForEach(player.playlists) { playlist in
+                            Button(playlist.name) { player.add(track, to: playlist.id) }
+                        }
+                    }
+                }
                 if canDelete { Button(role: .destructive) { player.delete(track) } label: { Label("Delete download", systemImage: "trash") } }
                 else { Button { Task { await player.download(track) } } label: { Label("Download", systemImage: "arrow.down.circle") } }
             } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 42, height: 42).background(.white.opacity(0.06), in: Circle()) }
@@ -350,7 +367,8 @@ struct PlayerView: View {
                         .blur(radius: 75).opacity(0.28).scaleEffect(1.25)
                 }
                 LinearGradient(colors: [.black.opacity(0.10), .black.opacity(0.72), .black], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
-                VStack(spacing: 14) {
+                ScrollView {
+                  VStack(spacing: 14) {
                 HStack {
                     Button { dismiss() } label: { Image(systemName: "chevron.down").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
                     Spacer()
@@ -358,14 +376,10 @@ struct PlayerView: View {
                     Spacer()
                     Menu { Button("Clear queue", role: .destructive) { player.queue.removeAll() } } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
                 }
-                VStack(spacing: 12) {
-                    if let track = player.current {
-                        Artwork(track: track, size: min(geometry.size.width - 48, geometry.size.height * (showLyrics ? 0.22 : 0.38), showLyrics ? 220 : 390), radius: 34)
+                if let track = player.current {
+                        Artwork(track: track, size: min(geometry.size.width - 48, geometry.size.height * 0.38, 390), radius: 34)
                             .shadow(color: Color.waveBlue.opacity(0.20), radius: 38, y: 20)
-                    }
-                    if showLyrics { LyricsPanel() }
                 }
-                .frame(maxHeight: .infinity)
                 VStack(alignment: .leading, spacing: 7) {
                     Text(player.current?.title ?? "CapyFlow").font(.system(size: 31, weight: .black, design: .rounded)).lineLimit(2)
                     Text(player.current?.artist ?? "").font(.title3.weight(.semibold)).foregroundStyle(Color.waveBlue)
@@ -388,16 +402,22 @@ struct PlayerView: View {
                 }
                 HStack(spacing: 10) {
                     Button { withAnimation(.spring(response: 0.35)) { showLyrics.toggle() } } label: {
-                        Label(showLyrics ? "Hide lyrics" : "Lyrics", systemImage: "quote.bubble.fill").frame(maxWidth: .infinity).padding(.vertical, 15)
-                    }.buttonStyle(.plain).waveGlass(radius: 20, highlighted: showLyrics)
+                        Label(showLyrics ? "Hide lyrics" : "Lyrics", systemImage: "quote.bubble.fill")
+                            .frame(maxWidth: .infinity).frame(height: 50)
+                            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .waveGlass(radius: 20, highlighted: showLyrics)
+                    }.buttonStyle(.plain)
                     Button { if let track = player.current { Task { await player.download(track) } } } label: { Image(systemName: "arrow.down.circle.fill").frame(width: 54, height: 50) }.waveGlass(radius: 20)
                 }.font(.subheadline.weight(.bold))
+                if showLyrics { LyricsPanel().frame(height: min(geometry.size.height * 0.55, 420)) }
                 }
                 .frame(maxWidth: 620)
                 .padding(.horizontal, max(18, geometry.safeAreaInsets.leading + 18))
                 .padding(.top, max(8, geometry.safeAreaInsets.top))
                 .padding(.bottom, max(12, geometry.safeAreaInsets.bottom))
                 .frame(maxWidth: .infinity)
+                }
+                .scrollIndicators(.hidden)
             }
         }
         .tint(Color.waveBlue)
