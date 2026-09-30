@@ -11,9 +11,12 @@ import Combine
     @Published var loading = false
     @Published var elapsed = 0.0
     @Published var duration = 0.0
+    @Published var lyrics: [LyricLine] = []
+    @Published var lyricsLoading = false
     @Published var error: String?
     @Published var downloading: Set<String> = []
     let catalog = Catalog()
+    private let lyricsService = LyricsService()
     private let player = AVPlayer()
     private var generation = UUID()
     private var timer: Any?
@@ -83,14 +86,21 @@ import Combine
                 }
             }
             player.replaceCurrentItem(with: item)
-            current = track; elapsed = 0; duration = 0
+            current = track; elapsed = 0; duration = 0; lyrics = []
             player.play(); playing = true
             publishNowPlaying()
+            Task { await loadLyrics(for: track, token: token) }
         } catch { if token == generation { self.error = error.localizedDescription } }
         if token == generation { loading = false }
     }
     func toggle() { if player.rate > 0 { player.pause() } else { player.play() }; playing = player.rate > 0 }
-    func seek(_ value: Double) { player.seek(to: CMTime(seconds: value, preferredTimescale: 600)) }
+    func seek(_ value: Double) {
+        guard value.isFinite else { return }
+        let target = min(max(0, value), duration > 0 ? duration : value)
+        elapsed = target
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        publishNowPlaying()
+    }
     func next() async {
         if queue.isEmpty { player.pause(); playing = false; return }
         await play(queue.removeFirst())
@@ -101,14 +111,31 @@ import Combine
         defer { downloading.remove(track.id) }
         do {
             let url = try await catalog.stream(for: track)
-            let (temporary, response) = try await URLSession.shared.download(from: url)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw WaveError.message("Download failed.") }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 120
+            request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+            let (temporary, response) = try await URLSession.shared.download(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw WaveError.message("Download failed.") }
+            let attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
+            let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+            guard size > 16_384 else { throw WaveError.message("The downloaded audio was incomplete. Please retry.") }
             let target = localURL(track)
             if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
             try FileManager.default.moveItem(at: temporary, to: target)
             downloads.append(track)
             try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
         } catch { self.error = error.localizedDescription }
+    }
+    private func loadLyrics(for track: Track, token: UUID) async {
+        lyricsLoading = true
+        defer { if token == generation { lyricsLoading = false } }
+        do {
+            let fetched = try await lyricsService.lyrics(for: track)
+            if token == generation { lyrics = fetched }
+        } catch {
+            // Missing lyrics should not interrupt playback; the lyrics view owns its empty state.
+            if token == generation { lyrics = [] }
+        }
     }
     func delete(_ track: Track) {
         do {

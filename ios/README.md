@@ -1,12 +1,14 @@
-# LastWave iOS — personal prototype 0.1.0
+# LastWave iOS — personal prototype 0.2.0
 
 Native SwiftUI reimplementation inspired by Clash-Projects/LastWave-Native.
 
-Implemented: YouTube Music song search, local YouTubeKit audio extraction,
-AVPlayer playback, queue, background audio configuration, lock-screen commands,
-download-to-device, offline playback, persistent download index, deletion.
+Implemented: YouTube Music song search, local YouTubeKit audio extraction with
+its maintained remote fallback, AVPlayer playback, queue, background audio
+configuration, lock-screen commands, validated download-to-device, offline playback,
+persistent download index, deletion, responsive layouts, draggable seeking, and
+synced/plain LRCLIB lyrics.
 
-Not yet implemented: synced lyrics, Last.fm, YouTube account login, recommendations,
+Not yet implemented: Last.fm, YouTube account login, recommendations,
 playlist imports, widgets, equalizer. This is not full LastWave feature parity.
 
 ## Build
@@ -21,7 +23,9 @@ No Xcode compiler or iOS device is available in the development workspace.
 The source has not yet passed an Xcode build or device playback test.
 YouTube extraction is unofficial and may fail due to service changes, region,
 or anti-bot requirements. Errors are displayed rather than pretending playback
-worked. Only local extraction is enabled; no third-party extraction server.
+worked. Local extraction is attempted first. If it fails, YouTubeKit may use its
+documented Cloudflare-hosted remote extraction fallback; requests are executed from
+the device so returned stream URLs remain usable.
 Downloads run while the app is active; they are not resumable background jobs.
 
 ## Attribution

@@ -35,7 +35,7 @@ struct RootView: View {
                 WaveTabBar(selection: $tab)
             }.padding(.horizontal, 18)
         }
-        .sheet(isPresented: $showPlayer) { PlayerView() }
+        .sheet(isPresented: $showPlayer) { PlayerView().presentationDetents([.large]).presentationDragIndicator(.hidden) }
         .overlay(alignment: .top) {
             if let message = player.error {
                 ErrorPill(message: message) { player.error = nil }
@@ -278,15 +278,21 @@ private struct ErrorPill: View {
 struct PlayerView: View {
     @EnvironmentObject var player: WavePlayer
     @Environment(\.dismiss) private var dismiss
+    @State private var scrubPosition = 0.0
+    @State private var isScrubbing = false
+    @State private var showLyrics = false
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            if let track = player.current {
-                AsyncImage(url: track.artwork) { image in image.resizable().scaledToFill() } placeholder: { Color.clear }
-                    .ignoresSafeArea().blur(radius: 75).opacity(0.28).scaleEffect(1.35)
-            }
-            LinearGradient(colors: [.black.opacity(0.10), .black.opacity(0.72), .black], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
-            VStack(spacing: 22) {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let track = player.current {
+                    AsyncImage(url: track.artwork) { image in image.resizable().scaledToFill() } placeholder: { Color.clear }
+                        .frame(width: geometry.size.width, height: geometry.size.height).clipped()
+                        .blur(radius: 75).opacity(0.28).scaleEffect(1.25)
+                }
+                LinearGradient(colors: [.black.opacity(0.10), .black.opacity(0.72), .black], startPoint: .top, endPoint: .bottom).ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: 18) {
                 HStack {
                     Button { dismiss() } label: { Image(systemName: "chevron.down").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
                     Spacer()
@@ -294,19 +300,20 @@ struct PlayerView: View {
                     Spacer()
                     Menu { Button("Clear queue", role: .destructive) { player.queue.removeAll() } } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
                 }
-                Spacer(minLength: 4)
                 if let track = player.current {
-                    Artwork(track: track, size: min(UIScreen.main.bounds.width - 48, 390), radius: 38)
+                    Artwork(track: track, size: min(geometry.size.width - 48, geometry.size.height * 0.42, 390), radius: 34)
                         .shadow(color: Color.waveBlue.opacity(0.20), radius: 38, y: 20)
                 }
-                Spacer(minLength: 4)
                 VStack(alignment: .leading, spacing: 7) {
                     Text(player.current?.title ?? "LastWave").font(.system(size: 31, weight: .black, design: .rounded)).lineLimit(2)
                     Text(player.current?.artist ?? "").font(.title3.weight(.semibold)).foregroundStyle(Color.waveBlue)
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 VStack(spacing: 8) {
-                    Slider(value: Binding(get: { min(player.elapsed, max(player.duration, 1)) }, set: { player.seek($0) }), in: 0...max(player.duration, 1)).tint(Color.waveBlue)
-                    HStack { Text(time(player.elapsed)); Spacer(); Text("−" + time(max(0, player.duration - player.elapsed))) }
+                    Slider(value: $scrubPosition, in: 0...max(player.duration, 1), onEditingChanged: { editing in
+                        isScrubbing = editing
+                        if !editing { player.seek(scrubPosition) }
+                    }).tint(Color.waveBlue).accessibilityLabel("Playback position")
+                    HStack { Text(time(isScrubbing ? scrubPosition : player.elapsed)); Spacer(); Text("−" + time(max(0, player.duration - (isScrubbing ? scrubPosition : player.elapsed)))) }
                         .font(.caption.monospacedDigit().weight(.semibold)).foregroundStyle(.secondary)
                 }
                 HStack(spacing: 32) {
@@ -318,14 +325,64 @@ struct PlayerView: View {
                     Button { Task { await player.next() } } label: { Image(systemName: "forward.end.fill").frame(width: 58, height: 58) }.waveGlass(radius: 23)
                 }
                 HStack(spacing: 10) {
-                    Label("High Quality", systemImage: "waveform.badge.plus").frame(maxWidth: .infinity).padding(.vertical, 15).waveGlass(radius: 20)
+                    Button { withAnimation(.spring(response: 0.35)) { showLyrics.toggle() } } label: {
+                        Label(showLyrics ? "Hide lyrics" : "Lyrics", systemImage: "quote.bubble.fill").frame(maxWidth: .infinity).padding(.vertical, 15)
+                    }.buttonStyle(.plain).waveGlass(radius: 20, highlighted: showLyrics)
                     Button { if let track = player.current { Task { await player.download(track) } } } label: { Image(systemName: "arrow.down.circle.fill").frame(width: 54, height: 50) }.waveGlass(radius: 20)
                 }.font(.subheadline.weight(.bold))
-            }.padding(.horizontal, 24).padding(.vertical, 12)
-        }.tint(Color.waveBlue)
+                if showLyrics { LyricsPanel() }
+                    }
+                    .frame(maxWidth: 620)
+                    .padding(.horizontal, max(18, geometry.safeAreaInsets.leading + 18))
+                    .padding(.top, max(8, geometry.safeAreaInsets.top))
+                    .padding(.bottom, max(18, geometry.safeAreaInsets.bottom))
+                    .frame(maxWidth: .infinity)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+        .tint(Color.waveBlue)
+        .onAppear { scrubPosition = player.elapsed }
+        .onChange(of: player.elapsed) { value in if !isScrubbing { scrubPosition = value } }
     }
     private func time(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "0:00" }
         return String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
+    }
+}
+
+private struct LyricsPanel: View {
+    @EnvironmentObject var player: WavePlayer
+    private var activeIndex: Int? {
+        player.lyrics.lastIndex { ($0.time ?? .greatestFiniteMagnitude) <= player.elapsed }
+    }
+    var body: some View {
+        ScrollViewReader { proxy in
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("Lyrics").font(.title2.weight(.black))
+                    Spacer()
+                    if player.lyricsLoading { ProgressView().tint(Color.waveBlue) }
+                }
+                if !player.lyricsLoading && player.lyrics.isEmpty {
+                    Text("Lyrics aren’t available for this track yet.").foregroundStyle(.secondary).padding(.vertical, 20)
+                } else {
+                    ForEach(Array(player.lyrics.enumerated()), id: \.element.id) { index, line in
+                        Button { if let time = line.time { player.seek(time) } } label: {
+                            Text(line.text)
+                                .font(.title3.weight(index == activeIndex ? .bold : .semibold))
+                                .foregroundStyle(index == activeIndex ? Color.waveBlue : .white.opacity(0.48))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 3)
+                        }.buttonStyle(.plain).id(index)
+                    }
+                }
+            }
+            .padding(20).waveGlass(radius: 26)
+            .onChange(of: activeIndex) { index in
+                guard let index else { return }
+                withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(index, anchor: .center) }
+            }
+        }
     }
 }

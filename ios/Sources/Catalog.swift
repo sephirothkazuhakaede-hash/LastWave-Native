@@ -124,8 +124,13 @@ actor Catalog {
     }
 
     func stream(for track: Track) async throws -> URL {
-        let streams = try await YouTube(videoID: track.id, methods: [.local]).streams
-        guard let stream = streams.filterAudioOnly().filter({ $0.fileExtension == .m4a }).highestAudioBitrateStream() else {
+        // Prefer on-device extraction, then use YouTubeKit's maintained fallback when
+        // YouTube changes its player response before an app update can ship.
+        let streams = try await YouTube(videoID: track.id, methods: [.local, .remote]).streams
+        let audio = streams.filterAudioOnly().filter(\.isNativelyPlayable)
+        guard let stream = audio.filter({ $0.fileExtension == .m4a }).highestAudioBitrateStream()
+                ?? audio.highestAudioBitrateStream()
+                ?? streams.filterVideoAndAudio().filter(\.isNativelyPlayable).highestAudioBitrateStream() else {
             throw WaveError.message("No compatible audio stream. YouTube may have changed its extractor requirements.")
         }
         return stream.url
