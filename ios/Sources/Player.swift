@@ -19,6 +19,13 @@ import UIKit
     @Published var downloadProgress: [String: Double] = [:]
     @Published var playlists: [ImportedPlaylist] = []
     @Published var downloadingPlaylists: Set<String> = []
+    @Published var autoplayLoading = false
+    @Published var autoplayEnabled: Bool {
+        didSet { UserDefaults.standard.set(autoplayEnabled, forKey: "autoplayEnabled") }
+    }
+    @Published var audioQuality: AudioQuality {
+        didSet { UserDefaults.standard.set(audioQuality.rawValue, forKey: "audioQuality") }
+    }
     let catalog = Catalog()
     private let lyricsService = LyricsService()
     private let player = AVPlayer()
@@ -37,6 +44,8 @@ import UIKit
     func localURL(_ track: Track) -> URL { folder.appendingPathComponent(track.id + ".m4a") }
 
     init() {
+        autoplayEnabled = UserDefaults.standard.object(forKey: "autoplayEnabled") as? Bool ?? true
+        audioQuality = AudioQuality(rawValue: UserDefaults.standard.string(forKey: "audioQuality") ?? "") ?? .automatic
         player.automaticallyWaitsToMinimizeStalling = false
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         if let data = try? Data(contentsOf: index), let tracks = try? JSONDecoder().decode([Track].self, from: data) {
@@ -95,7 +104,7 @@ import UIKit
             let url: URL
             if FileManager.default.fileExists(atPath: localURL(track).path) { url = localURL(track) }
             else {
-                let resolved = try await catalog.resolvedStream(for: track)
+                let resolved = try await catalog.resolvedStream(for: track, quality: audioQuality)
                 url = resolved.url; expectedDuration = resolved.duration
             }
             guard token == generation else { return }
@@ -113,7 +122,7 @@ import UIKit
             player.replaceCurrentItem(with: item)
             player.play(); playing = true
             publishNowPlaying()
-            if let nextTrack = queue.first { Task { _ = try? await catalog.resolvedStream(for: nextTrack) } }
+            if let nextTrack = queue.first { Task { _ = try? await catalog.resolvedStream(for: nextTrack, quality: audioQuality) } }
         } catch { if token == generation { self.error = error.localizedDescription } }
         if token == generation { loading = false }
     }
@@ -126,6 +135,12 @@ import UIKit
         publishNowPlaying()
     }
     func next() async {
+        if queue.isEmpty, autoplayEnabled, let seed = current {
+            autoplayLoading = true
+            let suggestions = (try? await catalog.search("\(seed.artist) songs")) ?? []
+            queue = Array(suggestions.filter { $0.id != seed.id }.shuffled().prefix(12))
+            autoplayLoading = false
+        }
         if queue.isEmpty { player.pause(); playing = false; return }
         await play(queue.removeFirst())
     }
@@ -141,7 +156,7 @@ import UIKit
         error = nil
         defer { downloading.remove(track.id); downloadProgress.removeValue(forKey: track.id) }
         do {
-            let url = try await catalog.stream(for: track)
+            let url = try await catalog.stream(for: track, quality: audioQuality)
             var request = URLRequest(url: url)
             request.timeoutInterval = 120
             request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
@@ -180,6 +195,13 @@ import UIKit
               !playlists[index].tracks.contains(where: { $0.id == track.id }) else { return }
         var tracks = playlists[index].tracks; tracks.append(track)
         playlists[index] = ImportedPlaylist(id: playlists[index].id, name: playlists[index].name, tracks: tracks)
+        savePlaylists()
+    }
+    func saveAlbum(_ album: Album, tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+        let id = "album:" + album.id
+        playlists.removeAll { $0.id == id }
+        playlists.insert(ImportedPlaylist(id: id, name: album.title, tracks: tracks), at: 0)
         savePlaylists()
     }
     private func savePlaylists() {

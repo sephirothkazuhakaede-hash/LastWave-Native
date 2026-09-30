@@ -20,13 +20,15 @@ struct RootView: View {
     @State private var showPlayer = false
     @State private var searchQuery = ""
     @State private var searchResults: [Track] = []
+    @State private var albumResults: [Album] = []
     @State private var searching = false
+    @State private var searchMode: SearchMode = .songs
     var body: some View {
         ZStack {
             WaveBackdrop()
             Group {
                 switch tab {
-                case .home: SearchHomeView(query: $searchQuery, results: $searchResults, searching: $searching)
+                case .home: SearchHomeView(query: $searchQuery, results: $searchResults, albums: $albumResults, searching: $searching, mode: $searchMode)
                 case .playlists: PlaylistLibraryView()
                 }
             }
@@ -53,36 +55,48 @@ private struct SearchHomeView: View {
     @EnvironmentObject var player: WavePlayer
     @Binding var query: String
     @Binding var results: [Track]
+    @Binding var albums: [Album]
     @Binding var searching: Bool
+    @Binding var mode: SearchMode
     @FocusState private var focused: Bool
-    @State private var lyricMode = false
     var body: some View {
+      NavigationStack {
         ScrollView {
             LazyVStack(spacing: 18) {
                 header
                 searchBar
-                Picker("Search type", selection: $lyricMode) {
-                    Text("Songs").tag(false); Text("Lyrics").tag(true)
+                Picker("Search type", selection: $mode) {
+                    ForEach(SearchMode.allCases) { Text($0.rawValue).tag($0) }
                 }.pickerStyle(.segmented)
                 if searching {
                     HStack(spacing: 12) { ProgressView(); Text("Searching YouTube Music…").foregroundStyle(.secondary) }
                         .frame(maxWidth: .infinity).padding(28).waveGlass(radius: 24)
-                } else if results.isEmpty {
+                } else if results.isEmpty && albums.isEmpty {
                     discoveryHero
                     featureStrip
+                } else if mode == .albums {
+                    albumSectionHeader
+                    ForEach(albums) { album in
+                        NavigationLink { AlbumDetailView(album: album) } label: { AlbumResultRow(album: album) }
+                            .buttonStyle(.plain)
+                    }
                 } else {
                     sectionHeader
                     ForEach(results) { TrackCard(track: $0) }
                 }
             }
             .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
-        }.scrollIndicators(.hidden)
+        }.scrollIndicators(.hidden).toolbar(.hidden, for: .navigationBar)
         .task(id: query) {
             guard query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
             try? await Task.sleep(nanoseconds: 450_000_000)
             guard !Task.isCancelled else { return }
             await search(showSpinner: false)
         }
+        .onChange(of: mode) { _ in
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { Task { await search(showSpinner: false) } }
+        }
+      }
     }
 
     private var header: some View {
@@ -100,11 +114,11 @@ private struct SearchHomeView: View {
     private var searchBar: some View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass").foregroundStyle(Color.waveBlue)
-            TextField("Search songs and artists", text: $query)
+            TextField(mode == .albums ? "Search albums and artists" : mode == .lyrics ? "Search using lyrics" : "Search songs and artists", text: $query)
                 .focused($focused).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
                 .onSubmit { Task { await search() } }
             if !query.isEmpty {
-                Button { query = ""; results = [] } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                Button { query = ""; results = []; albums = [] } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
             }
         }.font(.body.weight(.semibold)).padding(.horizontal, 18).frame(height: 58).waveGlass(radius: 22)
     }
@@ -152,44 +166,186 @@ private struct SearchHomeView: View {
         guard !term.isEmpty else { return }
         if showSpinner { focused = false }; searching = true
         defer { searching = false }
-        do { results = lyricMode ? try await player.lyricSearch(term) : try await player.catalog.search(term) }
+        do {
+            switch mode {
+            case .songs:
+                results = try await player.catalog.search(term); albums = []
+            case .albums:
+                albums = try await player.catalog.searchAlbums(term); results = []
+            case .lyrics:
+                results = try await player.lyricSearch(term); albums = []
+            }
+        }
         catch {
             let code = (error as NSError).code
             if !Task.isCancelled && code != NSURLErrorCancelled { player.error = error.localizedDescription }
+        }
+    }
+
+    private var albumSectionHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Albums").font(.system(size: 31, weight: .black, design: .rounded))
+                Text("Tap an album to see every song").font(.subheadline).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(albums.count)").font(.headline).foregroundStyle(Color.waveBlue).padding(.horizontal, 14).padding(.vertical, 8).waveGlass(radius: 16)
+        }
+    }
+}
+
+private enum SearchMode: String, CaseIterable, Identifiable {
+    case songs = "Songs", albums = "Albums", lyrics = "Lyrics"
+    var id: String { rawValue }
+}
+
+private struct AlbumResultRow: View {
+    let album: Album
+    var body: some View {
+        HStack(spacing: 15) {
+            AlbumArtwork(album: album, size: 84, radius: 16)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(album.title).font(.headline.weight(.bold)).lineLimit(2)
+                Text([album.artist, album.year].compactMap { $0 }.joined(separator: " • "))
+                    .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                Text("Album").font(.caption.weight(.bold)).foregroundStyle(Color.waveBlue)
+            }
+            Spacer()
+            Image(systemName: "chevron.right").foregroundStyle(.secondary)
+        }
+        .padding(12).contentShape(Rectangle()).waveGlass(radius: 22)
+    }
+}
+
+private struct AlbumDetailView: View {
+    @EnvironmentObject var player: WavePlayer
+    let album: Album
+    @State private var tracks: [Track] = []
+    @State private var loading = true
+    private var downloadableAlbum: ImportedPlaylist { ImportedPlaylist(id: "album:" + album.id, name: album.title, tracks: tracks) }
+    var body: some View {
+        ZStack {
+            WaveBackdrop()
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    AlbumArtwork(album: album, size: 260, radius: 24)
+                        .shadow(color: Color.waveBlue.opacity(0.18), radius: 30, y: 16)
+                    VStack(spacing: 5) {
+                        Text(album.title).font(.system(size: 32, weight: .black, design: .rounded)).multilineTextAlignment(.center)
+                        Text(album.artist).font(.title3.weight(.semibold)).foregroundStyle(Color.waveBlue)
+                        Text(["Album", album.year].compactMap { $0 }.joined(separator: " • ")).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    if loading {
+                        HStack { ProgressView(); Text("Loading album…") }.padding(30)
+                    } else {
+                        HStack(spacing: 10) {
+                            Button { player.queue = Array(tracks.dropFirst()); if let first = tracks.first { Task { await player.play(first) } } } label: {
+                                Label("Play", systemImage: "play.fill").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
+                            }.buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black).disabled(tracks.isEmpty)
+                            Button { Task { await player.downloadPlaylist(downloadableAlbum) } } label: {
+                                Image(systemName: player.isPlaylistDownloaded(downloadableAlbum) ? "arrow.down.circle.fill" : "arrow.down.circle").frame(width: 52, height: 50)
+                            }.buttonStyle(.bordered).disabled(tracks.isEmpty || player.downloadingPlaylists.contains(downloadableAlbum.id))
+                            Button { player.saveAlbum(album, tracks: tracks) } label: {
+                                Image(systemName: "plus.rectangle.on.folder").frame(width: 52, height: 50)
+                            }.buttonStyle(.bordered).disabled(tracks.isEmpty)
+                        }
+                        ForEach(tracks) { TrackCard(track: $0) }
+                    }
+                }.padding(18).padding(.bottom, 120)
+            }.scrollIndicators(.hidden)
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            do { tracks = try await player.catalog.albumTracks(for: album) }
+            catch { player.error = error.localizedDescription }
+            loading = false
         }
     }
 }
 
 private struct PlaylistLibraryView: View {
     @EnvironmentObject var player: WavePlayer
-    @State private var link = ""
-    @State private var importing = false
-    @State private var playlistName = ""
+    @State private var showCreator = false
     var body: some View {
       NavigationStack {
        ScrollView {
             LazyVStack(spacing: 14) {
-                HStack { Text("Playlists").font(.system(size: 40, weight: .black, design: .rounded)); Spacer() }
                 HStack {
-                    TextField("New playlist name", text: $playlistName)
-                    Button("Create") { player.createPlaylist(named: playlistName); playlistName = "" }
-                        .disabled(playlistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }.padding(16).waveGlass(radius: 22)
-                Text("Or import a public YouTube playlist").font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                HStack {
-                    TextField("Paste a public YouTube playlist link", text: $link).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button { Task { importing = true; await player.importPlaylist(link); importing = false; if player.error == nil { link = "" } } } label: {
-                        if importing { ProgressView() } else { Image(systemName: "plus") }
-                    }.disabled(link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || importing)
-                }.padding(16).waveGlass(radius: 22)
-                ForEach(player.playlists) { playlist in
-                    NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: { PlaylistLibraryRow(playlist: playlist) }
-                        .buttonStyle(.plain)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Your Library").font(.system(size: 40, weight: .black, design: .rounded))
+                        Text("Playlists you made and imported").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button { showCreator = true } label: {
+                        Image(systemName: "plus").font(.title2.bold()).frame(width: 54, height: 54).contentShape(Rectangle())
+                    }.buttonStyle(.plain).waveGlass(radius: 22)
+                }.padding(.bottom, 4)
+                HStack(spacing: 8) {
+                    Label("Playlists", systemImage: "rectangle.stack.fill")
+                    Spacer()
+                    Text("\(player.playlists.count)").foregroundStyle(.secondary)
+                }.font(.subheadline.weight(.bold)).padding(.horizontal, 16).frame(height: 44).waveGlass(radius: 20)
+                if player.playlists.isEmpty {
+                    VStack(spacing: 15) {
+                        Image(systemName: "music.note.list").font(.system(size: 46)).foregroundStyle(Color.waveBlue)
+                        Text("Make your first playlist").font(.title3.bold())
+                        Text("Create one here, then add songs from any search result.").font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        Button("Create playlist") { showCreator = true }.buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
+                    }.frame(maxWidth: .infinity).padding(34).waveGlass(radius: 28)
+                } else {
+                    ForEach(player.playlists) { playlist in
+                        NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: { PlaylistLibraryRow(playlist: playlist) }
+                            .buttonStyle(.plain)
+                    }
                 }
             }.padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
         }.scrollIndicators(.hidden)
        .toolbar(.hidden, for: .navigationBar)
+       .sheet(isPresented: $showCreator) { NewPlaylistSheet() }
       }
+    }
+}
+
+private struct NewPlaylistSheet: View {
+    @EnvironmentObject var player: WavePlayer
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var link = ""
+    @State private var importing = false
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                WaveBackdrop()
+                ScrollView {
+                    VStack(spacing: 18) {
+                        Image(systemName: "music.note.list").font(.system(size: 44)).foregroundStyle(Color.waveBlue).frame(width: 92, height: 92).waveGlass(radius: 28)
+                        Text("Give your playlist a name").font(.title2.bold())
+                        TextField("Playlist name", text: $name).font(.title3.weight(.semibold)).multilineTextAlignment(.center).padding(16).waveGlass(radius: 20)
+                        Button { player.createPlaylist(named: name); dismiss() } label: {
+                            Text("Create playlist").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
+                        }.buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
+                            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        HStack { Rectangle().frame(height: 1); Text("OR IMPORT").font(.caption.bold()); Rectangle().frame(height: 1) }.foregroundStyle(.secondary.opacity(0.5)).padding(.vertical, 8)
+                        Text("Public YouTube playlist").font(.headline).frame(maxWidth: .infinity, alignment: .leading)
+                        TextField("Paste playlist link", text: $link).textInputAutocapitalization(.never).autocorrectionDisabled().padding(16).waveGlass(radius: 20)
+                        Button {
+                            Task {
+                                importing = true
+                                await player.importPlaylist(link)
+                                importing = false
+                                if player.error == nil { dismiss() }
+                            }
+                        } label: {
+                            Group { if importing { ProgressView() } else { Label("Import playlist", systemImage: "square.and.arrow.down") } }
+                                .frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
+                        }.buttonStyle(.bordered).disabled(link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || importing)
+                    }.padding(24)
+                }
+            }
+            .navigationTitle("New Playlist").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+        .presentationDetents([.large])
     }
 }
 
@@ -198,8 +354,7 @@ private struct PlaylistLibraryRow: View {
     let playlist: ImportedPlaylist
     var body: some View {
         HStack(spacing: 14) {
-            if let first = playlist.tracks.first { Artwork(track: first, size: 68, radius: 18) }
-            else { Image(systemName: "music.note.list").font(.title).frame(width: 68, height: 68).background(Color.waveBlue.opacity(0.18), in: RoundedRectangle(cornerRadius: 18)) }
+            PlaylistCover(playlist: playlist, size: 72, radius: 14)
             VStack(alignment: .leading, spacing: 5) {
                 Text(playlist.name).font(.title3.bold()).lineLimit(1)
                 Text("\(playlist.tracks.count) songs").font(.subheadline).foregroundStyle(.secondary)
@@ -208,6 +363,29 @@ private struct PlaylistLibraryRow: View {
             if player.isPlaylistDownloaded(playlist) { Image(systemName: "arrow.down.circle.fill").foregroundStyle(Color.waveBlue) }
             Image(systemName: "chevron.right").foregroundStyle(.secondary)
         }.padding(12).contentShape(Rectangle()).waveGlass(radius: 24)
+    }
+}
+
+private struct PlaylistCover: View {
+    let playlist: ImportedPlaylist
+    var size: CGFloat
+    var radius: CGFloat
+    var body: some View {
+        Group {
+            if playlist.tracks.isEmpty {
+                ZStack { Color.waveBlue.opacity(0.18); Image(systemName: "music.note.list").font(.title).foregroundStyle(Color.waveBlue) }
+            } else if playlist.tracks.count == 1, let first = playlist.tracks.first {
+                Artwork(track: first, size: size, radius: 0)
+            } else {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 1), GridItem(.flexible(), spacing: 1)], spacing: 1) {
+                    ForEach(Array(playlist.tracks.prefix(4))) { track in
+                        Artwork(track: track, size: (size - 1) / 2, radius: 0)
+                    }
+                }
+            }
+        }
+        .frame(width: size, height: size).clipped()
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
     }
 }
 
@@ -226,6 +404,8 @@ private struct PlaylistDetailView: View {
                         Spacer()
                     }
                     if let playlist {
+                        PlaylistCover(playlist: playlist, size: 230, radius: 22)
+                            .shadow(color: Color.waveBlue.opacity(0.16), radius: 28, y: 14)
                         VStack(alignment: .leading, spacing: 5) {
                             Text(playlist.name).font(.system(size: 38, weight: .black, design: .rounded))
                             Text("\(playlist.tracks.count) songs").foregroundStyle(.secondary)
@@ -423,7 +603,14 @@ struct PlayerView: View {
                     Spacer()
                     VStack(spacing: 2) { Text("NOW PLAYING").font(.caption.weight(.black)).tracking(2); Text("CAPYFLOW").font(.caption2).foregroundStyle(.secondary) }
                     Spacer()
-                    Menu { Button("Clear queue", role: .destructive) { player.queue.removeAll() } } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
+                    Menu {
+                        Picker("Audio quality", selection: $player.audioQuality) {
+                            ForEach(AudioQuality.allCases) { quality in Text(quality.rawValue).tag(quality) }
+                        }
+                        Toggle("Autoplay", isOn: $player.autoplayEnabled)
+                        Divider()
+                        Button("Clear queue", role: .destructive) { player.queue.removeAll() }
+                    } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
                 }
                 if let track = player.current {
                         Artwork(track: track, size: min(geometry.size.width - 48, geometry.size.height * 0.38, 390), radius: 34)
@@ -490,10 +677,16 @@ private struct QueueSheet: View {
                     Section("Now playing") { TrackCard(track: current) }
                 }
                 Section("Next") {
-                    if player.queue.isEmpty { Text("The queue is empty").foregroundStyle(.secondary) }
+                    if player.autoplayLoading { HStack { ProgressView(); Text("Finding related songs…") } }
+                    else if player.queue.isEmpty { Text(player.autoplayEnabled ? "Related songs will play automatically." : "The queue is empty.").foregroundStyle(.secondary) }
                     ForEach(player.queue) { TrackCard(track: $0) }
                     .onDelete { player.queue.remove(atOffsets: $0) }
                     .onMove { player.queue.move(fromOffsets: $0, toOffset: $1) }
+                }
+                Section {
+                    Toggle(isOn: $player.autoplayEnabled) { Label("Autoplay related songs", systemImage: "infinity") }
+                } footer: {
+                    Text("When your queue ends, CapyFlow finds more music based on the current artist.")
                 }
             }
             .scrollContentBackground(.hidden).background(WaveBackdrop())

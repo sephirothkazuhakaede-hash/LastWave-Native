@@ -63,3 +63,24 @@ struct Artwork: View {
         .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(.white.opacity(0.12), lineWidth: 0.7) }
     }
 }
+
+struct AlbumArtwork: View {
+    let album: Album
+    var size: CGFloat = 84
+    var radius: CGFloat = 16
+    var body: some View {
+        AsyncImage(url: album.artwork) { phase in
+            switch phase {
+            case .success(let image): image.resizable().scaledToFill()
+            default:
+                ZStack {
+                    LinearGradient(colors: [Color.waveBlue.opacity(0.45), Color.indigo.opacity(0.35)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    Image(systemName: "square.stack.fill").foregroundStyle(.white.opacity(0.85))
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(.white.opacity(0.12), lineWidth: 0.7) }
+    }
+}

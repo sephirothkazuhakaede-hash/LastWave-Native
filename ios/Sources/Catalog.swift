@@ -10,7 +10,35 @@ struct Track: Identifiable, Codable, Equatable {
     init(id: String, title: String, artist: String, duration: Double? = nil, artworkURL: URL? = nil) {
         self.id = id; self.title = title; self.artist = artist; self.duration = duration; self.artworkURL = artworkURL
     }
-    var artwork: URL? { artworkURL ?? URL(string: "https://i.ytimg.com/vi/\(id)/hqdefault.jpg") }
+    var artwork: URL? {
+        upgradedArtworkURL(artworkURL) ?? URL(string: "https://i.ytimg.com/vi/\(id)/maxresdefault.jpg")
+    }
+}
+
+struct Album: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let artist: String
+    let year: String?
+    let artworkURL: URL?
+    var artwork: URL? { upgradedArtworkURL(artworkURL) }
+}
+
+enum AudioQuality: String, CaseIterable, Identifiable {
+    case dataSaver = "Data Saver"
+    case automatic = "Automatic"
+    case high = "High"
+    var id: String { rawValue }
+}
+
+private func upgradedArtworkURL(_ url: URL?) -> URL? {
+    guard let url else { return nil }
+    let value = url.absoluteString.replacingOccurrences(
+        of: "=w[0-9]+-h[0-9]+",
+        with: "=w1200-h1200",
+        options: .regularExpression
+    )
+    return URL(string: value)
 }
 
 enum WaveError: LocalizedError {
@@ -95,6 +123,74 @@ actor Catalog {
         return results
     }
 
+    func searchAlbums(_ query: String) async throws -> [Album] {
+        let root = try await searchResponse(query: query, params: "EgWKAQIYAWoKEAkQChAFEAMQBA==")
+        var results: [Album] = []
+        func textRuns(_ column: [String: Any]) -> [[String: Any]] {
+            let item = column["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any]
+            return (item?["text"] as? [String: Any])?["runs"] as? [[String: Any]] ?? []
+        }
+        func walk(_ node: Any) {
+            if let object = node as? [String: Any] {
+                if let renderer = object["musicResponsiveListItemRenderer"] as? [String: Any],
+                   let navigation = renderer["navigationEndpoint"] as? [String: Any],
+                   let browse = navigation["browseEndpoint"] as? [String: Any],
+                   let id = browse["browseId"] as? String, id.hasPrefix("MPRE"),
+                   let columns = renderer["flexColumns"] as? [[String: Any]],
+                   let title = columns.first.flatMap({ textRuns($0).first?["text"] as? String }),
+                   !results.contains(where: { $0.id == id }) {
+                    let details = columns.dropFirst().flatMap(textRuns)
+                    let artist = details.first(where: { run in
+                        let endpoint = run["navigationEndpoint"] as? [String: Any]
+                        let artistBrowse = endpoint?["browseEndpoint"] as? [String: Any]
+                        return (artistBrowse?["browseId"] as? String)?.hasPrefix("UC") == true
+                    })?["text"] as? String ?? details.compactMap { $0["text"] as? String }.first(where: { $0 != "Album" && $0 != "Single" && $0 != "EP" && $0 != " • " }) ?? "Unknown artist"
+                    let year = details.compactMap { $0["text"] as? String }.first(where: { $0.range(of: "^[0-9]{4}$", options: .regularExpression) != nil })
+                    let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
+                    let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
+                    results.append(Album(id: id, title: title, artist: artist, year: year, artworkURL: artwork.flatMap(URL.init(string:))))
+                }
+                object.values.forEach(walk)
+            } else if let array = node as? [Any] { array.forEach(walk) }
+        }
+        walk(root)
+        if results.isEmpty { throw WaveError.message("No albums were returned for that search.") }
+        return results
+    }
+
+    func albumTracks(for album: Album) async throws -> [Track] {
+        let root = try await browseResponse(id: album.id)
+        var tracks: [Track] = []
+        func renderedText(_ node: Any?) -> String? {
+            guard let object = node as? [String: Any] else { return nil }
+            if let simple = object["simpleText"] as? String { return simple }
+            return (object["runs"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined()
+        }
+        func walk(_ node: Any) {
+            if let object = node as? [String: Any] {
+                if let renderer = object["musicResponsiveListItemRenderer"] as? [String: Any],
+                   let item = renderer["playlistItemData"] as? [String: Any],
+                   let id = item["videoId"] as? String,
+                   let columns = renderer["flexColumns"] as? [[String: Any]],
+                   !tracks.contains(where: { $0.id == id }) {
+                    let values = columns.compactMap { column -> String? in
+                        let flex = column["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any]
+                        return renderedText(flex?["text"])
+                    }
+                    let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
+                    let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
+                    if let title = values.first {
+                        tracks.append(Track(id: id, title: title, artist: album.artist, artworkURL: artwork.flatMap(URL.init(string:)) ?? album.artworkURL))
+                    }
+                }
+                object.values.forEach(walk)
+            } else if let array = node as? [Any] { array.forEach(walk) }
+        }
+        walk(root)
+        if tracks.isEmpty { throw WaveError.message("No playable songs were found in that album.") }
+        return tracks
+    }
+
     func playlist(from input: String) async throws -> ImportedPlaylist {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let listID = URLComponents(string: value)?.queryItems?.first(where: { $0.name == "list" })?.value ?? value
@@ -139,6 +235,48 @@ actor Catalog {
         walk(root)
         guard !tracks.isEmpty else { throw WaveError.message("No downloadable songs were found in that playlist.") }
         return ImportedPlaylist(id: listID, name: name, tracks: tracks)
+    }
+
+    private func searchResponse(query: String, params: String) async throws -> Any {
+        let config = await loadClientConfig()
+        var components = URLComponents(string: "https://music.youtube.com/youtubei/v1/search")!
+        components.queryItems = [
+            URLQueryItem(name: "key", value: config.apiKey),
+            URLQueryItem(name: "prettyPrint", value: "false")
+        ]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("https://music.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://music.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("67", forHTTPHeaderField: "X-YouTube-Client-Name")
+        request.setValue(config.version, forHTTPHeaderField: "X-YouTube-Client-Version")
+        var client: [String: Any] = ["clientName": "WEB_REMIX", "clientVersion": config.version, "hl": "en", "gl": "PH"]
+        if let visitorData = config.visitorData { client["visitorData"] = visitorData }
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["context": ["client": client], "query": query, "params": params])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw WaveError.message("YouTube Music did not accept the search request.") }
+        return try JSONSerialization.jsonObject(with: data)
+    }
+
+    private func browseResponse(id: String) async throws -> Any {
+        let config = await loadClientConfig()
+        var components = URLComponents(string: "https://music.youtube.com/youtubei/v1/browse")!
+        components.queryItems = [URLQueryItem(name: "key", value: config.apiKey), URLQueryItem(name: "prettyPrint", value: "false")]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("https://music.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue("https://music.youtube.com/", forHTTPHeaderField: "Referer")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "context": ["client": ["clientName": "WEB_REMIX", "clientVersion": config.version, "hl": "en", "gl": "PH"]],
+            "browseId": id
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw WaveError.message("That album could not be opened.") }
+        return try JSONSerialization.jsonObject(with: data)
     }
 
     private func parseDuration(_ value: String) -> Double? {
@@ -188,21 +326,27 @@ actor Catalog {
         return nil
     }
 
-    func stream(for track: Track) async throws -> URL { try await resolvedStream(for: track).url }
+    func stream(for track: Track, quality: AudioQuality = .automatic) async throws -> URL {
+        try await resolvedStream(for: track, quality: quality).url
+    }
 
-    func resolvedStream(for track: Track) async throws -> ResolvedStream {
-        if let cached = streamCache[track.id], Date().timeIntervalSince(cached.1) < 900 { return cached.0 }
+    func resolvedStream(for track: Track, quality: AudioQuality = .automatic) async throws -> ResolvedStream {
+        let cacheKey = track.id + ":" + quality.rawValue
+        if let cached = streamCache[cacheKey], Date().timeIntervalSince(cached.1) < 900 { return cached.0 }
         // Prefer on-device extraction, then use YouTubeKit's maintained fallback when
         // YouTube changes its player response before an app update can ship.
         let streams = try await YouTube(videoID: track.id, methods: [.local, .remote]).streams
         let audio = streams.filterAudioOnly().filter(\.isNativelyPlayable)
-        guard let stream = audio.filter({ $0.fileExtension == .m4a }).highestAudioBitrateStream()
-                ?? audio.highestAudioBitrateStream()
+        let preferred = audio.filter { $0.fileExtension == .m4a }
+        let selected = quality == .dataSaver
+            ? (preferred.lowestAudioBitrateStream() ?? audio.lowestAudioBitrateStream())
+            : (preferred.highestAudioBitrateStream() ?? audio.highestAudioBitrateStream())
+        guard let stream = selected
                 ?? streams.filterVideoAndAudio().filter(\.isNativelyPlayable).highestAudioBitrateStream() else {
             throw WaveError.message("No compatible audio stream. YouTube may have changed its extractor requirements.")
         }
         let resolved = ResolvedStream(url: stream.url, duration: track.duration)
-        streamCache[track.id] = (resolved, Date())
+        streamCache[cacheKey] = (resolved, Date())
         return resolved
     }
 }
