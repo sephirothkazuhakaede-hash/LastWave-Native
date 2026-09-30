@@ -1,11 +1,24 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import FirebaseCore
+import GoogleSignIn
 
 @main struct CapyFlowApp: App {
     @StateObject private var player = WavePlayer()
+    @StateObject private var auth: AuthSession
+    init() {
+        FirebaseApp.configure()
+        _auth = StateObject(wrappedValue: AuthSession())
+    }
     var body: some Scene {
-        WindowGroup { RootView().environmentObject(player).preferredColorScheme(.dark) }
+        WindowGroup {
+            RootView()
+                .environmentObject(player)
+                .environmentObject(auth)
+                .preferredColorScheme(.dark)
+                .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
+        }
     }
 }
 
@@ -56,6 +69,7 @@ struct RootView: View {
 
 private struct SearchHomeView: View {
     @EnvironmentObject var player: WavePlayer
+    @EnvironmentObject var auth: AuthSession
     @Binding var query: String
     @Binding var results: [Track]
     @Binding var albums: [Album]
@@ -63,6 +77,7 @@ private struct SearchHomeView: View {
     @Binding var mode: SearchMode
     @Binding var lastSearchSignature: String
     @FocusState private var focused: Bool
+    @State private var showAccount = false
     var body: some View {
       NavigationStack {
         ScrollView {
@@ -112,9 +127,21 @@ private struct SearchHomeView: View {
                 Text("Your music. Your current.").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
             }
             Spacer()
+            Button { showAccount = true } label: {
+                Group {
+                    if let url = auth.user?.photoURL {
+                        AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { Image(systemName: "person.crop.circle") }
+                    } else {
+                        Image(systemName: "person.crop.circle")
+                    }
+                }
+                .font(.title2.bold()).frame(width: 54, height: 54).clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            }
+            .buttonStyle(.plain).waveGlass(radius: 22)
             Button { focused = true } label: { Image(systemName: "magnifyingglass").font(.title2.bold()).frame(width: 54, height: 54) }
                 .buttonStyle(.plain).waveGlass(radius: 22)
         }
+        .sheet(isPresented: $showAccount) { AccountSheet() }
     }
 
     private var searchBar: some View {
@@ -204,6 +231,56 @@ private enum SearchMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private struct AccountSheet: View {
+    @EnvironmentObject var auth: AuthSession
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                WaveBackdrop()
+                VStack(spacing: 20) {
+                    Group {
+                        if let url = auth.user?.photoURL {
+                            AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { ProgressView() }
+                        } else {
+                            Image(systemName: "person.crop.circle.fill").resizable().scaledToFit().foregroundStyle(Color.waveBlue)
+                        }
+                    }
+                    .frame(width: 104, height: 104).clipShape(Circle())
+                    if let user = auth.user {
+                        VStack(spacing: 5) {
+                            Text(user.displayName ?? "CapyFlow listener").font(.title2.bold())
+                            Text(user.email ?? "Signed in with Google").foregroundStyle(.secondary)
+                        }
+                        Button(role: .destructive) { auth.signOut() } label: {
+                            Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                                .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
+                        }.buttonStyle(.bordered)
+                    } else {
+                        VStack(spacing: 6) {
+                            Text("Sign in to CapyFlow").font(.title2.bold())
+                            Text("Use your Google account now; shared profiles and playlists can build on this account next.")
+                                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        }
+                        Button { Task { await auth.signInWithGoogle() } } label: {
+                            Group { if auth.working { ProgressView() } else { Label("Continue with Google", systemImage: "person.badge.key.fill") } }
+                                .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black).disabled(auth.working)
+                    }
+                    if let error = auth.error {
+                        Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
+                    }
+                    Spacer()
+                }.padding(28)
+            }
+            .navigationTitle("Account").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .presentationDetents([.medium])
+    }
+}
+
 private struct AlbumResultRow: View {
     let album: Album
     var body: some View {
@@ -271,6 +348,7 @@ private struct AlbumDetailView: View {
 private struct PlaylistLibraryView: View {
     @EnvironmentObject var player: WavePlayer
     @State private var showCreator = false
+    @State private var playlistToRename: ImportedPlaylist?
     var body: some View {
       NavigationStack {
        ScrollView {
@@ -301,12 +379,17 @@ private struct PlaylistLibraryView: View {
                     ForEach(player.playlists) { playlist in
                         NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: { PlaylistLibraryRow(playlist: playlist) }
                             .buttonStyle(.plain)
+                            .contextMenu {
+                                Button { playlistToRename = playlist } label: { Label("Rename", systemImage: "pencil") }
+                                Button(role: .destructive) { player.deletePlaylist(playlist.id) } label: { Label("Delete playlist", systemImage: "trash") }
+                            }
                     }
                 }
             }.padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
         }.scrollIndicators(.hidden)
        .toolbar(.hidden, for: .navigationBar)
        .sheet(isPresented: $showCreator) { NewPlaylistSheet() }
+       .sheet(item: $playlistToRename) { RenamePlaylistSheet(playlistID: $0.id, currentName: $0.name) }
       }
     }
 }
@@ -317,16 +400,35 @@ private struct NewPlaylistSheet: View {
     @State private var name = ""
     @State private var link = ""
     @State private var importing = false
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var photoData: Data?
     var body: some View {
         NavigationStack {
             ZStack {
                 WaveBackdrop()
                 ScrollView {
                     VStack(spacing: 18) {
-                        Image(systemName: "music.note.list").font(.system(size: 44)).foregroundStyle(Color.waveBlue).frame(width: 92, height: 92).waveGlass(radius: 28)
+                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                            Group {
+                                if let photoData, let image = UIImage(data: photoData) {
+                                    Image(uiImage: image).resizable().scaledToFill()
+                                } else {
+                                    VStack(spacing: 7) {
+                                        Image(systemName: "photo.badge.plus").font(.system(size: 35))
+                                        Text("Add photo").font(.caption.bold())
+                                    }.foregroundStyle(Color.waveBlue)
+                                }
+                            }
+                            .frame(width: 150, height: 150).clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
+                            .waveGlass(radius: 30)
+                        }.buttonStyle(.plain)
                         Text("Give your playlist a name").font(.title2.bold())
                         TextField("Playlist name", text: $name).font(.title3.weight(.semibold)).multilineTextAlignment(.center).padding(16).waveGlass(radius: 20)
-                        Button { player.createPlaylist(named: name); dismiss() } label: {
+                        Button {
+                            do { try player.createPlaylist(named: name, artworkData: photoData); dismiss() }
+                            catch { player.error = error.localizedDescription }
+                        } label: {
                             Text("Create playlist").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
                         }.buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
                             .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -349,6 +451,10 @@ private struct NewPlaylistSheet: View {
             }
             .navigationTitle("New Playlist").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .onChange(of: selectedPhoto) { item in
+                guard let item else { return }
+                Task { photoData = try? await item.loadTransferable(type: Data.self) }
+            }
         }
         .presentationDetents([.large])
     }
@@ -402,6 +508,7 @@ private struct PlaylistDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let playlistID: String
     @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showRename = false
     private var playlist: ImportedPlaylist? { player.playlists.first { $0.id == playlistID } }
     var body: some View {
         ZStack {
@@ -411,6 +518,14 @@ private struct PlaylistDetailView: View {
                     HStack {
                         Button { dismiss() } label: { Image(systemName: "chevron.left").frame(width: 48, height: 48).contentShape(Rectangle()) }.waveGlass(radius: 19)
                         Spacer()
+                        if let playlist {
+                            Menu {
+                                Button { showRename = true } label: { Label("Rename playlist", systemImage: "pencil") }
+                                Button(role: .destructive) { player.deletePlaylist(playlist.id); dismiss() } label: { Label("Delete playlist", systemImage: "trash") }
+                            } label: {
+                                Image(systemName: "ellipsis").frame(width: 48, height: 48).contentShape(Rectangle())
+                            }.waveGlass(radius: 19)
+                        }
                     }
                     if let playlist {
                         PlaylistCover(playlist: playlist, size: 230, radius: 22)
@@ -435,6 +550,9 @@ private struct PlaylistDetailView: View {
                 }.padding(18).padding(.bottom, 120)
             }.scrollIndicators(.hidden)
         }.navigationBarBackButtonHidden()
+        .sheet(isPresented: $showRename) {
+            if let playlist { RenamePlaylistSheet(playlistID: playlist.id, currentName: playlist.name) }
+        }
         .task { if let playlist { player.prewarm(playlist.tracks) } }
         .onChange(of: selectedPhoto) { item in
             guard let item else { return }
@@ -444,6 +562,39 @@ private struct PlaylistDetailView: View {
                 catch { player.error = error.localizedDescription }
             }
         }
+    }
+}
+
+private struct RenamePlaylistSheet: View {
+    @EnvironmentObject var player: WavePlayer
+    @Environment(\.dismiss) private var dismiss
+    let playlistID: String
+    @State private var name: String
+    init(playlistID: String, currentName: String) {
+        self.playlistID = playlistID
+        _name = State(initialValue: currentName)
+    }
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                WaveBackdrop()
+                VStack(spacing: 18) {
+                    TextField("Playlist name", text: $name)
+                        .font(.title3.weight(.semibold)).padding(16).waveGlass(radius: 20)
+                    Button {
+                        player.renamePlaylist(playlistID, to: name)
+                        dismiss()
+                    } label: {
+                        Text("Save name").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Spacer()
+                }.padding(24)
+            }
+            .navigationTitle("Rename Playlist").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }.presentationDetents([.medium])
     }
 }
 
@@ -650,7 +801,7 @@ struct PlayerView: View {
                         .font(.caption.monospacedDigit().weight(.semibold)).foregroundStyle(.secondary)
                 }
                 HStack(spacing: 32) {
-                    Button { player.seek(max(0, player.elapsed - 10)) } label: { Image(systemName: "gobackward.10").frame(width: 58, height: 58) }.waveGlass(radius: 23)
+                    Button { Task { await player.previous() } } label: { Image(systemName: "backward.end.fill").frame(width: 58, height: 58) }.waveGlass(radius: 23)
                     Button { player.toggle() } label: {
                         Image(systemName: player.playing ? "pause.fill" : "play.fill").font(.system(size: 30, weight: .bold)).frame(width: 82, height: 82)
                             .background(Color.waveBlue, in: RoundedRectangle(cornerRadius: 31, style: .continuous)).foregroundStyle(.black)

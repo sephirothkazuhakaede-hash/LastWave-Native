@@ -1,7 +1,7 @@
 import Foundation
 import YouTubeKit
 
-struct Track: Identifiable, Codable, Equatable {
+struct Track: Identifiable, Codable, Equatable, Sendable {
     let id: String
     let title: String
     let artist: String
@@ -24,7 +24,7 @@ struct Album: Identifiable, Hashable {
     var artwork: URL? { upgradedArtworkURL(artworkURL) }
 }
 
-enum AudioQuality: String, CaseIterable, Identifiable {
+enum AudioQuality: String, CaseIterable, Identifiable, Sendable {
     case dataSaver = "Data Saver"
     case automatic = "Automatic"
     case high = "High"
@@ -47,7 +47,7 @@ enum WaveError: LocalizedError {
 }
 
 actor Catalog {
-    struct ResolvedStream {
+    struct ResolvedStream: Sendable {
         let url: URL
         let duration: Double?
     }
@@ -61,6 +61,8 @@ actor Catalog {
     private let fallbackVersion = "1.20260707.12.00"
     private let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148"
     private var streamCache: [String: (ResolvedStream, Date)] = [:]
+    private var durationCache: [String: Double] = [:]
+    private var resolutionTasks: [String: Task<ResolvedStream, Error>] = [:]
 
     func search(_ query: String) async throws -> [Track] {
         let config = await loadClientConfig()
@@ -230,9 +232,14 @@ actor Catalog {
                         let flex = column["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any]
                         return renderedText(flex?["text"])
                     }
+                    let fixedColumns = renderer["fixedColumns"] as? [[String: Any]] ?? []
+                    let duration = fixedColumns.compactMap { column -> Double? in
+                        let fixed = column["musicResponsiveListItemFixedColumnRenderer"] as? [String: Any]
+                        return renderedText(fixed?["text"]).flatMap(parseDuration)
+                    }.first
                     let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
                     let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
-                    if let title = values.first { tracks.append(Track(id: id, title: title, artist: values.dropFirst().first ?? "Unknown artist", artworkURL: artwork.flatMap(URL.init(string:)))) }
+                    if let title = values.first { tracks.append(Track(id: id, title: title, artist: values.dropFirst().first ?? "Unknown artist", duration: duration, artworkURL: artwork.flatMap(URL.init(string:)))) }
                 }
                 object.values.forEach(walk)
             } else if let array = node as? [Any] { array.forEach(walk) }
@@ -338,21 +345,55 @@ actor Catalog {
     func resolvedStream(for track: Track, quality: AudioQuality = .automatic) async throws -> ResolvedStream {
         let cacheKey = track.id + ":" + quality.rawValue
         if let cached = streamCache[cacheKey], Date().timeIntervalSince(cached.1) < 900 { return cached.0 }
-        // Prefer on-device extraction, then use YouTubeKit's maintained fallback when
-        // YouTube changes its player response before an app update can ship.
-        let streams = try await YouTube(videoID: track.id, methods: [.local, .remote]).streams
-        let audio = streams.filterAudioOnly().filter(\.isNativelyPlayable)
-        let preferred = audio.filter { $0.fileExtension == .m4a }
-        let selected = quality == .dataSaver
-            ? (preferred.lowestAudioBitrateStream() ?? audio.lowestAudioBitrateStream())
-            : (preferred.highestAudioBitrateStream() ?? audio.highestAudioBitrateStream())
-        guard let stream = selected
-                ?? streams.filterVideoAndAudio().filter(\.isNativelyPlayable).highestAudioBitrateStream() else {
-            throw WaveError.message("No compatible audio stream. YouTube may have changed its extractor requirements.")
+        if let existing = resolutionTasks[cacheKey] { return try await existing.value }
+        let task = Task { () throws -> ResolvedStream in
+            async let exactDuration = self.duration(for: track)
+            // Local extraction avoids a server round-trip. YouTubeKit's maintained
+            // Cloudflare-backed remote method remains a fallback when YouTube changes.
+            let streams = try await YouTube(videoID: track.id, methods: [.local, .remote]).streams
+            let audio = streams.filterAudioOnly().filter(\.isNativelyPlayable)
+            let preferred = audio.filter { $0.fileExtension == .m4a }
+            let selected = quality == .dataSaver
+                ? (preferred.lowestAudioBitrateStream() ?? audio.lowestAudioBitrateStream())
+                : (preferred.highestAudioBitrateStream() ?? audio.highestAudioBitrateStream())
+            guard let stream = selected
+                    ?? streams.filterVideoAndAudio().filter(\.isNativelyPlayable).highestAudioBitrateStream() else {
+                throw WaveError.message("No compatible audio stream. YouTube may have changed its extractor requirements.")
+            }
+            return ResolvedStream(url: stream.url, duration: await exactDuration)
         }
-        let resolved = ResolvedStream(url: stream.url, duration: track.duration)
+        resolutionTasks[cacheKey] = task
+        defer { resolutionTasks.removeValue(forKey: cacheKey) }
+        let resolved = try await task.value
         streamCache[cacheKey] = (resolved, Date())
         return resolved
+    }
+
+    func duration(for track: Track) async -> Double? {
+        if let duration = track.duration, duration > 0 {
+            durationCache[track.id] = duration
+            return duration
+        }
+        if let cached = durationCache[track.id] { return cached }
+        do {
+            var request = URLRequest(url: URL(string: "https://www.youtube.com/watch?v=\(track.id)")!)
+            request.timeoutInterval = 8
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            let html = String(decoding: data, as: UTF8.self)
+            let patterns = ["\\\"lengthSeconds\\\"\\s*:\\s*\\\"([0-9]+)\\\"", "length_seconds=([0-9]+)"]
+            let range = NSRange(html.startIndex..<html.endIndex, in: html)
+            for pattern in patterns {
+                guard let regex = try? NSRegularExpression(pattern: pattern),
+                      let match = regex.firstMatch(in: html, range: range),
+                      let valueRange = Range(match.range(at: 1), in: html),
+                      let value = Double(html[valueRange]), value > 0 else { continue }
+                durationCache[track.id] = value
+                return value
+            }
+        } catch { }
+        return nil
     }
 }
 

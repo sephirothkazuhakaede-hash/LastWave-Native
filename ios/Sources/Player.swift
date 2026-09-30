@@ -32,6 +32,7 @@ import UIKit
     private let player = AVPlayer()
     private var generation = UUID()
     private var expectedDuration: Double?
+    private var playbackHistory: [Track] = []
     private var nowPlayingArtwork: MPMediaItemArtwork?
     private var didReachExpectedEnd = false
     private var timer: Any?
@@ -95,10 +96,14 @@ import UIKit
         }
     }
 
-    func play(_ track: Track) async {
+    func play(_ track: Track, recordHistory: Bool = true) async {
         let token = UUID(); generation = token
         loading = true; error = nil
         player.pause()
+        if recordHistory, let current, current.id != track.id {
+            playbackHistory.append(current)
+            if playbackHistory.count > 50 { playbackHistory.removeFirst(playbackHistory.count - 50) }
+        }
         current = track; elapsed = 0; duration = track.duration ?? 0; expectedDuration = track.duration
         didReachExpectedEnd = false; lyrics = []; nowPlayingArtwork = nil
         publishNowPlaying()
@@ -115,6 +120,21 @@ import UIKit
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
             try AVAudioSession.sharedInstance().setActive(true)
             let item = AVPlayerItem(url: url)
+            if let expectedDuration, expectedDuration > 0 {
+                item.forwardPlaybackEndTime = CMTime(seconds: expectedDuration, preferredTimescale: 600)
+            } else {
+                let catalog = self.catalog
+                Task { [weak self, weak item] in
+                    guard let exact = await catalog.duration(for: track), let item else { return }
+                    await MainActor.run {
+                        guard let self, token == self.generation, item === self.player.currentItem else { return }
+                        self.expectedDuration = exact
+                        self.duration = exact
+                        item.forwardPlaybackEndTime = CMTime(seconds: exact, preferredTimescale: 600)
+                        self.publishNowPlaying()
+                    }
+                }
+            }
             statusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
                 if item.status == .readyToPlay {
                     Task { @MainActor in self?.loading = false; self?.player.play() }
@@ -148,6 +168,14 @@ import UIKit
         if queue.isEmpty { player.pause(); playing = false; return }
         await play(queue.removeFirst())
     }
+    func previous() async {
+        if elapsed > 3 || playbackHistory.isEmpty {
+            seek(0)
+            return
+        }
+        let previous = playbackHistory.removeLast()
+        await play(previous, recordHistory: false)
+    }
     func removeFromQueue(at index: Int) {
         guard queue.indices.contains(index) else { return }
         queue.remove(at: index)
@@ -158,7 +186,7 @@ import UIKit
         queue.insert(track, at: destination)
     }
     func prewarm(_ tracks: [Track]) {
-        let candidates = Array(tracks.prefix(6))
+        let candidates = Array(tracks.prefix(3))
         let quality = audioQuality
         let catalog = self.catalog
         Task {
@@ -173,9 +201,15 @@ import UIKit
     func isPlaylistDownloaded(_ playlist: ImportedPlaylist) -> Bool {
         !playlist.tracks.isEmpty && playlist.tracks.allSatisfy { isDownloaded($0) }
     }
-    @discardableResult func download(_ track: Track) async -> Bool {
+    @discardableResult func download(_ track: Track, reportError: Bool = true) async -> Bool {
         if isDownloaded(track) { return true }
-        guard !downloading.contains(track.id) else { return false }
+        if downloading.contains(track.id) {
+            for _ in 0..<240 {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                if !downloading.contains(track.id) { return isDownloaded(track) }
+            }
+            return isDownloaded(track)
+        }
         downloading.insert(track.id)
         downloadProgress[track.id] = 0
         error = nil
@@ -201,7 +235,10 @@ import UIKit
             let lyricsService = self.lyricsService
             Task { _ = try? await lyricsService.lyrics(for: track) }
             return true
-        } catch { self.error = error.localizedDescription; return false }
+        } catch {
+            if reportError { self.error = error.localizedDescription }
+            return false
+        }
     }
     func importPlaylist(_ input: String) async {
         do {
@@ -210,10 +247,33 @@ import UIKit
             if let data = try? JSONEncoder().encode(playlists) { UserDefaults.standard.set(data, forKey: "importedPlaylists") }
         } catch { self.error = error.localizedDescription }
     }
-    func createPlaylist(named name: String) {
+    @discardableResult func createPlaylist(named name: String, artworkData: Data? = nil) throws -> String {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { return }
-        playlists.append(ImportedPlaylist(id: UUID().uuidString, name: cleaned, tracks: []))
+        guard !cleaned.isEmpty else { throw WaveError.message("Give the playlist a name first.") }
+        let id = UUID().uuidString
+        playlists.append(ImportedPlaylist(id: id, name: cleaned, tracks: []))
+        savePlaylists()
+        if let artworkData {
+            do { try setPlaylistArtwork(artworkData, for: id) }
+            catch {
+                playlists.removeAll { $0.id == id }
+                savePlaylists()
+                throw error
+            }
+        }
+        return id
+    }
+    func renamePlaylist(_ playlistID: String, to name: String) {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty, let index = playlists.firstIndex(where: { $0.id == playlistID }) else { return }
+        let playlist = playlists[index]
+        playlists[index] = ImportedPlaylist(id: playlist.id, name: cleaned, tracks: playlist.tracks)
+        savePlaylists()
+    }
+    func deletePlaylist(_ playlistID: String) {
+        playlists.removeAll { $0.id == playlistID }
+        let artwork = playlistArtworkFolder.appendingPathComponent(safePlaylistID(playlistID) + ".jpg")
+        if FileManager.default.fileExists(atPath: artwork.path) { try? FileManager.default.removeItem(at: artwork) }
         savePlaylists()
     }
     func add(_ track: Track, to playlistID: String) {
@@ -258,27 +318,41 @@ import UIKit
             playlistDownloadProgress.removeValue(forKey: playlist.id)
         }
         var failures: [String] = []
-        var completed = 0
-        for track in pending {
-            var succeeded = false
-            for attempt in 0..<4 {
-                if await download(track) {
-                    succeeded = true
-                    break
-                }
-                if attempt < 3 {
-                    let delay = UInt64(700_000_000 * (attempt + 1))
-                    try? await Task.sleep(nanoseconds: delay)
+        var processed = 0
+        var iterator = pending.makeIterator()
+        let workerCount = min(3, pending.count)
+        await withTaskGroup(of: (Track, Bool).self) { group in
+            for _ in 0..<workerCount {
+                guard let track = iterator.next() else { break }
+                group.addTask { [weak self] in
+                    guard let self else { return (track, false) }
+                    return (track, await self.downloadWithRetries(track))
                 }
             }
-            if succeeded { completed += 1 } else { failures.append(track.title) }
-            playlistDownloadProgress[playlist.id] = "\(completed)/\(pending.count)"
+            while let (track, succeeded) = await group.next() {
+                processed += 1
+                if !succeeded { failures.append(track.title) }
+                playlistDownloadProgress[playlist.id] = "\(processed)/\(pending.count)"
+                if let nextTrack = iterator.next() {
+                    group.addTask { [weak self] in
+                        guard let self else { return (nextTrack, false) }
+                        return (nextTrack, await self.downloadWithRetries(nextTrack))
+                    }
+                }
+            }
         }
         if failures.isEmpty {
             error = nil
         } else {
             error = "Couldn't download \(failures.count) song\(failures.count == 1 ? "" : "s"). Tap Download all to retry."
         }
+    }
+    private func downloadWithRetries(_ track: Track) async -> Bool {
+        for attempt in 0..<3 {
+            if await download(track, reportError: false) { return true }
+            if attempt < 2 { try? await Task.sleep(nanoseconds: UInt64(650_000_000 * (attempt + 1))) }
+        }
+        return false
     }
     func lyricSearch(_ query: String) async throws -> [Track] {
         let matches = try await lyricsService.matchingTracks(query)
