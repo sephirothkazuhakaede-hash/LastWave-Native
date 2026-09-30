@@ -1,6 +1,6 @@
-# LastWave iOS — personal prototype 0.2.0
+# CapyFlow iOS — personal prototype 0.2.0
 
-Native SwiftUI reimplementation inspired by Clash-Projects/LastWave-Native.
+Native SwiftUI music app inspired by Clash-Projects/LastWave-Native.
 
 Implemented: YouTube Music song search, local YouTubeKit audio extraction with
 its maintained remote fallback, AVPlayer playback, queue, background audio
@@ -9,12 +9,12 @@ persistent download index, deletion, responsive layouts, draggable seeking, and
 synced/plain LRCLIB lyrics.
 
 Not yet implemented: Last.fm, YouTube account login, recommendations,
-playlist imports, widgets, equalizer. This is not full LastWave feature parity.
+widgets and equalizer. This is not full upstream feature parity.
 
 ## Build
 
 On macOS with Xcode, install XcodeGen (`brew install xcodegen`), run
-`xcodegen generate`, then open LastWave.xcodeproj. Alternatively put this
+`xcodegen generate`, then open CapyFlow.xcodeproj. Alternatively put this
 directory's contents at the root of a GitHub repository and run the
 “Build unsigned IPA” Actions workflow. Download the artifact and sign the IPA
 using your own certificate/provisioning profile.

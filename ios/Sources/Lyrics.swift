@@ -31,7 +31,7 @@ actor LyricsService {
         ]
         var request = URLRequest(url: components.url!)
         request.timeoutInterval = 15
-        request.setValue("LastWave-iOS/0.2 (https://github.com/sephirothkazuhakaede-hash/LastWave-Native)", forHTTPHeaderField: "User-Agent")
+        request.setValue("CapyFlow-iOS/0.2 (https://github.com/sephirothkazuhakaede-hash/LastWave-Native)", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw WaveError.message("Lyrics service did not respond.") }
         if http.statusCode == 429 { throw WaveError.message("Lyrics are temporarily rate limited. Try again shortly.") }
@@ -59,7 +59,7 @@ actor LyricsService {
         var components = URLComponents(string: "https://lrclib.net/api/search")!
         components.queryItems = [URLQueryItem(name: "q", value: query)]
         var request = URLRequest(url: components.url!); request.timeoutInterval = 15
-        request.setValue("LastWave-iOS/0.2 (https://github.com/sephirothkazuhakaede-hash/LastWave-Native)", forHTTPHeaderField: "User-Agent")
+        request.setValue("CapyFlow-iOS/0.2 (https://github.com/sephirothkazuhakaede-hash/LastWave-Native)", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
         let records = try JSONDecoder().decode([LyricsSearchRecord].self, from: data)

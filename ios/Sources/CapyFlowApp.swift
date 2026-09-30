@@ -1,6 +1,6 @@
 import SwiftUI
 
-@main struct LastWaveApp: App {
+@main struct CapyFlowApp: App {
     @StateObject private var player = WavePlayer()
     var body: some Scene {
         WindowGroup { RootView().environmentObject(player).preferredColorScheme(.dark) }
@@ -90,7 +90,7 @@ private struct SearchHomeView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("LastWave").font(.system(size: 42, weight: .black, design: .rounded))
+                Text("CapyFlow").font(.system(size: 42, weight: .black, design: .rounded))
                 Text("Your music. Your current.").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
             }
             Spacer()
@@ -354,7 +354,7 @@ struct PlayerView: View {
                 HStack {
                     Button { dismiss() } label: { Image(systemName: "chevron.down").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
                     Spacer()
-                    VStack(spacing: 2) { Text("NOW PLAYING").font(.caption.weight(.black)).tracking(2); Text("LASTWAVE").font(.caption2).foregroundStyle(.secondary) }
+                    VStack(spacing: 2) { Text("NOW PLAYING").font(.caption.weight(.black)).tracking(2); Text("CAPYFLOW").font(.caption2).foregroundStyle(.secondary) }
                     Spacer()
                     Menu { Button("Clear queue", role: .destructive) { player.queue.removeAll() } } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
                 }
@@ -367,7 +367,7 @@ struct PlayerView: View {
                 }
                 .frame(maxHeight: .infinity)
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(player.current?.title ?? "LastWave").font(.system(size: 31, weight: .black, design: .rounded)).lineLimit(2)
+                    Text(player.current?.title ?? "CapyFlow").font(.system(size: 31, weight: .black, design: .rounded)).lineLimit(2)
                     Text(player.current?.artist ?? "").font(.title3.weight(.semibold)).foregroundStyle(Color.waveBlue)
                 }.frame(maxWidth: .infinity, alignment: .leading)
                 VStack(spacing: 8) {

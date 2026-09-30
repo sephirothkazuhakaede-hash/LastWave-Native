@@ -16,14 +16,14 @@ jobs:
       - uses: actions/checkout@v4
       - run: brew install xcodegen
       - run: xcodegen generate
-      - run: xcodebuild -project LastWave.xcodeproj -scheme LastWave -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - run: xcodebuild -project CapyFlow.xcodeproj -scheme CapyFlow -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
       - name: Package unsigned IPA
         run: |
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/LastWave.app Payload/
-          zip -r LastWave-0.2.0-unsigned.ipa Payload
-          unzip -t LastWave-0.2.0-unsigned.ipa
+          cp -R build/Build/Products/Release-iphoneos/CapyFlow.app Payload/
+          zip -r CapyFlow-0.2.0-unsigned.ipa Payload
+          unzip -t CapyFlow-0.2.0-unsigned.ipa
       - uses: actions/upload-artifact@v4
         with:
-          name: LastWave-unsigned-IPA
-          path: ios/LastWave-0.2.0-unsigned.ipa
+          name: CapyFlow-unsigned-IPA
+          path: ios/CapyFlow-0.2.0-unsigned.ipa
