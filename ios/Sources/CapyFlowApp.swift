@@ -711,6 +711,7 @@ private struct QueueSheet: View {
                                     Button { player.moveQueueItem(from: index, to: index - 1) } label: { Label("Move up", systemImage: "arrow.up") }.tint(Color.waveBlue)
                                 }
                             }
+                    }
                 }
                 Section {
                     Toggle(isOn: $player.autoplayEnabled) { Label("Autoplay related songs", systemImage: "infinity") }
