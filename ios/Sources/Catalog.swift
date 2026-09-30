@@ -177,10 +177,15 @@ actor Catalog {
                         let flex = column["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any]
                         return renderedText(flex?["text"])
                     }
+                    let fixedColumns = renderer["fixedColumns"] as? [[String: Any]] ?? []
+                    let duration = fixedColumns.compactMap { column -> Double? in
+                        let fixed = column["musicResponsiveListItemFixedColumnRenderer"] as? [String: Any]
+                        return renderedText(fixed?["text"]).flatMap(parseDuration)
+                    }.first
                     let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
                     let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
                     if let title = values.first {
-                        tracks.append(Track(id: id, title: title, artist: album.artist, artworkURL: artwork.flatMap(URL.init(string:)) ?? album.artworkURL))
+                        tracks.append(Track(id: id, title: title, artist: album.artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:)) ?? album.artworkURL))
                     }
                 }
                 object.values.forEach(walk)

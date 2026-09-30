@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UIKit
 
 @main struct CapyFlowApp: App {
     @StateObject private var player = WavePlayer()
@@ -114,7 +116,7 @@ private struct SearchHomeView: View {
     private var searchBar: some View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass").foregroundStyle(Color.waveBlue)
-            TextField(mode == .albums ? "Search albums and artists" : mode == .lyrics ? "Search using lyrics" : "Search songs and artists", text: $query)
+            TextField(mode == .albums ? "Search albums and artists" : "Search songs and artists", text: $query)
                 .focused($focused).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
                 .onSubmit { Task { await search() } }
             if !query.isEmpty {
@@ -169,11 +171,9 @@ private struct SearchHomeView: View {
         do {
             switch mode {
             case .songs:
-                results = try await player.catalog.search(term); albums = []
+                results = try await player.catalog.search(term); albums = []; player.prewarm(results)
             case .albums:
                 albums = try await player.catalog.searchAlbums(term); results = []
-            case .lyrics:
-                results = try await player.lyricSearch(term); albums = []
             }
         }
         catch {
@@ -195,7 +195,7 @@ private struct SearchHomeView: View {
 }
 
 private enum SearchMode: String, CaseIterable, Identifiable {
-    case songs = "Songs", albums = "Albums", lyrics = "Lyrics"
+    case songs = "Songs", albums = "Albums"
     var id: String { rawValue }
 }
 
@@ -256,7 +256,7 @@ private struct AlbumDetailView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            do { tracks = try await player.catalog.albumTracks(for: album) }
+            do { tracks = try await player.catalog.albumTracks(for: album); player.prewarm(tracks) }
             catch { player.error = error.localizedDescription }
             loading = false
         }
@@ -367,12 +367,15 @@ private struct PlaylistLibraryRow: View {
 }
 
 private struct PlaylistCover: View {
+    @EnvironmentObject var player: WavePlayer
     let playlist: ImportedPlaylist
     var size: CGFloat
     var radius: CGFloat
     var body: some View {
         Group {
-            if playlist.tracks.isEmpty {
+            if let customURL = player.playlistArtworkURL(for: playlist.id), let image = UIImage(contentsOfFile: customURL.path) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else if playlist.tracks.isEmpty {
                 ZStack { Color.waveBlue.opacity(0.18); Image(systemName: "music.note.list").font(.title).foregroundStyle(Color.waveBlue) }
             } else if playlist.tracks.count == 1, let first = playlist.tracks.first {
                 Artwork(track: first, size: size, radius: 0)
@@ -393,6 +396,7 @@ private struct PlaylistDetailView: View {
     @EnvironmentObject var player: WavePlayer
     @Environment(\.dismiss) private var dismiss
     let playlistID: String
+    @State private var selectedPhoto: PhotosPickerItem?
     private var playlist: ImportedPlaylist? { player.playlists.first { $0.id == playlistID } }
     var body: some View {
         ZStack {
@@ -406,6 +410,9 @@ private struct PlaylistDetailView: View {
                     if let playlist {
                         PlaylistCover(playlist: playlist, size: 230, radius: 22)
                             .shadow(color: Color.waveBlue.opacity(0.16), radius: 28, y: 14)
+                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                            Label("Choose playlist photo", systemImage: "photo.badge.plus").frame(height: 44).padding(.horizontal, 16).contentShape(Rectangle())
+                        }.buttonStyle(.bordered)
                         VStack(alignment: .leading, spacing: 5) {
                             Text(playlist.name).font(.system(size: 38, weight: .black, design: .rounded))
                             Text("\(playlist.tracks.count) songs").foregroundStyle(.secondary)
@@ -415,7 +422,7 @@ private struct PlaylistDetailView: View {
                                 Label("Play all", systemImage: "play.fill").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
                             }.buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
                             Button { Task { await player.downloadPlaylist(playlist) } } label: {
-                                Label(player.downloadingPlaylists.contains(playlist.id) ? "Downloading…" : "Download all", systemImage: "arrow.down.circle.fill").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
+                                Label(player.playlistDownloadProgress[playlist.id].map { "Downloading \($0)" } ?? "Download all", systemImage: "arrow.down.circle.fill").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
                             }.buttonStyle(.bordered).disabled(player.downloadingPlaylists.contains(playlist.id))
                         }
                         ForEach(playlist.tracks) { TrackCard(track: $0) }
@@ -423,6 +430,15 @@ private struct PlaylistDetailView: View {
                 }.padding(18).padding(.bottom, 120)
             }.scrollIndicators(.hidden)
         }.navigationBarBackButtonHidden()
+        .task { if let playlist { player.prewarm(playlist.tracks) } }
+        .onChange(of: selectedPhoto) { item in
+            guard let item else { return }
+            Task {
+                guard let data = try? await item.loadTransferable(type: Data.self) else { return }
+                do { try player.setPlaylistArtwork(data, for: playlistID) }
+                catch { player.error = error.localizedDescription }
+            }
+        }
     }
 }
 
@@ -646,7 +662,7 @@ struct PlayerView: View {
                     Button { if let track = player.current { Task { await player.download(track) } } } label: { Image(systemName: "arrow.down.circle.fill").frame(width: 54, height: 50) }.waveGlass(radius: 20)
                     Button { showQueue = true } label: { Image(systemName: "list.bullet").frame(width: 54, height: 50) }.waveGlass(radius: 20)
                 }.font(.subheadline.weight(.bold))
-                if showLyrics { LyricsPanel().frame(height: min(geometry.size.height * 0.55, 420)) }
+                if showLyrics { LyricsPanel().id(player.current?.id).frame(height: min(geometry.size.height * 0.55, 420)) }
                 }
                 .frame(maxWidth: 620)
                 .padding(.horizontal, max(18, geometry.safeAreaInsets.leading + 18))
@@ -679,9 +695,17 @@ private struct QueueSheet: View {
                 Section("Next") {
                     if player.autoplayLoading { HStack { ProgressView(); Text("Finding related songs…") } }
                     else if player.queue.isEmpty { Text(player.autoplayEnabled ? "Related songs will play automatically." : "The queue is empty.").foregroundStyle(.secondary) }
-                    ForEach(player.queue) { TrackCard(track: $0) }
-                    .onDelete { player.queue.remove(atOffsets: $0) }
-                    .onMove { player.queue.move(fromOffsets: $0, toOffset: $1) }
+                    ForEach(Array(player.queue.enumerated()), id: \.element.id) { index, track in
+                        TrackCard(track: track)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) { player.removeFromQueue(at: index) } label: { Label("Remove", systemImage: "trash") }
+                                if index < player.queue.count - 1 {
+                                    Button { player.moveQueueItem(from: index, to: index + 1) } label: { Label("Move down", systemImage: "arrow.down") }.tint(.indigo)
+                                }
+                                if index > 0 {
+                                    Button { player.moveQueueItem(from: index, to: index - 1) } label: { Label("Move up", systemImage: "arrow.up") }.tint(Color.waveBlue)
+                                }
+                            }
                 }
                 Section {
                     Toggle(isOn: $player.autoplayEnabled) { Label("Autoplay related songs", systemImage: "infinity") }
@@ -690,7 +714,7 @@ private struct QueueSheet: View {
                 }
             }
             .scrollContentBackground(.hidden).background(WaveBackdrop())
-            .navigationTitle("Queue").toolbar { EditButton() }
+            .navigationTitle("Queue")
         }
     }
 }

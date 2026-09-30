@@ -19,6 +19,7 @@ import UIKit
     @Published var downloadProgress: [String: Double] = [:]
     @Published var playlists: [ImportedPlaylist] = []
     @Published var downloadingPlaylists: Set<String> = []
+    @Published var playlistDownloadProgress: [String: String] = [:]
     @Published var autoplayLoading = false
     @Published var autoplayEnabled: Bool {
         didSet { UserDefaults.standard.set(autoplayEnabled, forKey: "autoplayEnabled") }
@@ -41,6 +42,9 @@ import UIKit
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Offline", isDirectory: true)
     }
     private var index: URL { folder.appendingPathComponent("library.json") }
+    private var playlistArtworkFolder: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("PlaylistArtwork", isDirectory: true)
+    }
     func localURL(_ track: Track) -> URL { folder.appendingPathComponent(track.id + ".m4a") }
 
     init() {
@@ -144,6 +148,26 @@ import UIKit
         if queue.isEmpty { player.pause(); playing = false; return }
         await play(queue.removeFirst())
     }
+    func removeFromQueue(at index: Int) {
+        guard queue.indices.contains(index) else { return }
+        queue.remove(at: index)
+    }
+    func moveQueueItem(from source: Int, to destination: Int) {
+        guard queue.indices.contains(source), queue.indices.contains(destination), source != destination else { return }
+        let track = queue.remove(at: source)
+        queue.insert(track, at: destination)
+    }
+    func prewarm(_ tracks: [Track]) {
+        let candidates = Array(tracks.prefix(6))
+        let quality = audioQuality
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for track in candidates {
+                    group.addTask { [catalog] in _ = try? await catalog.resolvedStream(for: track, quality: quality) }
+                }
+            }
+        }
+    }
     func isDownloaded(_ track: Track) -> Bool { downloads.contains { $0.id == track.id } }
     func isPlaylistDownloaded(_ playlist: ImportedPlaylist) -> Bool {
         !playlist.tracks.isEmpty && playlist.tracks.allSatisfy { isDownloaded($0) }
@@ -160,11 +184,11 @@ import UIKit
             var request = URLRequest(url: url)
             request.timeoutInterval = 120
             request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
-            let transfer = DownloadTransfer(identifier: "com.seph.capyflow.download.\(track.id)") { [weak self] progress in
+            let transfer = DownloadTransfer(identifier: "com.seph.capyflow.download.\(track.id).\(UUID().uuidString)") { [weak self] progress in
                 Task { @MainActor in self?.downloadProgress[track.id] = progress }
             }
             let (temporary, response) = try await transfer.start(request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw WaveError.message("Download failed.") }
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else { throw WaveError.message("Download failed.") }
             let attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
             let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
             guard size > 16_384 else { throw WaveError.message("The downloaded audio was incomplete. Please retry.") }
@@ -173,7 +197,7 @@ import UIKit
             try FileManager.default.moveItem(at: temporary, to: target)
             downloads.append(track)
             try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
-            _ = try? await lyricsService.lyrics(for: track)
+            Task { [lyricsService] in _ = try? await lyricsService.lyrics(for: track) }
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
@@ -204,27 +228,49 @@ import UIKit
         playlists.insert(ImportedPlaylist(id: id, name: album.title, tracks: tracks), at: 0)
         savePlaylists()
     }
+    func playlistArtworkURL(for playlistID: String) -> URL? {
+        let url = playlistArtworkFolder.appendingPathComponent(safePlaylistID(playlistID) + ".jpg")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+    func setPlaylistArtwork(_ data: Data, for playlistID: String) throws {
+        guard let image = UIImage(data: data), let jpeg = image.playlistCoverJPEG() else {
+            throw WaveError.message("That image couldn't be used as a playlist photo.")
+        }
+        try FileManager.default.createDirectory(at: playlistArtworkFolder, withIntermediateDirectories: true)
+        try jpeg.write(to: playlistArtworkFolder.appendingPathComponent(safePlaylistID(playlistID) + ".jpg"), options: .atomic)
+        objectWillChange.send()
+    }
+    private func safePlaylistID(_ id: String) -> String {
+        id.replacingOccurrences(of: "[^A-Za-z0-9_-]", with: "_", options: .regularExpression)
+    }
     private func savePlaylists() {
         if let data = try? JSONEncoder().encode(playlists) { UserDefaults.standard.set(data, forKey: "importedPlaylists") }
     }
     func downloadPlaylist(_ playlist: ImportedPlaylist) async {
         guard !downloadingPlaylists.contains(playlist.id) else { return }
         downloadingPlaylists.insert(playlist.id)
-        defer { downloadingPlaylists.remove(playlist.id) }
+        let pending = playlist.tracks.filter { !isDownloaded($0) }
+        playlistDownloadProgress[playlist.id] = "0/\(pending.count)"
+        defer {
+            downloadingPlaylists.remove(playlist.id)
+            playlistDownloadProgress.removeValue(forKey: playlist.id)
+        }
         var failures: [String] = []
-        for track in playlist.tracks where !isDownloaded(track) {
+        var completed = 0
+        for track in pending {
             var succeeded = false
-            for attempt in 0..<3 {
+            for attempt in 0..<4 {
                 if await download(track) {
                     succeeded = true
                     break
                 }
-                if attempt < 2 {
+                if attempt < 3 {
                     let delay = UInt64(700_000_000 * (attempt + 1))
                     try? await Task.sleep(nanoseconds: delay)
                 }
             }
-            if !succeeded { failures.append(track.title) }
+            if succeeded { completed += 1 } else { failures.append(track.title) }
+            playlistDownloadProgress[playlist.id] = "\(completed)/\(pending.count)"
         }
         if failures.isEmpty {
             error = nil
@@ -288,6 +334,17 @@ private extension UIImage {
         let rect = CGRect(x: (cgImage.width - side) / 2, y: (cgImage.height - side) / 2, width: side, height: side)
         guard let cropped = cgImage.cropping(to: rect) else { return self }
         return UIImage(cgImage: cropped, scale: scale, orientation: imageOrientation)
+    }
+    func playlistCoverJPEG() -> Data? {
+        let square = centerSquareCropped()
+        let side = min(1200, max(square.size.width, square.size.height))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let rendered = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            square.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+        }
+        return rendered.jpegData(compressionQuality: 0.9)
     }
 }
 
