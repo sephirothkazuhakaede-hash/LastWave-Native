@@ -25,12 +25,13 @@ struct RootView: View {
     @State private var albumResults: [Album] = []
     @State private var searching = false
     @State private var searchMode: SearchMode = .songs
+    @State private var lastSearchSignature = ""
     var body: some View {
         ZStack {
             WaveBackdrop()
             Group {
                 switch tab {
-                case .home: SearchHomeView(query: $searchQuery, results: $searchResults, albums: $albumResults, searching: $searching, mode: $searchMode)
+                case .home: SearchHomeView(query: $searchQuery, results: $searchResults, albums: $albumResults, searching: $searching, mode: $searchMode, lastSearchSignature: $lastSearchSignature)
                 case .playlists: PlaylistLibraryView()
                 }
             }
@@ -60,6 +61,7 @@ private struct SearchHomeView: View {
     @Binding var albums: [Album]
     @Binding var searching: Bool
     @Binding var mode: SearchMode
+    @Binding var lastSearchSignature: String
     @FocusState private var focused: Bool
     var body: some View {
       NavigationStack {
@@ -90,7 +92,9 @@ private struct SearchHomeView: View {
             .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
         }.scrollIndicators(.hidden).toolbar(.hidden, for: .navigationBar)
         .task(id: query) {
-            guard query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
+            let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            let signature = mode.rawValue + "|" + term
+            guard term.count >= 2, signature != lastSearchSignature else { return }
             try? await Task.sleep(nanoseconds: 450_000_000)
             guard !Task.isCancelled else { return }
             await search(showSpinner: false)
@@ -120,7 +124,7 @@ private struct SearchHomeView: View {
                 .focused($focused).textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
                 .onSubmit { Task { await search() } }
             if !query.isEmpty {
-                Button { query = ""; results = []; albums = [] } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                Button { query = ""; results = []; albums = []; lastSearchSignature = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
             }
         }.font(.body.weight(.semibold)).padding(.horizontal, 18).frame(height: 58).waveGlass(radius: 22)
     }
@@ -175,6 +179,7 @@ private struct SearchHomeView: View {
             case .albums:
                 albums = try await player.catalog.searchAlbums(term); results = []
             }
+            lastSearchSignature = mode.rawValue + "|" + term
         }
         catch {
             let code = (error as NSError).code

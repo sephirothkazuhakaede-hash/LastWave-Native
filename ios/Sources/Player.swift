@@ -160,10 +160,11 @@ import UIKit
     func prewarm(_ tracks: [Track]) {
         let candidates = Array(tracks.prefix(6))
         let quality = audioQuality
+        let catalog = self.catalog
         Task {
             await withTaskGroup(of: Void.self) { group in
                 for track in candidates {
-                    group.addTask { [catalog] in _ = try? await catalog.resolvedStream(for: track, quality: quality) }
+                    group.addTask { _ = try? await catalog.resolvedStream(for: track, quality: quality) }
                 }
             }
         }
@@ -197,7 +198,8 @@ import UIKit
             try FileManager.default.moveItem(at: temporary, to: target)
             downloads.append(track)
             try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
-            Task { [lyricsService] in _ = try? await lyricsService.lyrics(for: track) }
+            let lyricsService = self.lyricsService
+            Task { _ = try? await lyricsService.lyrics(for: track) }
             return true
         } catch { self.error = error.localizedDescription; return false }
     }
