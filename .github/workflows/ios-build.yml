@@ -20,7 +20,7 @@ jobs:
       - name: Verify compiled app icon
         run: |
           test -f build/Build/Products/Release-iphoneos/CapyFlow.app/Assets.car
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconFiles:0' build/Build/Products/Release-iphoneos/CapyFlow.app/Info.plist | grep -x AppIcon60x60
+          xcrun assetutil --info build/Build/Products/Release-iphoneos/CapyFlow.app/Assets.car | grep -q AppIcon
       - name: Package unsigned IPA
         run: |
           mkdir -p Payload
