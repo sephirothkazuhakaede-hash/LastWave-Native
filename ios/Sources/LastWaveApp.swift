@@ -233,7 +233,7 @@ private struct TrackCard: View {
                         Text(track.title).font(.headline.weight(.bold)).lineLimit(2)
                         Text(track.artist).font(.subheadline.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
                     }
-                }
+                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
             Spacer(minLength: 6)
             if let progress = player.downloadProgress[track.id] {
@@ -277,7 +277,7 @@ private struct MiniPlayer: View {
                             Text(track.title).font(.headline.weight(.bold)).lineLimit(1)
                             Text(track.artist).font(.caption.weight(.medium)).foregroundStyle(.secondary).lineLimit(1)
                         }
-                    }
+                    }.contentShape(Rectangle())
                 }.buttonStyle(.plain)
                 Spacer()
                 if player.loading { ProgressView().tint(Color.waveBlue) }
@@ -297,18 +297,27 @@ private struct MiniPlayer: View {
 private struct WaveTabBar: View {
     @Binding var selection: WaveTab
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(WaveTab.allCases, id: \.self) { item in
-                Button { selection = item } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: item.icon)
-                        if selection == item { Text(item.rawValue).font(.subheadline.weight(.bold)) }
-                    }.frame(maxWidth: .infinity).frame(height: 54)
-                        .background(selection == item ? Color.waveBlue.opacity(0.27) : .clear, in: Capsule())
-                        .foregroundStyle(selection == item ? Color.waveBlue : .secondary)
-                }.buttonStyle(.plain)
+        GeometryReader { geometry in
+            HStack(spacing: 4) {
+                ForEach(WaveTab.allCases, id: \.self) { item in
+                    Button { selection = item } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: item.icon)
+                            if selection == item { Text(item.rawValue).font(.caption.weight(.bold)).lineLimit(1) }
+                        }.frame(maxWidth: .infinity).frame(height: 54).contentShape(Rectangle())
+                            .background(selection == item ? Color.waveBlue.opacity(0.27) : .clear, in: Capsule())
+                            .foregroundStyle(selection == item ? Color.waveBlue : .secondary)
+                    }.buttonStyle(.plain)
+                }
             }
-        }.padding(6).waveGlass(radius: 28)
+            .padding(6).waveGlass(radius: 28)
+            .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { value in
+                let count = WaveTab.allCases.count
+                let x = min(max(0, value.location.x - 6), max(1, geometry.size.width - 12))
+                let index = min(count - 1, Int(x / max(1, (geometry.size.width - 12) / CGFloat(count))))
+                withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.86)) { selection = WaveTab.allCases[index] }
+            })
+        }.frame(height: 66)
     }
 }
 
