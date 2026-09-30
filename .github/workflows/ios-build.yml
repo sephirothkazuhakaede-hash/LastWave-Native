@@ -1,0 +1,29 @@
+name: Build unsigned IPA
+on:
+  workflow_dispatch:
+  push:
+    branches: [ios-port]
+    paths: ['ios/**', '.github/workflows/ios-build.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: xcodegen generate
+      - run: xcodebuild -project LastWave.xcodeproj -scheme LastWave -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/LastWave.app Payload/
+          zip -r LastWave-0.1.0-unsigned.ipa Payload
+          unzip -t LastWave-0.1.0-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LastWave-unsigned-IPA
+          path: ios/LastWave-0.1.0-unsigned.ipa

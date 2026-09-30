@@ -1,0 +1,32 @@
+name: LastWave
+options:
+  bundleIdPrefix: com.seph
+  deploymentTarget:
+    iOS: '17.0'
+packages:
+  YouTubeKit:
+    url: https://github.com/alexeichhorn/YouTubeKit.git
+    exactVersion: 0.4.9
+targets:
+  LastWave:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    dependencies:
+      - package: YouTubeKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.seph.lastwave
+        SWIFT_VERSION: '5.0'
+        TARGETED_DEVICE_FAMILY: '1,2'
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: LastWave
+        CODE_SIGNING_ALLOWED: NO
+    info:
+      path: Info.plist
+      properties:
+        UIBackgroundModes: [audio]
+        UILaunchScreen: {}
