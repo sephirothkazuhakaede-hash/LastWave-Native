@@ -8,9 +8,9 @@ import SwiftUI
 }
 
 private enum WaveTab: String, CaseIterable {
-    case home = "Home", offline = "Offline", queue = "Queue"
+    case home = "Home", playlists = "Playlists", offline = "Offline", queue = "Queue"
     var icon: String {
-        switch self { case .home: "house.fill"; case .offline: "arrow.down.circle.fill"; case .queue: "music.note.list" }
+        switch self { case .home: "house.fill"; case .playlists: "rectangle.stack.fill"; case .offline: "arrow.down.circle.fill"; case .queue: "music.note.list" }
     }
 }
 
@@ -27,6 +27,7 @@ struct RootView: View {
             Group {
                 switch tab {
                 case .home: SearchHomeView(query: $searchQuery, results: $searchResults, searching: $searching)
+                case .playlists: PlaylistLibraryView()
                 case .offline: TrackCollectionView(title: "Offline", subtitle: "Saved on this iPhone", tracks: player.downloads, isOffline: true)
                 case .queue: TrackCollectionView(title: "Queue", subtitle: "\(player.queue.count) tracks waiting", tracks: player.queue)
                 }
@@ -56,11 +57,15 @@ private struct SearchHomeView: View {
     @Binding var results: [Track]
     @Binding var searching: Bool
     @FocusState private var focused: Bool
+    @State private var lyricMode = false
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
                 header
                 searchBar
+                Picker("Search type", selection: $lyricMode) {
+                    Text("Songs").tag(false); Text("Lyrics").tag(true)
+                }.pickerStyle(.segmented)
                 if searching {
                     HStack(spacing: 12) { ProgressView(); Text("Searching YouTube Music…").foregroundStyle(.secondary) }
                         .frame(maxWidth: .infinity).padding(28).waveGlass(radius: 24)
@@ -74,6 +79,12 @@ private struct SearchHomeView: View {
             }
             .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
         }.scrollIndicators(.hidden)
+        .task(id: query) {
+            guard query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard !Task.isCancelled else { return }
+            await search(showSpinner: false)
+        }
     }
 
     private var header: some View {
@@ -138,13 +149,44 @@ private struct SearchHomeView: View {
         }
     }
 
-    private func search() async {
+    private func search(showSpinner: Bool = true) async {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !term.isEmpty else { return }
-        focused = false; searching = true
+        if showSpinner { focused = false }; searching = true
         defer { searching = false }
-        do { results = try await player.catalog.search(term) }
+        do { results = lyricMode ? try await player.lyricSearch(term) : try await player.catalog.search(term) }
         catch { player.error = error.localizedDescription }
+    }
+}
+
+private struct PlaylistLibraryView: View {
+    @EnvironmentObject var player: WavePlayer
+    @State private var link = ""
+    @State private var importing = false
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 14) {
+                HStack { Text("Playlists").font(.system(size: 40, weight: .black, design: .rounded)); Spacer() }
+                HStack {
+                    TextField("Paste a public YouTube playlist link", text: $link).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button { Task { importing = true; await player.importPlaylist(link); importing = false; if player.error == nil { link = "" } } } label: {
+                        if importing { ProgressView() } else { Image(systemName: "plus") }
+                    }.disabled(link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || importing)
+                }.padding(16).waveGlass(radius: 22)
+                ForEach(player.playlists) { playlist in
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            VStack(alignment: .leading) { Text(playlist.name).font(.title3.bold()); Text("\(playlist.tracks.count) songs").foregroundStyle(.secondary) }
+                            Spacer()
+                            Button { Task { await player.downloadPlaylist(playlist) } } label: { Label("Download all", systemImage: "arrow.down.circle.fill") }
+                                .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
+                        }
+                        ForEach(playlist.tracks.prefix(8)) { TrackCard(track: $0) }
+                        if playlist.tracks.count > 8 { Text("+ \(playlist.tracks.count - 8) more songs").font(.caption).foregroundStyle(.secondary) }
+                    }.padding(16).waveGlass(radius: 26)
+                }
+            }.padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
+        }.scrollIndicators(.hidden)
     }
 }
 
@@ -307,13 +349,12 @@ struct PlayerView: View {
                     Spacer()
                     Menu { Button("Clear queue", role: .destructive) { player.queue.removeAll() } } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 50, height: 50) }.waveGlass(radius: 20)
                 }
-                Group {
-                    if showLyrics {
-                        LyricsPanel()
-                    } else if let track = player.current {
-                        Artwork(track: track, size: min(geometry.size.width - 48, geometry.size.height * 0.38, 390), radius: 34)
+                VStack(spacing: 12) {
+                    if let track = player.current {
+                        Artwork(track: track, size: min(geometry.size.width - 48, geometry.size.height * (showLyrics ? 0.22 : 0.38), showLyrics ? 220 : 390), radius: 34)
                             .shadow(color: Color.waveBlue.opacity(0.20), radius: 38, y: 20)
                     }
+                    if showLyrics { LyricsPanel() }
                 }
                 .frame(maxHeight: .infinity)
                 VStack(alignment: .leading, spacing: 7) {

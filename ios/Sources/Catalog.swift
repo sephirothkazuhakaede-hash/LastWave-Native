@@ -92,6 +92,50 @@ actor Catalog {
         return results
     }
 
+    func playlist(from input: String) async throws -> ImportedPlaylist {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let listID = URLComponents(string: value)?.queryItems?.first(where: { $0.name == "list" })?.value ?? value
+        guard !listID.isEmpty else { throw WaveError.message("Paste a valid public YouTube playlist link.") }
+        let config = await loadClientConfig()
+        var components = URLComponents(string: "https://music.youtube.com/youtubei/v1/browse")!
+        components.queryItems = [URLQueryItem(name: "key", value: config.apiKey), URLQueryItem(name: "prettyPrint", value: "false")]
+        var request = URLRequest(url: components.url!); request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("https://music.youtube.com", forHTTPHeaderField: "Origin")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "context": ["client": ["clientName": "WEB_REMIX", "clientVersion": config.version, "hl": "en", "gl": "PH"]],
+            "browseId": listID.hasPrefix("VL") ? listID : "VL" + listID
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw WaveError.message("That playlist could not be opened. Make sure it is public.") }
+        let root = try JSONSerialization.jsonObject(with: data)
+        var tracks: [Track] = []; var name = "YouTube Playlist"
+        func renderedText(_ node: Any?) -> String? {
+            guard let object = node as? [String: Any] else { return nil }
+            if let simple = object["simpleText"] as? String { return simple }
+            return (object["runs"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined()
+        }
+        func walk(_ node: Any) {
+            if let object = node as? [String: Any] {
+                if let header = object["musicDetailHeaderRenderer"] as? [String: Any], let title = renderedText(header["title"]) { name = title }
+                if let renderer = object["musicResponsiveListItemRenderer"] as? [String: Any],
+                   let item = renderer["playlistItemData"] as? [String: Any], let id = item["videoId"] as? String,
+                   let columns = renderer["flexColumns"] as? [[String: Any]], !tracks.contains(where: { $0.id == id }) {
+                    let values = columns.compactMap { column -> String? in
+                        let flex = column["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any]
+                        return renderedText(flex?["text"])
+                    }
+                    if let title = values.first { tracks.append(Track(id: id, title: title, artist: values.dropFirst().first ?? "Unknown artist")) }
+                }
+                object.values.forEach(walk)
+            } else if let array = node as? [Any] { array.forEach(walk) }
+        }
+        walk(root)
+        guard !tracks.isEmpty else { throw WaveError.message("No downloadable songs were found in that playlist.") }
+        return ImportedPlaylist(id: listID, name: name, tracks: tracks)
+    }
+
     private func parseDuration(_ value: String) -> Double? {
         let parts = value.split(separator: ":").compactMap { Double($0) }
         guard parts.count == 2 || parts.count == 3 else { return nil }
@@ -156,4 +200,10 @@ actor Catalog {
         streamCache[track.id] = (resolved, Date())
         return resolved
     }
+}
+
+struct ImportedPlaylist: Identifiable, Codable {
+    let id: String
+    let name: String
+    let tracks: [Track]
 }

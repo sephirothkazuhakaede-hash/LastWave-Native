@@ -1,6 +1,6 @@
 import Foundation
 
-struct LyricLine: Identifiable, Equatable {
+struct LyricLine: Identifiable, Equatable, Codable {
     let time: Double?
     let text: String
     var id: String { "\(time ?? -1)-\(text)" }
@@ -14,9 +14,16 @@ private struct LyricsRecord: Decodable {
 
 actor LyricsService {
     private var cache: [String: [LyricLine]] = [:]
+    private let folder: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("OfflineLyrics", isDirectory: true)
 
     func lyrics(for track: Track) async throws -> [LyricLine] {
         if let cached = cache[track.id] { return cached }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent(track.id + ".json")
+        if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([LyricLine].self, from: data) {
+            cache[track.id] = saved; return saved
+        }
         var components = URLComponents(string: "https://lrclib.net/api/search")!
         components.queryItems = [
             URLQueryItem(name: "track_name", value: cleaned(track.title)),
@@ -44,7 +51,19 @@ actor LyricsService {
             throw WaveError.message("Lyrics are not available for this song.")
         }
         cache[track.id] = lines
+        if let data = try? JSONEncoder().encode(lines) { try? data.write(to: file, options: .atomic) }
         return lines
+    }
+
+    func matchingTracks(_ query: String) async throws -> [(String, String)] {
+        var components = URLComponents(string: "https://lrclib.net/api/search")!
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        var request = URLRequest(url: components.url!); request.timeoutInterval = 15
+        request.setValue("LastWave-iOS/0.2 (https://github.com/sephirothkazuhakaede-hash/LastWave-Native)", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
+        let records = try JSONDecoder().decode([LyricsSearchRecord].self, from: data)
+        return Array(records.prefix(5)).map { ($0.trackName, $0.artistName) }
     }
 
     private func cleaned(_ value: String) -> String {
@@ -78,4 +97,9 @@ actor LyricsService {
         }
         return parsed.sorted { ($0.time ?? 0) < ($1.time ?? 0) }
     }
+}
+
+private struct LyricsSearchRecord: Decodable {
+    let trackName: String
+    let artistName: String
 }

@@ -17,6 +17,7 @@ import UIKit
     @Published var error: String?
     @Published var downloading: Set<String> = []
     @Published var downloadProgress: [String: Double] = [:]
+    @Published var playlists: [ImportedPlaylist] = []
     let catalog = Catalog()
     private let lyricsService = LyricsService()
     private let player = AVPlayer()
@@ -40,6 +41,8 @@ import UIKit
         if let data = try? Data(contentsOf: index), let tracks = try? JSONDecoder().decode([Track].self, from: data) {
             downloads = tracks.filter { FileManager.default.fileExists(atPath: localURL($0).path) }
         }
+        if let data = UserDefaults.standard.data(forKey: "importedPlaylists"),
+           let saved = try? JSONDecoder().decode([ImportedPlaylist].self, from: data) { playlists = saved }
         timer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self else { return }
@@ -148,14 +151,46 @@ import UIKit
             try FileManager.default.moveItem(at: temporary, to: target)
             downloads.append(track)
             try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
+            _ = try? await lyricsService.lyrics(for: track)
         } catch { self.error = error.localizedDescription }
+    }
+    func importPlaylist(_ input: String) async {
+        do {
+            let playlist = try await catalog.playlist(from: input)
+            playlists.removeAll { $0.id == playlist.id }; playlists.append(playlist)
+            if let data = try? JSONEncoder().encode(playlists) { UserDefaults.standard.set(data, forKey: "importedPlaylists") }
+        } catch { self.error = error.localizedDescription }
+    }
+    func downloadPlaylist(_ playlist: ImportedPlaylist) async {
+        let pending = playlist.tracks.filter { !downloads.contains($0) }
+        for start in stride(from: 0, to: pending.count, by: 2) {
+            let batch = pending[start..<min(start + 2, pending.count)]
+            await withTaskGroup(of: Void.self) { group in
+                for track in batch {
+                    group.addTask { @MainActor [weak self] in
+                        guard let self else { return }
+                        await self.download(track)
+                    }
+                }
+            }
+        }
+    }
+    func lyricSearch(_ query: String) async throws -> [Track] {
+        let matches = try await lyricsService.matchingTracks(query)
+        var found: [Track] = []
+        for (title, artist) in matches.prefix(3) {
+            if let track = try? await catalog.search("\(title) \(artist)").first,
+               !found.contains(where: { $0.id == track.id }) { found.append(track) }
+        }
+        return found
     }
     private func loadArtwork(for track: Track, token: UUID) async {
         guard let url = track.artwork,
               let (data, response) = try? await URLSession.shared.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let image = UIImage(data: data), token == generation else { return }
-        nowPlayingArtwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+        let artwork = image.centerSquareCropped()
+        nowPlayingArtwork = MPMediaItemArtwork(boundsSize: artwork.size) { _ in artwork }
         publishNowPlaying()
     }
     private func loadLyrics(for track: Track, token: UUID) async {
@@ -186,6 +221,16 @@ import UIKit
         ]
         if let nowPlayingArtwork { info[MPMediaItemPropertyArtwork] = nowPlayingArtwork }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+}
+
+private extension UIImage {
+    func centerSquareCropped() -> UIImage {
+        guard let cgImage else { return self }
+        let side = min(cgImage.width, cgImage.height)
+        let rect = CGRect(x: (cgImage.width - side) / 2, y: (cgImage.height - side) / 2, width: side, height: side)
+        guard let cropped = cgImage.cropping(to: rect) else { return self }
+        return UIImage(cgImage: cropped, scale: scale, orientation: imageOrientation)
     }
 }
 
