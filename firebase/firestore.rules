@@ -1,0 +1,101 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function owns(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function validUsername(value) {
+      return value is string &&
+        value.size() >= 3 && value.size() <= 20 &&
+        value.matches('^[a-z0-9_][a-z0-9_.]*[a-z0-9_]$') &&
+        !value.matches('.*\\.\\..*');
+    }
+
+    match /profiles/{uid} {
+      allow get: if signedIn();
+      allow list: if signedIn() && request.query.limit <= 20;
+      allow create: if owns(uid) &&
+        request.resource.data.keys().hasOnly(['username', 'usernameKey', 'displayName', 'bio', 'avatarURL', 'createdAt', 'updatedAt']) &&
+        validUsername(request.resource.data.username) &&
+        request.resource.data.usernameKey == request.resource.data.username &&
+        request.resource.data.displayName is string &&
+        request.resource.data.displayName.size() >= 1 &&
+        request.resource.data.displayName.size() <= 60 &&
+        request.resource.data.bio is string &&
+        request.resource.data.bio.size() <= 160 &&
+        getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid;
+      allow update: if owns(uid) &&
+        request.resource.data.keys().hasOnly(['username', 'usernameKey', 'displayName', 'bio', 'avatarURL', 'createdAt', 'updatedAt']) &&
+        validUsername(request.resource.data.username) &&
+        request.resource.data.usernameKey == request.resource.data.username &&
+        request.resource.data.displayName is string &&
+        request.resource.data.displayName.size() >= 1 &&
+        request.resource.data.displayName.size() <= 60 &&
+        request.resource.data.bio is string &&
+        request.resource.data.bio.size() <= 160 &&
+        getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid &&
+        (
+          request.resource.data.username == resource.data.username ||
+          !existsAfter(/databases/$(database)/documents/usernames/$(resource.data.username))
+        );
+      allow delete: if owns(uid) &&
+        !existsAfter(/databases/$(database)/documents/usernames/$(resource.data.username));
+    }
+
+    match /usernames/{username} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && validUsername(username) &&
+        request.resource.data.uid == request.auth.uid &&
+        getAfter(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.username == username;
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid &&
+        (
+          !existsAfter(/databases/$(database)/documents/profiles/$(request.auth.uid)) ||
+          getAfter(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.username != username
+        );
+    }
+
+    match /follows/{edgeID} {
+      allow read: if signedIn();
+      allow create: if signedIn() &&
+        request.resource.data.followerID == request.auth.uid &&
+        request.resource.data.followingID != request.auth.uid &&
+        edgeID == request.resource.data.followerID + '_' + request.resource.data.followingID;
+      allow update: if false;
+      allow delete: if signedIn() &&
+        (resource.data.followerID == request.auth.uid || resource.data.followingID == request.auth.uid);
+    }
+
+    match /playlists/{playlistID} {
+      function isMember(data) {
+        return signedIn() && request.auth.uid in data.memberIDs;
+      }
+
+      allow read: if isMember(resource.data);
+      allow create: if signedIn() &&
+        request.resource.data.ownerID == request.auth.uid &&
+        request.resource.data.memberIDs == [request.auth.uid];
+      allow update: if signedIn() &&
+        request.resource.data.ownerID == resource.data.ownerID &&
+        (
+          request.auth.uid == resource.data.ownerID ||
+          (
+            isMember(resource.data) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tracks', 'updatedAt'])
+          )
+        );
+      allow delete: if signedIn() && resource.data.ownerID == request.auth.uid;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

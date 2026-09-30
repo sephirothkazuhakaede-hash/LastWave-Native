@@ -7,15 +7,18 @@ import GoogleSignIn
 @main struct CapyFlowApp: App {
     @StateObject private var player = WavePlayer()
     @StateObject private var auth: AuthSession
+    @StateObject private var social: SocialStore
     init() {
         FirebaseApp.configure()
         _auth = StateObject(wrappedValue: AuthSession())
+        _social = StateObject(wrappedValue: SocialStore())
     }
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(player)
                 .environmentObject(auth)
+                .environmentObject(social)
                 .preferredColorScheme(.dark)
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
         }
@@ -31,6 +34,8 @@ private enum WaveTab: String, CaseIterable {
 
 struct RootView: View {
     @EnvironmentObject var player: WavePlayer
+    @EnvironmentObject var auth: AuthSession
+    @EnvironmentObject var social: SocialStore
     @State private var tab: WaveTab = .home
     @State private var showPlayer = false
     @State private var searchQuery = ""
@@ -64,6 +69,7 @@ struct RootView: View {
             }
         }
         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: player.error)
+        .task(id: auth.user?.uid) { social.bind(to: auth.user) }
     }
 }
 
@@ -233,6 +239,7 @@ private enum SearchMode: String, CaseIterable, Identifiable {
 
 private struct AccountSheet: View {
     @EnvironmentObject var auth: AuthSession
+    @EnvironmentObject var social: SocialStore
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
@@ -250,8 +257,20 @@ private struct AccountSheet: View {
                     if let user = auth.user {
                         VStack(spacing: 5) {
                             Text(user.displayName ?? "CapyFlow listener").font(.title2.bold())
+                            if let profile = social.profile {
+                                Text("@" + profile.username).font(.subheadline.weight(.semibold)).foregroundStyle(Color.waveBlue)
+                                Text("\(social.followerCount) followers  •  \(social.followingCount) following")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                             Text(user.email ?? "Signed in with Google").foregroundStyle(.secondary)
                         }
+                        NavigationLink {
+                            SocialHubView()
+                        } label: {
+                            Label("Profile, friends & shared playlists", systemImage: "person.2.fill")
+                                .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
                         Button(role: .destructive) { auth.signOut() } label: {
                             Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                                 .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
@@ -268,8 +287,18 @@ private struct AccountSheet: View {
                         }
                         .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black).disabled(auth.working)
                     }
+                    NavigationLink {
+                        BackendSettingsView()
+                    } label: {
+                        Label("Streaming server", systemImage: "bolt.horizontal.circle.fill")
+                            .frame(maxWidth: .infinity).frame(height: 48).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.bordered)
                     if let error = auth.error {
                         Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
+                    }
+                    if let error = social.error, auth.user != nil {
+                        Text(error).font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center)
                     }
                     Spacer()
                 }.padding(28)
@@ -277,7 +306,7 @@ private struct AccountSheet: View {
             .navigationTitle("Account").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
     }
 }
 
@@ -347,6 +376,7 @@ private struct AlbumDetailView: View {
 
 private struct PlaylistLibraryView: View {
     @EnvironmentObject var player: WavePlayer
+    @EnvironmentObject var social: SocialStore
     @State private var showCreator = false
     @State private var playlistToRename: ImportedPlaylist?
     var body: some View {
@@ -376,13 +406,27 @@ private struct PlaylistLibraryView: View {
                         Button("Create playlist") { showCreator = true }.buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
                     }.frame(maxWidth: .infinity).padding(34).waveGlass(radius: 28)
                 } else {
-                    ForEach(player.playlists) { playlist in
-                        NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: { PlaylistLibraryRow(playlist: playlist) }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145, maximum: 230), spacing: 14)], spacing: 18) {
+                        ForEach(player.playlists) { playlist in
+                            NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: { PlaylistGridCard(playlist: playlist) }
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button { playlistToRename = playlist } label: { Label("Rename", systemImage: "pencil") }
+                                    Button(role: .destructive) { player.deletePlaylist(playlist.id) } label: { Label("Delete playlist", systemImage: "trash") }
+                                }
+                        }
+                    }
+                }
+                if !social.sharedPlaylists.isEmpty {
+                    HStack {
+                        Label("Shared with you", systemImage: "person.2.fill")
+                        Spacer()
+                        Text("\(social.sharedPlaylists.count)").foregroundStyle(.secondary)
+                    }
+                    .font(.subheadline.weight(.bold)).padding(.horizontal, 16).frame(height: 44).waveGlass(radius: 20)
+                    ForEach(social.sharedPlaylists) { playlist in
+                        NavigationLink { SharedPlaylistDetailView(playlistID: playlist.id) } label: { SharedPlaylistRow(playlist: playlist) }
                             .buttonStyle(.plain)
-                            .contextMenu {
-                                Button { playlistToRename = playlist } label: { Label("Rename", systemImage: "pencil") }
-                                Button(role: .destructive) { player.deletePlaylist(playlist.id) } label: { Label("Delete playlist", systemImage: "trash") }
-                            }
                     }
                 }
             }.padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
@@ -391,6 +435,30 @@ private struct PlaylistLibraryView: View {
        .sheet(isPresented: $showCreator) { NewPlaylistSheet() }
        .sheet(item: $playlistToRename) { RenamePlaylistSheet(playlistID: $0.id, currentName: $0.name) }
       }
+    }
+}
+
+private struct PlaylistGridCard: View {
+    @EnvironmentObject var player: WavePlayer
+    let playlist: ImportedPlaylist
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            GeometryReader { geometry in
+                PlaylistCover(playlist: playlist, size: geometry.size.width, radius: 20)
+                    .overlay(alignment: .bottomTrailing) {
+                        if player.isPlaylistDownloaded(playlist) {
+                            Image(systemName: "arrow.down.circle.fill")
+                                .font(.title2).foregroundStyle(Color.waveBlue)
+                                .padding(9).background(.black.opacity(0.65), in: Circle()).padding(8)
+                        }
+                    }
+            }
+            .aspectRatio(1, contentMode: .fit)
+            Text(playlist.name).font(.headline.weight(.bold)).lineLimit(1)
+            Text("\(playlist.tracks.count) songs").font(.caption).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
@@ -505,10 +573,12 @@ private struct PlaylistCover: View {
 
 private struct PlaylistDetailView: View {
     @EnvironmentObject var player: WavePlayer
+    @EnvironmentObject var auth: AuthSession
     @Environment(\.dismiss) private var dismiss
     let playlistID: String
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showRename = false
+    @State private var showCollaborate = false
     private var playlist: ImportedPlaylist? { player.playlists.first { $0.id == playlistID } }
     var body: some View {
         ZStack {
@@ -545,6 +615,12 @@ private struct PlaylistDetailView: View {
                                 Label(player.playlistDownloadProgress[playlist.id].map { "Downloading \($0)" } ?? "Download all", systemImage: "arrow.down.circle.fill").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
                             }.buttonStyle(.bordered).disabled(player.downloadingPlaylists.contains(playlist.id))
                         }
+                        if auth.user != nil {
+                            Button { showCollaborate = true } label: {
+                                Label("Share & collaborate", systemImage: "person.2.badge.plus")
+                                    .frame(maxWidth: .infinity).frame(height: 48).contentShape(Rectangle())
+                            }.buttonStyle(.bordered)
+                        }
                         ForEach(playlist.tracks) { TrackCard(track: $0) }
                     }
                 }.padding(18).padding(.bottom, 120)
@@ -552,6 +628,9 @@ private struct PlaylistDetailView: View {
         }.navigationBarBackButtonHidden()
         .sheet(isPresented: $showRename) {
             if let playlist { RenamePlaylistSheet(playlistID: playlist.id, currentName: playlist.name) }
+        }
+        .sheet(isPresented: $showCollaborate) {
+            if let playlist { CollaborateSheet(playlist: playlist) }
         }
         .task { if let playlist { player.prewarm(playlist.tracks) } }
         .onChange(of: selectedPhoto) { item in
@@ -630,6 +709,7 @@ private struct TrackCollectionView: View {
 
 private struct TrackCard: View {
     @EnvironmentObject var player: WavePlayer
+    @EnvironmentObject var social: SocialStore
     let track: Track
     var canDelete = false
     var body: some View {
@@ -651,6 +731,17 @@ private struct TrackCard: View {
                 }
             } else if player.isDownloaded(track) {
                 Image(systemName: "arrow.down.circle.fill").foregroundStyle(Color.waveBlue).accessibilityLabel("Downloaded")
+            } else if let reason = player.downloadFailures[track.id] {
+                Button {
+                    player.error = "\(track.title): \(reason)"
+                } label: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .frame(width: 42, height: 42)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Download failed. \(reason)")
             }
             Menu {
                 Button { Task { await player.play(track) } } label: { Label("Play now", systemImage: "play.fill") }
@@ -663,10 +754,17 @@ private struct TrackCard: View {
                         }
                     }
                 }
+                if !social.sharedPlaylists.isEmpty {
+                    Menu("Add to shared playlist", systemImage: "person.2.badge.plus") {
+                        ForEach(social.sharedPlaylists) { playlist in
+                            Button(playlist.name) { Task { await social.add(track, to: playlist) } }
+                        }
+                    }
+                }
                 if canDelete { Button(role: .destructive) { player.delete(track) } label: { Label("Delete download", systemImage: "trash") } }
                 else { Button { Task { await player.download(track) } } label: { Label("Download", systemImage: "arrow.down.circle") } }
             } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 42, height: 42).background(.white.opacity(0.06), in: Circle()) }
-        }.padding(12).waveGlass(radius: 22, highlighted: player.current?.id == track.id)
+        }.padding(12).waveSurface(radius: 22, highlighted: player.current?.id == track.id)
     }
 }
 
@@ -877,53 +975,96 @@ private struct QueueSheet: View {
 }
 
 private struct LyricsPanel: View {
-    @EnvironmentObject var player: WavePlayer
-    private var activeIndex: Int? {
-        player.lyrics.lastIndex { ($0.time ?? .greatestFiniteMagnitude) <= player.elapsed }
-    }
+    @EnvironmentObject private var player: WavePlayer
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var scrollTarget: Int?
+
     var body: some View {
-        ScrollViewReader { proxy in
+        let lines = player.lyrics
+        let activeIndex = lines.lastIndex { line in
+            guard let time = line.time else { return false }
+            return time <= player.elapsed
+        }
+
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Lyrics").font(.title2.weight(.black))
+                Spacer()
+                if player.lyricsLoading { ProgressView().tint(Color.waveBlue) }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 8)
+
             ScrollView(.vertical) {
-              VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Lyrics").font(.title2.weight(.black))
-                    Spacer()
-                    if player.lyricsLoading { ProgressView().tint(Color.waveBlue) }
-                }
-                if !player.lyricsLoading && player.lyrics.isEmpty {
-                    Text("Lyrics aren’t available for this track yet.").foregroundStyle(.secondary).padding(.vertical, 20)
-                } else {
-                    ForEach(Array(player.lyrics.enumerated()), id: \.element.id) { index, line in
-                        Button { if let time = line.time { player.seek(time) } } label: {
-                            Text(line.text)
-                                .font(.title3.weight(index == activeIndex ? .bold : .semibold))
-                                .foregroundStyle(index == activeIndex ? Color.waveBlue : .white)
-                                .opacity(lineOpacity(index))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 3)
-                        }.buttonStyle(.plain).id(index)
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if !player.lyricsLoading && lines.isEmpty {
+                        Text("Lyrics aren’t available for this track yet.")
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 20)
+                    } else {
+                        ForEach(lines.indices, id: \.self) { index in
+                            let line = lines[index]
+                            let isActive = index == activeIndex
+                            Button {
+                                if let time = line.time { player.seek(time) }
+                            } label: {
+                                Text(line.text)
+                                    .font(.title3.weight(.semibold))
+                                    .foregroundStyle(isActive ? Color.waveBlue : Color.white)
+                                    .opacity(lineOpacity(index, activeIndex: activeIndex))
+                                    .scaleEffect(isActive ? 1 : 0.985, anchor: .leading)
+                                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .id(index)
+                            .accessibilityValue(isActive ? "Current lyric" : "")
+                        }
                     }
                 }
-              }
-              .padding(20)
+                .scrollTargetLayout()
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
             }
             .scrollIndicators(.hidden)
-            .defaultScrollAnchor(.center)
-            .mask(LinearGradient(stops: [
-                .init(color: .clear, location: 0), .init(color: .black, location: 0.10),
-                .init(color: .black, location: 0.88), .init(color: .clear, location: 1)
-            ], startPoint: .top, endPoint: .bottom))
-            .waveGlass(radius: 26)
+            .defaultScrollAnchor(.top)
+            .scrollPosition(id: $scrollTarget, anchor: .center)
+            .overlay(alignment: .top) {
+                LinearGradient(
+                    colors: [Color.black.opacity(0.38), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 26)
+                .allowsHitTesting(false)
+            }
+            .overlay(alignment: .bottom) {
+                LinearGradient(
+                    colors: [.clear, Color.black.opacity(0.38)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 30)
+                .allowsHitTesting(false)
+            }
             .onChange(of: activeIndex) { index in
                 guard let index else { return }
-                withAnimation(.easeOut(duration: 0.3)) { proxy.scrollTo(index, anchor: .center) }
+                if reduceMotion {
+                    scrollTarget = index
+                } else {
+                    withAnimation(.easeOut(duration: 0.24)) { scrollTarget = index }
+                }
             }
         }
+        .waveSurface(radius: 26)
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
     }
-    private func lineOpacity(_ index: Int) -> Double {
-        guard let activeIndex else { return 0.48 }
+
+    private func lineOpacity(_ index: Int, activeIndex: Int?) -> Double {
+        guard let activeIndex else { return 0.52 }
         if index == activeIndex { return 1 }
         if index < activeIndex { return max(0.10, 0.34 - Double(activeIndex - index) * 0.06) }
-        return max(0.32, 0.64 - Double(index - activeIndex) * 0.04)
+        return max(0.34, 0.68 - Double(index - activeIndex) * 0.04)
     }
 }

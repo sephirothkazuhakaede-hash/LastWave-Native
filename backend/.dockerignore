@@ -1,0 +1,6 @@
+.env
+bin
+cache
+node_modules
+test
+*.log

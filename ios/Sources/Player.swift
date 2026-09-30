@@ -17,6 +17,7 @@ import UIKit
     @Published var error: String?
     @Published var downloading: Set<String> = []
     @Published var downloadProgress: [String: Double] = [:]
+    @Published var downloadFailures: [String: String] = [:]
     @Published var playlists: [ImportedPlaylist] = []
     @Published var downloadingPlaylists: Set<String> = []
     @Published var playlistDownloadProgress: [String: String] = [:]
@@ -35,6 +36,8 @@ import UIKit
     private var playbackHistory: [Track] = []
     private var nowPlayingArtwork: MPMediaItemArtwork?
     private var didReachExpectedEnd = false
+    private var durationIsAuthoritative = false
+    private var playbackRetryCount = 0
     private var timer: Any?
     private var endObserver: NSObjectProtocol?
     private var statusObserver: NSKeyValueObservation?
@@ -61,13 +64,23 @@ import UIKit
         timer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self else { return }
-                self.elapsed = time.seconds.isFinite ? time.seconds : 0
-                let length = self.expectedDuration ?? self.player.currentItem?.duration.seconds ?? 0
-                self.duration = length.isFinite ? length : 0
-                self.playing = self.player.rate > 0
-                self.publishNowPlaying()
-                if let expected = self.expectedDuration, expected > 0,
-                   self.elapsed >= expected - 0.35, !self.didReachExpectedEnd {
+                let newElapsed = time.seconds.isFinite ? time.seconds : 0
+                if abs(self.elapsed - newElapsed) > 0.05 { self.elapsed = newElapsed }
+                let itemDuration = self.player.currentItem?.duration.seconds ?? 0
+                if itemDuration.isFinite, itemDuration > 0 {
+                    self.expectedDuration = itemDuration
+                    self.durationIsAuthoritative = true
+                }
+                let length = (itemDuration.isFinite && itemDuration > 0)
+                    ? itemDuration
+                    : (self.expectedDuration ?? 0)
+                let newDuration = length.isFinite ? length : 0
+                if abs(self.duration - newDuration) > 0.05 { self.duration = newDuration }
+                let isPlaying = self.player.rate > 0
+                if self.playing != isPlaying { self.playing = isPlaying }
+                if self.durationIsAuthoritative,
+                   let expected = self.expectedDuration, expected > 0,
+                   newElapsed >= expected - 0.35, !self.didReachExpectedEnd {
                     self.didReachExpectedEnd = true
                     Task { await self.next() }
                 }
@@ -89,6 +102,9 @@ import UIKit
         commands.playCommand.addTarget { [weak self] _ in Task { @MainActor in self?.player.play() }; return .success }
         commands.pauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.player.pause() }; return .success }
         commands.nextTrackCommand.addTarget { [weak self] _ in Task { @MainActor in await self?.next() }; return .success }
+        commands.previousTrackCommand.addTarget { [weak self] _ in Task { @MainActor in await self?.previous() }; return .success }
+        commands.skipBackwardCommand.isEnabled = false
+        commands.skipForwardCommand.isEnabled = false
         commands.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let position = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             Task { @MainActor in self?.seek(position.positionTime) }
@@ -96,33 +112,58 @@ import UIKit
         }
     }
 
-    func play(_ track: Track, recordHistory: Bool = true) async {
+    func play(_ track: Track, recordHistory: Bool = true, recovering: Bool = false) async {
         let token = UUID(); generation = token
         loading = true; error = nil
         player.pause()
-        if recordHistory, let current, current.id != track.id {
+        if !recovering { playbackRetryCount = 0 }
+        if !recovering, recordHistory, let current, current.id != track.id {
             playbackHistory.append(current)
             if playbackHistory.count > 50 { playbackHistory.removeFirst(playbackHistory.count - 50) }
         }
         current = track; elapsed = 0; duration = track.duration ?? 0; expectedDuration = track.duration
-        didReachExpectedEnd = false; lyrics = []; nowPlayingArtwork = nil
-        publishNowPlaying()
-        Task { await loadLyrics(for: track, token: token) }
-        Task { await loadArtwork(for: track, token: token) }
+        didReachExpectedEnd = false
+        durationIsAuthoritative = false
+        if !recovering {
+            lyrics = []; nowPlayingArtwork = nil
+            publishNowPlaying()
+            Task { await loadLyrics(for: track, token: token) }
+            Task { await loadArtwork(for: track, token: token) }
+        }
         do {
             let url: URL
-            if FileManager.default.fileExists(atPath: localURL(track).path) { url = localURL(track) }
+            var resolvedHeaders: [String: String] = [:]
+            var usedBackend = false
+            let isLocal = FileManager.default.fileExists(atPath: localURL(track).path)
+            if isLocal { url = localURL(track) }
             else {
-                let resolved = try await catalog.resolvedStream(for: track, quality: audioQuality)
-                url = resolved.url; expectedDuration = resolved.duration
+                let resolved = try await catalog.resolvedStream(for: track, quality: audioQuality, preferRemote: recovering)
+                url = resolved.url
+                expectedDuration = resolved.duration
+                if let resolvedDuration = resolved.duration, resolvedDuration > 0 {
+                    duration = resolvedDuration
+                    durationIsAuthoritative = resolved.usesBackend
+                }
+                resolvedHeaders = resolved.requestHeaders
+                usedBackend = resolved.usesBackend
             }
             guard token == generation else { return }
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
             try AVAudioSession.sharedInstance().setActive(true)
-            let item = AVPlayerItem(url: url)
-            if let expectedDuration, expectedDuration > 0 {
-                item.forwardPlaybackEndTime = CMTime(seconds: expectedDuration, preferredTimescale: 600)
+            let item: AVPlayerItem
+            if isLocal {
+                item = AVPlayerItem(url: url)
             } else {
+                var headers = [
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+                    "Referer": "https://www.youtube.com/"
+                ]
+                resolvedHeaders.forEach { headers[$0.key] = $0.value }
+                let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+                item = AVPlayerItem(asset: asset)
+                item.preferredForwardBufferDuration = 2
+            }
+            if expectedDuration == nil {
                 let catalog = self.catalog
                 Task { [weak self, weak item] in
                     guard let exact = await catalog.duration(for: track), let item else { return }
@@ -130,25 +171,69 @@ import UIKit
                         guard let self, token == self.generation, item === self.player.currentItem else { return }
                         self.expectedDuration = exact
                         self.duration = exact
-                        item.forwardPlaybackEndTime = CMTime(seconds: exact, preferredTimescale: 600)
+                        self.durationIsAuthoritative = true
                         self.publishNowPlaying()
                     }
                 }
             }
             statusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
                 if item.status == .readyToPlay {
-                    Task { @MainActor in self?.loading = false; self?.player.play() }
+                    Task { @MainActor in
+                        guard let self, token == self.generation, item === self.player.currentItem else { return }
+                        self.loading = false
+                        self.player.playImmediately(atRate: 1)
+                    }
                 } else if item.status == .failed {
                     let message = item.error?.localizedDescription ?? "Playback failed."
-                    Task { @MainActor in self?.error = message; self?.loading = false }
+                    Task { @MainActor in
+                        await self?.recoverPlaybackIfPossible(
+                            track,
+                            token: token,
+                            item: item,
+                            wasLocal: isLocal,
+                            usedBackend: usedBackend,
+                            underlyingMessage: message
+                        )
+                    }
                 }
             }
             player.replaceCurrentItem(with: item)
-            player.play(); playing = true
+            player.playImmediately(atRate: 1); playing = true
             publishNowPlaying()
             if let nextTrack = queue.first { Task { _ = try? await catalog.resolvedStream(for: nextTrack, quality: audioQuality) } }
-        } catch { if token == generation { self.error = error.localizedDescription } }
+        } catch {
+            if token == generation {
+                self.error = error.localizedDescription
+                self.playing = false
+            }
+        }
         if token == generation { loading = false }
+    }
+
+    private func recoverPlaybackIfPossible(
+        _ track: Track,
+        token: UUID,
+        item: AVPlayerItem,
+        wasLocal: Bool,
+        usedBackend: Bool,
+        underlyingMessage: String
+    ) async {
+        guard token == generation, item === player.currentItem else { return }
+        if wasLocal {
+            error = "The downloaded copy could not be played. Delete it and download the song again."
+            loading = false; playing = false
+            return
+        }
+        if playbackRetryCount == 0 {
+            playbackRetryCount = 1
+            loading = true
+            if usedBackend { await BackendClient.shared.reportStreamFailure(underlyingMessage) }
+            await catalog.invalidateStream(for: track, quality: audioQuality)
+            await play(track, recordHistory: false, recovering: true)
+            return
+        }
+        error = "YouTube returned an audio link that iOS rejected after a fresh retry. \(underlyingMessage)"
+        loading = false; playing = false
     }
     func toggle() { if player.rate > 0 { player.pause() } else { player.play() }; playing = player.rate > 0 }
     func seek(_ value: Double) {
@@ -201,7 +286,7 @@ import UIKit
     func isPlaylistDownloaded(_ playlist: ImportedPlaylist) -> Bool {
         !playlist.tracks.isEmpty && playlist.tracks.allSatisfy { isDownloaded($0) }
     }
-    @discardableResult func download(_ track: Track, reportError: Bool = true) async -> Bool {
+    @discardableResult func download(_ track: Track, reportError: Bool = true, preferRemote: Bool = false) async -> Bool {
         if isDownloaded(track) { return true }
         if downloading.contains(track.id) {
             for _ in 0..<240 {
@@ -212,20 +297,26 @@ import UIKit
         }
         downloading.insert(track.id)
         downloadProgress[track.id] = 0
+        downloadFailures.removeValue(forKey: track.id)
         error = nil
         defer { downloading.remove(track.id); downloadProgress.removeValue(forKey: track.id) }
+        var usedBackend = false
         do {
-            let url = try await catalog.stream(for: track, quality: audioQuality)
-            var request = URLRequest(url: url)
+            let resolved = try await catalog.resolvedStream(for: track, quality: audioQuality, preferRemote: preferRemote)
+            usedBackend = resolved.usesBackend
+            var request = URLRequest(url: resolved.downloadURL ?? resolved.url)
             request.timeoutInterval = 120
             request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148", forHTTPHeaderField: "User-Agent")
+            resolved.requestHeaders.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
             let transfer = DownloadCoordinator.shared
             let (temporary, response) = try await transfer.start(request) { [weak self] progress in
                 Task { @MainActor in self?.downloadProgress[track.id] = progress }
             }
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 try? FileManager.default.removeItem(at: temporary)
-                throw WaveError.message("Download failed.")
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                throw WaveError.message(code > 0 ? "The audio server refused this song (HTTP \(code))." : "The audio server did not return a downloadable file.")
             }
             let attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
             let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
@@ -237,13 +328,17 @@ import UIKit
             if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
             try FileManager.default.moveItem(at: temporary, to: target)
             downloads.append(track)
+            downloadFailures.removeValue(forKey: track.id)
             try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
             let lyricsService = self.lyricsService
             Task { _ = try? await lyricsService.lyrics(for: track) }
             return true
         } catch {
+            let reason = error.localizedDescription
+            if usedBackend { await BackendClient.shared.reportStreamFailure(reason) }
             await catalog.invalidateStream(for: track, quality: audioQuality)
-            if reportError { self.error = error.localizedDescription }
+            downloadFailures[track.id] = reason
+            if reportError { self.error = reason }
             return false
         }
     }
@@ -351,12 +446,13 @@ import UIKit
         if failures.isEmpty {
             error = nil
         } else {
-            error = "Couldn't download \(failures.count) song\(failures.count == 1 ? "" : "s"). Tap Download all to retry."
+            let sample = failures.prefix(3).joined(separator: ", ")
+            error = "Couldn't download \(failures.count) song\(failures.count == 1 ? "" : "s"): \(sample). Tap its warning icon for the exact reason."
         }
     }
     private func downloadWithRetries(_ track: Track) async -> Bool {
         for attempt in 0..<5 {
-            if await download(track, reportError: false) { return true }
+            if await download(track, reportError: false, preferRemote: attempt.isMultiple(of: 2) == false) { return true }
             if attempt < 4 { try? await Task.sleep(nanoseconds: UInt64(650_000_000 * (attempt + 1))) }
         }
         return false

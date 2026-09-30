@@ -27,6 +27,8 @@ targets:
         product: FirebaseAuth
       - package: Firebase
         product: FirebaseCore
+      - package: Firebase
+        product: FirebaseFirestore
       - package: GoogleSignIn
         product: GoogleSignIn
     settings:
@@ -34,8 +36,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.seph.capyflow
         SWIFT_VERSION: '5.0'
         TARGETED_DEVICE_FAMILY: '1,2'
-        MARKETING_VERSION: 0.3.3
-        CURRENT_PROJECT_VERSION: 6
+        MARKETING_VERSION: 0.4.0
+        CURRENT_PROJECT_VERSION: 7
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: CapyFlow
@@ -59,4 +61,7 @@ targets:
             CFBundleURLSchemes:
               - com.googleusercontent.apps.144576986614-vlb5n51v5u2angp0avm1c5p71av88u0a
         UIBackgroundModes: [audio]
+        NSLocalNetworkUsageDescription: CapyFlow uses your home network to reach your private streaming server.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         UILaunchScreen: {}

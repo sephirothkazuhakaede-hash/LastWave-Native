@@ -1,0 +1,82 @@
+# CapyFlow media backend
+
+This is CapyFlow's small, local-first audio service. It uses the official `yt-dlp` release to resolve an iPhone-compatible M4A/AAC stream, relays byte ranges immediately, and fills a persistent cache in the background. CapyFlow automatically falls back to its built-in resolver when this service is disabled or unavailable.
+
+It is intended for personal/private use. You are responsible for the source service's terms and for only downloading media you are permitted to keep.
+
+## Windows quick start
+
+Requirements: Windows 10/11 and Node.js 20.12 or newer. Docker and FFmpeg are not required.
+
+1. Open this `backend` folder.
+2. Run `start.cmd`.
+
+The first run downloads `yt-dlp.exe` from the official release, verifies its SHA-256 checksum, and stores it in the ignored `bin` folder. The server then listens only on `http://127.0.0.1:8787`.
+
+Useful commands:
+
+```powershell
+npm test
+npm run update:yt-dlp
+npm run benchmark -- dQw4w9WgXcQ
+```
+
+## Stage 1: test from an iPhone on the same trusted Wi-Fi
+
+Run `start-lan.cmd`. This explicitly changes the bind address for that process and permits unauthenticated devices on the local network. Windows may ask for firewall access; allow only **Private networks**.
+
+Find the MSI's private IPv4 address with `ipconfig`, then enter this in CapyFlow's **Account → Streaming server** screen:
+
+```text
+http://192.168.x.x:8787
+```
+
+Local HTTP is accepted only for loopback and private IPv4 ranges. CapyFlow deliberately does not send a Firebase token over HTTP. Stop the server before joining an untrusted network.
+
+## Stage 2: HTTPS tunnel
+
+Do not expose `start-lan.cmd` directly to the internet. For a Cloudflare Tunnel deployment:
+
+- configure the tunnel to reach `http://127.0.0.1:8787`;
+- set `AUTH_MODE=firebase` and `FIREBASE_PROJECT_ID=capyflow-aa6c5` in a local `.env`;
+- use the tunnel's `https://` address in CapyFlow;
+- keep tunnel credentials outside this repository.
+
+With HTTPS enabled, CapyFlow sends the signed-in user's short-lived Firebase ID token. The backend validates its signature, issuer, audience, timestamps, and project without storing a Google password or Firebase service-account key.
+
+`cloudflared` installation and public tunnel creation are intentionally deferred until local playback is proven.
+
+## API
+
+- `GET /health` — public health and cache counters; no song data.
+- `GET|HEAD /v1/audio/:videoID?quality=automatic` — range-capable audio.
+- `GET|HEAD /v1/download/:videoID?quality=automatic` — the same audio with download disposition.
+- `GET /v1/cache/:videoID` — cache status.
+- `POST /v1/cache/:videoID` — pre-cache a track.
+- `GET /v1/diagnostics/timings` — recent extraction/first-byte/transfer timings.
+
+All `/v1` routes follow the selected authentication mode. Source URLs and upstream request headers are never returned to clients or diagnostics.
+
+## Configuration
+
+Copy `.env.example` to `.env` to override defaults. `.env`, cached audio, the `yt-dlp` binary, cookies, and tunnel credentials are ignored by Git.
+
+Important settings:
+
+- `CACHE_MAX_BYTES` defaults to 10 GiB.
+- `CACHE_MAX_AGE_DAYS` defaults to 30 days.
+- `CACHE_CONCURRENCY` controls background cache jobs.
+- `AUTH_MODE=local` permits loopback, plus LAN only with the explicit LAN switches.
+- `AUTH_MODE=firebase` requires a valid CapyFlow Firebase ID token.
+
+No YouTube cookie support is enabled by default. If YouTube later requires a private session, add it only through a local ignored configuration; never commit a browser cookie file.
+
+## Optional Docker run
+
+Docker is not needed on the MSI. An optional image and loopback-only Compose setup are included so the same API can later move to Linux without changing the iOS client.
+
+```powershell
+docker compose up --build
+```
+
+The Compose port is published to host loopback only. Change authentication and tunnel routing deliberately before remote use.

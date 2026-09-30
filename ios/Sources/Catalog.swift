@@ -50,6 +50,23 @@ actor Catalog {
     struct ResolvedStream: Sendable {
         let url: URL
         let duration: Double?
+        let requestHeaders: [String: String]
+        let downloadURL: URL?
+        let usesBackend: Bool
+
+        init(
+            url: URL,
+            duration: Double?,
+            requestHeaders: [String: String] = [:],
+            downloadURL: URL? = nil,
+            usesBackend: Bool = false
+        ) {
+            self.url = url
+            self.duration = duration
+            self.requestHeaders = requestHeaders
+            self.downloadURL = downloadURL
+            self.usesBackend = usesBackend
+        }
     }
     private struct ClientConfig {
         let apiKey: String
@@ -338,30 +355,72 @@ actor Catalog {
         return nil
     }
 
-    func stream(for track: Track, quality: AudioQuality = .automatic) async throws -> URL {
-        try await resolvedStream(for: track, quality: quality).url
+    func stream(for track: Track, quality: AudioQuality = .automatic, preferRemote: Bool = false) async throws -> URL {
+        try await resolvedStream(for: track, quality: quality, preferRemote: preferRemote).url
     }
 
-    func resolvedStream(for track: Track, quality: AudioQuality = .automatic) async throws -> ResolvedStream {
-        let cacheKey = track.id + ":" + quality.rawValue
+    func resolvedStream(for track: Track, quality: AudioQuality = .automatic, preferRemote: Bool = false) async throws -> ResolvedStream {
+        let cacheKey = track.id + ":" + quality.rawValue + ":" + BackendConfiguration.cacheDiscriminator
         if let cached = streamCache[cacheKey], cacheIsUsable(cached) { return cached.0 }
         streamCache.removeValue(forKey: cacheKey)
         if let existing = resolutionTasks[cacheKey] { return try await existing.value }
         let task = Task { () throws -> ResolvedStream in
-            async let exactDuration = self.duration(for: track)
-            // The maintained Cloudflare edge resolver avoids the slower local JS
-            // decipher path. On-device extraction remains the automatic fallback.
-            let streams = try await YouTube(videoID: track.id, methods: [.remote, .local]).streams
-            let audio = streams.filterAudioOnly().filter(\.isNativelyPlayable)
-            let preferred = audio.filter { $0.fileExtension == .m4a }
-            let selected = quality == .dataSaver
-                ? (preferred.lowestAudioBitrateStream() ?? audio.lowestAudioBitrateStream())
-                : (preferred.highestAudioBitrateStream() ?? audio.highestAudioBitrateStream())
-            guard let stream = selected
-                    ?? streams.filterVideoAndAudio().filter(\.isNativelyPlayable).highestAudioBitrateStream() else {
-                throw WaveError.message("No compatible audio stream. YouTube may have changed its extractor requirements.")
+            if !preferRemote,
+               let backend = await BackendClient.shared.resolveStream(
+                    videoID: track.id,
+                    quality: quality,
+                    knownDuration: track.duration ?? self.durationCache[track.id]
+               ) {
+                return ResolvedStream(
+                    url: backend.audioURL,
+                    duration: backend.duration,
+                    requestHeaders: backend.requestHeaders,
+                    downloadURL: backend.downloadURL,
+                    usesBackend: true
+                )
             }
-            return ResolvedStream(url: stream.url, duration: await exactDuration)
+            do {
+                // Local extraction normally starts faster because it avoids the
+                // Cloudflare WebSocket round trip. The remote extractor remains a
+                // fallback, and a failed AVPlayer item retries in the opposite order.
+                let youtube: YouTube
+                if preferRemote {
+                    youtube = YouTube(videoID: track.id, methods: [.remote, .local])
+                } else {
+                    youtube = YouTube(videoID: track.id, methods: [.local, .remote])
+                }
+                let streams = try await youtube.streams
+                let audio = streams.filterAudioOnly().filter(\.isNativelyPlayable)
+                let preferred = audio.filter { $0.fileExtension == .m4a }
+                let selected = quality == .dataSaver
+                    ? (preferred.lowestAudioBitrateStream() ?? audio.lowestAudioBitrateStream())
+                    : (preferred.highestAudioBitrateStream() ?? audio.highestAudioBitrateStream())
+                guard let stream = selected
+                        ?? streams.filterVideoAndAudio().filter(\.isNativelyPlayable).highestAudioBitrateStream() else {
+                    throw WaveError.message("This upload has no iPhone-compatible audio stream.")
+                }
+                // Do not block first audio on a second metadata request. If the
+                // search result had no duration, WavePlayer fills it in later.
+                let knownDuration = track.duration.flatMap { $0 > 0 ? $0 : nil } ?? self.durationCache[track.id]
+                return ResolvedStream(url: stream.url, duration: knownDuration)
+            } catch let error as YouTubeKitError {
+                switch error {
+                case .videoPrivate:
+                    throw WaveError.message("This YouTube upload is private.")
+                case .videoAgeRestricted:
+                    throw WaveError.message("This upload is age-restricted and cannot be played without YouTube sign-in.")
+                case .membersOnly:
+                    throw WaveError.message("This upload is only available to channel members.")
+                case .videoRegionBlocked:
+                    throw WaveError.message("This upload is not available in your region.")
+                case .videoUnavailable:
+                    throw WaveError.message("This YouTube upload is unavailable.")
+                case .liveStreamError:
+                    throw WaveError.message("Live streams are not supported in CapyFlow yet.")
+                default:
+                    throw WaveError.message("YouTube could not create a playable audio link. Please retry in a moment.")
+                }
+            }
         }
         resolutionTasks[cacheKey] = task
         defer { resolutionTasks.removeValue(forKey: cacheKey) }
@@ -371,7 +430,7 @@ actor Catalog {
     }
 
     func invalidateStream(for track: Track, quality: AudioQuality) {
-        let key = track.id + ":" + quality.rawValue
+        let key = track.id + ":" + quality.rawValue + ":" + BackendConfiguration.cacheDiscriminator
         streamCache.removeValue(forKey: key)
         resolutionTasks[key]?.cancel()
         resolutionTasks.removeValue(forKey: key)

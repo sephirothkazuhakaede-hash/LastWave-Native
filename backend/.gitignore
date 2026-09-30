@@ -1,0 +1,6 @@
+.env
+bin/yt-dlp.exe
+bin/*.tmp
+cache/
+coverage/
+node_modules/

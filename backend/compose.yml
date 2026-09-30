@@ -1,0 +1,16 @@
+services:
+  capyflow-media:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      BIND_HOST: 0.0.0.0
+      ALLOW_LAN: "true"
+      ALLOW_ANONYMOUS_LAN: "true"
+      AUTH_MODE: local
+    volumes:
+      - capyflow-cache:/app/cache
+
+volumes:
+  capyflow-cache:

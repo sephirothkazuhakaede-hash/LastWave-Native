@@ -26,9 +26,35 @@ struct GlassCard: ViewModifier {
     }
 }
 
+/// A low-cost surface for scrolling content. Unlike `GlassCard`, this avoids
+/// live backdrop blur and large shadows so rows remain smooth while playback
+/// and lyrics update.
+struct SurfaceCard: ViewModifier {
+    var radius: CGFloat = 22
+    var highlighted = false
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        content
+            .background {
+                shape.fill(highlighted ? Color.waveBlue.opacity(0.15) : .white.opacity(0.055))
+            }
+            .overlay {
+                shape.stroke(
+                    highlighted ? Color.waveBlue.opacity(0.32) : .white.opacity(0.10),
+                    lineWidth: 0.75
+                )
+            }
+    }
+}
+
 extension View {
     func waveGlass(radius: CGFloat = 28, highlighted: Bool = false) -> some View {
         modifier(GlassCard(radius: radius, highlighted: highlighted))
+    }
+
+    func waveSurface(radius: CGFloat = 22, highlighted: Bool = false) -> some View {
+        modifier(SurfaceCard(radius: radius, highlighted: highlighted))
     }
 }
 

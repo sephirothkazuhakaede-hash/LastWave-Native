@@ -1,5 +1,19 @@
 # Changelog
 
+## CapyFlow iOS 0.4.0 (build 7) - 2026-10-01
+
+### Added
+- Optional CapyFlow media backend with a Windows one-command launcher, verified yt-dlp bootstrap, M4A/AAC selection, HTTP Range proxying, persistent cache, request deduplication, 403 refresh, Firebase authentication for HTTPS, and detailed first-byte diagnostics.
+- Configurable streaming-server screen with automatic fallback to the built-in on-device resolver.
+- Firestore-backed CapyFlow profiles, unique usernames, following, shared playlists, and direct playlist collaboration.
+- Download failure indicators that explain which individual track failed and why.
+
+### Improved
+- Faster direct playback by preferring on-device extraction, removing a blocking duration request, attaching required media headers, and retrying a rejected stream once through the alternate resolver.
+- Lyrics performance through lazy rows, one active-line calculation, reduced material effects, and less global playback-clock publishing.
+- Playlist library presentation with compact artwork cards and a separate shared-playlists section.
+- Playlist downloads now alternate resolver routes during retries instead of repeatedly retrying the same stale link.
+
 ## [4.2.2] - 2026-09-27
 
 ### Added
