@@ -12,7 +12,7 @@
     "update:yt-dlp": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/bootstrap.ps1 -Force",
     "start": "node ./src/index.js",
     "dev": "node --watch ./src/index.js",
-    "test": "node --test --test-isolation=none",
+    "test": "node --test --test-isolation=none --test-force-exit",
     "benchmark": "node ./scripts/benchmark.mjs"
   },
   "license": "GPL-3.0-only"

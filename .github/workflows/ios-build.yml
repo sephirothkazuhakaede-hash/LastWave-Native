@@ -9,6 +9,7 @@ permissions:
 jobs:
   backend-test:
     runs-on: windows-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: backend
