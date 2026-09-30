@@ -30,5 +30,14 @@ targets:
     info:
       path: Info.plist
       properties:
+        CFBundleIcons:
+          CFBundlePrimaryIcon:
+            CFBundleIconFiles: [AppIcon60x60]
+            CFBundleIconName: AppIcon
+        CFBundleIcons~ipad:
+          CFBundlePrimaryIcon:
+            CFBundleIconFiles: [AppIcon20x20, AppIcon29x29, AppIcon40x40, AppIcon76x76, AppIcon83.5x83.5]
+            CFBundleIconName: AppIcon
+        CFBundleIconFiles: [AppIcon60x60]
         UIBackgroundModes: [audio]
         UILaunchScreen: {}
