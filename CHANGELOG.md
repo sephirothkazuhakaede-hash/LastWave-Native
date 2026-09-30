@@ -10,6 +10,8 @@
 
 ### Improved
 - Faster direct playback by preferring on-device extraction, removing a blocking duration request, attaching required media headers, and retrying a rejected stream once through the alternate resolver.
+- Playback duration now switches from the search estimate to AVPlayer's actual media length, preventing finished songs from lingering on a false extended timeline.
+- Lock-screen controls now expose previous/next track and deliberately omit the unwanted ten-second skip buttons.
 - Lyrics performance through lazy rows, one active-line calculation, reduced material effects, and less global playback-clock publishing.
 - Playlist library presentation with compact artwork cards and a separate shared-playlists section.
 - Playlist downloads now alternate resolver routes during retries instead of repeatedly retrying the same stale link.

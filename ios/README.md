@@ -1,36 +1,42 @@
-# CapyFlow iOS — personal prototype 0.2.0
+# CapyFlow iOS 0.4.0
 
-Native SwiftUI music app inspired by Clash-Projects/LastWave-Native.
+CapyFlow is a native SwiftUI music client with YouTube Music search, song and
+album results, playlists, synchronized lyrics, background audio, lock-screen
+artwork and controls, queue/autoplay, downloads with progress, and offline
+playback. Google sign-in is configured through Firebase; Firestore adds public
+usernames, following, shared playlists, and playlist collaboration.
 
-Implemented: YouTube Music song search, local YouTubeKit audio extraction with
-its maintained remote fallback, AVPlayer playback, queue, background audio
-configuration, lock-screen commands, validated download-to-device, offline playback,
-persistent download index, deletion, responsive layouts, draggable seeking, and
-synced/plain LRCLIB lyrics.
-
-Not yet implemented: Last.fm, YouTube account login, recommendations,
-widgets and equalizer. This is not full upstream feature parity.
+The app normally resolves audio on the device through YouTubeKit. It can also
+use the optional service in `../backend` for faster, cached M4A/AAC streaming.
+If that private service is disabled or unavailable, CapyFlow automatically
+returns to its built-in resolver.
 
 ## Build
 
 On macOS with Xcode, install XcodeGen (`brew install xcodegen`), run
-`xcodegen generate`, then open CapyFlow.xcodeproj. Alternatively put this
-directory's contents at the root of a GitHub repository and run the
-“Build unsigned IPA” Actions workflow. Download the artifact and sign the IPA
-using your own certificate/provisioning profile.
+`xcodegen generate` in this directory, then open `CapyFlow.xcodeproj`.
+The repository's **Build unsigned IPA** GitHub Actions workflow also compiles,
+checks the app icon, packages an unsigned IPA, and publishes it as an artifact
+for signing with Sideloadly, AltStore, or your own certificate.
 
-No Xcode compiler or iOS device is available in the development workspace.
-The source has not yet passed an Xcode build or device playback test.
-YouTube extraction is unofficial and may fail due to service changes, region,
-or anti-bot requirements. Errors are displayed rather than pretending playback
-worked. Local extraction is attempted first. If it fails, YouTubeKit may use its
-documented Cloudflare-hosted remote extraction fallback; requests are executed from
-the device so returned stream URLs remain usable.
-Downloads run while the app is active; they are not resumable background jobs.
+The included Firebase plist is registered for `com.seph.capyflow`. Google sign-in
+works in sideloaded builds as long as that bundle identifier and URL scheme are
+preserved. Social features additionally require a Cloud Firestore database and
+the rules in `../firebase/firestore.rules` to be deployed.
+
+Downloads use an iOS background URL session, so active transfers can continue
+while the app is suspended. iOS still controls execution time and may stop work
+after the app is force-quit.
+
+YouTube extraction is unofficial and can fail when an upload is private,
+age-restricted, members-only, region-blocked, removed, or rejected by YouTube's
+anti-bot controls. CapyFlow reports the per-song reason and retries through its
+alternate resolver instead of silently skipping the track.
 
 ## Attribution
 
-Original Android project: https://github.com/Clash-Projects/LastWave-Native
-by its respective contributors, GPL-3.0. This derivative project uses GPL-3.0.
-YouTubeKit by Alexander Eichhorn and contributors, MIT, retrieved by SwiftPM.
-Retain its license and notices when distributing its compiled code.
+The iOS client began as a derivative of the
+[LastWave Native](https://github.com/Clash-Projects/LastWave-Native) Android
+project by its respective contributors. Both are GPL-3.0 projects. YouTubeKit by
+Alexander Eichhorn and contributors is MIT licensed and fetched through SwiftPM.
+Keep the relevant licenses and notices when distributing compiled builds.
