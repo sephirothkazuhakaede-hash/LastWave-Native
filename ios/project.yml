@@ -11,8 +11,10 @@ targets:
   CapyFlow:
     type: application
     platform: iOS
-    sources: [Sources]
-    resources: [Resources]
+    sources:
+      - path: Sources
+      - path: Resources
+        buildPhase: resources
     dependencies:
       - package: YouTubeKit
     settings:
