@@ -34,6 +34,12 @@ jobs:
         run: |
           test -f build/Build/Products/Release-iphoneos/CapyFlow.app/Assets.car
           xcrun assetutil --info build/Build/Products/Release-iphoneos/CapyFlow.app/Assets.car | grep -q AppIcon
+      - name: Verify release metadata
+        run: |
+          APP_PLIST=build/Build/Products/Release-iphoneos/CapyFlow.app/Info.plist
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PLIST")" = "CapyFlow"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")" = "0.4.1"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")" = "8"
       - name: Package unsigned IPA
         run: |
           mkdir -p Payload

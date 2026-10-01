@@ -47,6 +47,9 @@ targets:
     info:
       path: Info.plist
       properties:
+        CFBundleDisplayName: CapyFlow
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleIcons:
           CFBundlePrimaryIcon:
             CFBundleIconFiles: [AppIcon60x60]
