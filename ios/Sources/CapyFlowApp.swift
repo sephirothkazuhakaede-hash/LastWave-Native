@@ -5,17 +5,26 @@ import FirebaseCore
 import GoogleSignIn
 
 @main struct CapyFlowApp: App {
-    @StateObject private var player = WavePlayer()
+    @StateObject private var player: WavePlayer
     @StateObject private var auth: AuthSession
     @StateObject private var social: SocialStore
     init() {
         FirebaseApp.configure()
-        _auth = StateObject(wrappedValue: AuthSession())
-        _social = StateObject(wrappedValue: SocialStore())
+        let player = WavePlayer()
+        let auth = AuthSession()
+        let social = SocialStore()
+#if DEBUG
+        if LayoutFixture.requested != nil {
+            LayoutFixture.install(into: player, social: social)
+        }
+#endif
+        _player = StateObject(wrappedValue: player)
+        _auth = StateObject(wrappedValue: auth)
+        _social = StateObject(wrappedValue: social)
     }
     var body: some Scene {
         WindowGroup {
-            RootView()
+            appContent
                 .environmentObject(player)
                 .environmentObject(auth)
                 .environmentObject(social)
@@ -23,7 +32,105 @@ import GoogleSignIn
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
         }
     }
+
+    @ViewBuilder private var appContent: some View {
+#if DEBUG
+        if let fixture = LayoutFixture.requested {
+            LayoutFixtureView(fixture: fixture)
+        } else {
+            RootView()
+        }
+#else
+        RootView()
+#endif
+    }
 }
+
+#if DEBUG
+private enum LayoutFixture: String {
+    case root, player, playerLyrics = "player-lyrics", album, playlist, social, profile
+
+    static var requested: LayoutFixture? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flag = arguments.firstIndex(of: "--layout-fixture"),
+              arguments.indices.contains(flag + 1) else { return nil }
+        return LayoutFixture(rawValue: arguments[flag + 1])
+    }
+
+    static let tracks: [Track] = [
+        Track(id: "fixture00001", title: "A Very Long Album Song Title That Must Never Push Controls Outside the Phone", artist: "Capybara & The Extremely Long Artist Name", duration: 214),
+        Track(id: "fixture00002", title: "River Glass", artist: "CapyFlow Friends", duration: 189),
+        Track(id: "fixture00003", title: "Small Screen Sunrise", artist: "Responsive Ensemble", duration: 241)
+    ]
+
+    static let album = Album(
+        id: "MPREfixturealbum",
+        title: "An Album With a Deliberately Long Name for Responsive Layout Testing",
+        artist: "Capybara & The Extremely Long Artist Name",
+        year: "2026",
+        artworkURL: nil
+    )
+
+    @MainActor static func install(into player: WavePlayer, social: SocialStore) {
+        player.current = tracks[0]
+        player.duration = tracks[0].duration ?? 0
+        player.elapsed = 87
+        player.queue = Array(tracks.dropFirst())
+        player.lyrics = [
+            LyricLine(time: 0, text: "The river starts beneath the city lights"),
+            LyricLine(time: 32, text: "We carry every little song together"),
+            LyricLine(time: 78, text: "A long lyric sentence stays inside the readable glass panel"),
+            LyricLine(time: 110, text: "The finished words drift upward and fade")
+        ]
+        player.playlists = [
+            ImportedPlaylist(id: "fixture-playlist", name: "A Very Long Shared Road Trip Playlist Name", tracks: tracks),
+            ImportedPlaylist(id: "fixture-second", name: "Quiet Capybara Hours", tracks: Array(tracks.reversed()))
+        ]
+        player.downloadStates[tracks[1].id] = TrackDownloadState(
+            stage: .queued, progress: nil, source: nil, attempt: 0, elapsedSeconds: 0, detail: nil
+        )
+
+        if let profile = SocialProfile(id: "fixture-user-123456", data: [
+            "username": "capybara.listener",
+            "usernameKey": "capybara.listener",
+            "displayName": "A CapyFlow Listener With a Long Display Name",
+            "bio": "Music, capybaras, and shared playlists with friends.",
+            "avatarURL": ""
+        ]), let friend = SocialProfile(id: "fixture-friend-654321", data: [
+            "username": "river.friend",
+            "usernameKey": "river.friend",
+            "displayName": "River Friend With a Long Name",
+            "bio": "",
+            "avatarURL": ""
+        ]) {
+            social.installLayoutFixture(profile: profile, following: [friend])
+        }
+    }
+}
+
+private struct LayoutFixtureView: View {
+    let fixture: LayoutFixture
+
+    @ViewBuilder var body: some View {
+        switch fixture {
+        case .root:
+            RootView()
+        case .player:
+            PlayerView()
+        case .playerLyrics:
+            PlayerView(showLyricsInitially: true)
+        case .album:
+            NavigationStack { AlbumDetailView(album: LayoutFixture.album, fixtureTracks: LayoutFixture.tracks) }
+        case .playlist:
+            NavigationStack { PlaylistDetailView(playlistID: "fixture-playlist") }
+        case .social:
+            NavigationStack { SocialHubView() }
+        case .profile:
+            NavigationStack { ProfilePageView() }
+        }
+    }
+}
+#endif
 
 private enum WaveTab: String, CaseIterable {
     case home = "Home", search = "Search", library = "Library"
@@ -34,6 +141,11 @@ private enum WaveTab: String, CaseIterable {
         case .library: "square.stack.fill"
         }
     }
+}
+
+private enum ProfileDrawerDestination: String, Identifiable {
+    case profile, settings
+    var id: String { rawValue }
 }
 
 struct RootView: View {
@@ -48,18 +160,20 @@ struct RootView: View {
     @State private var searching = false
     @State private var searchMode: SearchMode = .songs
     @State private var lastSearchSignature = ""
+    @State private var showProfileDrawer = false
+    @State private var drawerDestination: ProfileDrawerDestination?
     var body: some View {
         ZStack {
             WaveBackdrop()
-            HomeDashboardView(selection: $tab)
+            HomeDashboardView(selection: $tab) { openDrawer() }
                 .opacity(tab == .home ? 1 : 0)
                 .allowsHitTesting(tab == .home)
                 .accessibilityHidden(tab != .home)
-            SearchHomeView(query: $searchQuery, results: $searchResults, albums: $albumResults, searching: $searching, mode: $searchMode, lastSearchSignature: $lastSearchSignature)
+            SearchHomeView(query: $searchQuery, results: $searchResults, albums: $albumResults, searching: $searching, mode: $searchMode, lastSearchSignature: $lastSearchSignature) { openDrawer() }
                 .opacity(tab == .search ? 1 : 0)
                 .allowsHitTesting(tab == .search)
                 .accessibilityHidden(tab != .search)
-            PlaylistLibraryView()
+            PlaylistLibraryView { openDrawer() }
                 .opacity(tab == .library ? 1 : 0)
                 .allowsHitTesting(tab == .library)
                 .accessibilityHidden(tab != .library)
@@ -68,12 +182,51 @@ struct RootView: View {
             CapyDock(selection: $tab) { showPlayer = true }
                 .padding(.horizontal, 12)
         }
+        .overlay {
+            if showProfileDrawer {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Color.black.opacity(0.48)
+                            .ignoresSafeArea()
+                            .contentShape(Rectangle())
+                            .onTapGesture { closeDrawer() }
+                        ProfileDrawerView(
+                            close: { closeDrawer() },
+                            openProfile: { openDrawerDestination(.profile) },
+                            openSettings: { openDrawerDestination(.settings) }
+                        )
+                        .frame(width: min(350, geometry.size.width * 0.88))
+                        .frame(maxHeight: .infinity)
+                        .background(CapyColor.background)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .shadow(color: .black.opacity(0.45), radius: 30, x: 12)
+                    }
+                }
+                .zIndex(40)
+            }
+        }
         .sheet(isPresented: $showPlayer) {
             PlayerView()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
                 .presentationCornerRadius(30)
                 .presentationBackground(.clear)
+        }
+        .sheet(item: $drawerDestination) { destination in
+            switch destination {
+            case .profile:
+                NavigationStack {
+                    ProfilePageView()
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { drawerDestination = nil }
+                            }
+                        }
+                }
+                    .presentationDetents([.large])
+            case .settings:
+                AccountSheet()
+            }
         }
         .overlay(alignment: .top) {
             if let message = player.error {
@@ -85,6 +238,127 @@ struct RootView: View {
         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: player.error)
         .task(id: auth.user?.uid) { social.bind(to: auth.user) }
     }
+
+    private func openDrawer() {
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) { showProfileDrawer = true }
+        CapyHaptics.selection()
+    }
+
+    private func closeDrawer() {
+        withAnimation(.easeOut(duration: 0.2)) { showProfileDrawer = false }
+    }
+
+    private func openDrawerDestination(_ destination: ProfileDrawerDestination) {
+        closeDrawer()
+        drawerDestination = destination
+    }
+}
+
+private struct CapyProfileButton: View {
+    @EnvironmentObject private var auth: AuthSession
+    @EnvironmentObject private var social: SocialStore
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if let profile = social.profile {
+                    SocialAvatar(profile: profile, size: 48)
+                } else if let url = auth.user?.photoURL {
+                    AsyncImage(url: url) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        Image(systemName: "person.fill").foregroundStyle(CapyColor.accent)
+                    }
+                } else {
+                    Image(systemName: "person.fill").foregroundStyle(CapyColor.accent)
+                }
+            }
+            .frame(width: 48, height: 48)
+            .clipShape(Circle())
+            .overlay { Circle().stroke(CapyColor.surfaceStroke, lineWidth: 0.8) }
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open profile and settings")
+    }
+}
+
+private struct ProfileDrawerView: View {
+    @EnvironmentObject private var auth: AuthSession
+    @EnvironmentObject private var social: SocialStore
+    let close: () -> Void
+    let openProfile: () -> Void
+    let openSettings: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("CapyFlow").font(.capyTitle)
+                Spacer()
+                Button(action: close) {
+                    Image(systemName: "xmark").frame(width: 48, height: 48).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close profile menu")
+            }
+            .padding(.horizontal, 18)
+
+            Button(action: openProfile) {
+                HStack(spacing: 14) {
+                    Group {
+                        if let profile = social.profile {
+                            SocialAvatar(profile: profile, size: 72)
+                        } else {
+                            Image(systemName: "person.crop.circle.fill")
+                                .resizable().scaledToFit().foregroundStyle(CapyColor.accent)
+                        }
+                    }
+                    .frame(width: 72, height: 72).clipShape(Circle())
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(social.profile?.displayName ?? auth.user?.displayName ?? "Your profile")
+                            .font(.title3.bold()).lineLimit(2)
+                        Text(social.profile.map { "@" + $0.username } ?? (auth.user == nil ? "Sign in to connect" : "Profile is being prepared"))
+                            .font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(2)
+                        Text("View profile").font(.capyCaption).foregroundStyle(CapyColor.accent)
+                    }
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right").foregroundStyle(CapyColor.tertiaryText)
+                }
+                .padding(16).contentShape(Rectangle()).waveSurface(radius: 22, highlighted: true)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 16).padding(.top, 12)
+
+            VStack(spacing: 8) {
+                drawerButton("Profile & friends", icon: "person.2.fill", action: openProfile)
+                drawerButton("Settings", icon: "gearshape.fill", action: openSettings)
+            }
+            .padding(.horizontal, 16).padding(.top, 20)
+
+            Spacer()
+            Text("Your music and downloads work even when social features are offline.")
+                .font(.capyCaption).foregroundStyle(CapyColor.tertiaryText)
+                .padding(20)
+        }
+        .padding(.top, 8)
+        .safeAreaPadding(.top)
+        .safeAreaPadding(.bottom)
+    }
+
+    private func drawerButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon).foregroundStyle(CapyColor.accent).frame(width: 28)
+                Text(title).font(.capyCallout)
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(CapyColor.tertiaryText)
+            }
+            .frame(maxWidth: .infinity, minHeight: 52).contentShape(Rectangle())
+            .padding(.horizontal, 14).waveSurface(radius: 18)
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 private struct HomeDashboardView: View {
@@ -92,7 +366,7 @@ private struct HomeDashboardView: View {
     @EnvironmentObject private var auth: AuthSession
     @EnvironmentObject private var social: SocialStore
     @Binding var selection: WaveTab
-    @State private var showAccount = false
+    let openProfileDrawer: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -118,48 +392,35 @@ private struct HomeDashboardView: View {
                 .scrollIndicators(.hidden)
             }
             .toolbar(.hidden, for: .navigationBar)
-            .sheet(isPresented: $showAccount) { AccountSheet() }
         }
     }
 
     private var homeHeader: some View {
         HStack(spacing: 14) {
+            CapyProfileButton(action: openProfileDrawer)
             VStack(alignment: .leading, spacing: 3) {
                 Text(greeting).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
                 Text("CapyFlow").font(.capyHero)
             }
-            Spacer()
-            Button { showAccount = true; CapyHaptics.selection() } label: {
-                Group {
-                    if let url = auth.user?.photoURL {
-                        AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { Image(systemName: "person.fill") }
-                    } else {
-                        Image(systemName: "person.fill")
-                    }
-                }
-                .frame(width: 48, height: 48)
-                .clipShape(Circle())
-                .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .waveGlass(radius: 24)
-            .accessibilityLabel("Account and friends")
+            Spacer(minLength: 0)
         }
     }
 
     @ViewBuilder private var flowHero: some View {
         if let track = player.current {
-            HStack(spacing: 18) {
-                Artwork(track: track, size: 132, radius: 24)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(player.playing ? "IN YOUR FLOW" : "READY WHEN YOU ARE")
-                        .font(.caption2.weight(.black)).tracking(1.8).foregroundStyle(CapyColor.accent)
-                    Text(track.title).font(.capyTitle).lineLimit(2)
-                    Text(track.artist).font(.capyBody).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
-                    Button { player.toggle(); CapyHaptics.impact(.medium) } label: {
-                        Label(player.playing ? "Pause" : "Keep listening", systemImage: player.playing ? "pause.fill" : "play.fill")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 18) {
+                    Artwork(track: track, size: 132, radius: 24)
+                    flowSummary(track)
+                        .frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
+                }
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        Spacer(minLength: 0)
+                        Artwork(track: track, size: 132, radius: 24)
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(CapyPrimaryButtonStyle())
+                    flowSummary(track)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -185,6 +446,22 @@ private struct HomeDashboardView: View {
             .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
             .overlay { RoundedRectangle(cornerRadius: 30, style: .continuous).stroke(CapyColor.surfaceStroke) }
         }
+    }
+
+    private func flowSummary(_ track: Track) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(player.playing ? "IN YOUR FLOW" : "READY WHEN YOU ARE")
+                .font(.caption2.weight(.black)).tracking(1.8).foregroundStyle(CapyColor.accent)
+            Text(track.title).font(.capyTitle).lineLimit(2)
+            Text(track.artist).font(.capyBody).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+            Button { player.toggle(); CapyHaptics.impact(.medium) } label: {
+                Label(player.playing ? "Pause" : "Keep listening", systemImage: player.playing ? "pause.fill" : "play.fill")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .buttonStyle(CapyPrimaryButtonStyle())
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 
     private var recentlyPlayed: some View {
@@ -272,37 +549,39 @@ private struct SearchHomeView: View {
     @Binding var searching: Bool
     @Binding var mode: SearchMode
     @Binding var lastSearchSignature: String
+    let openProfileDrawer: () -> Void
     @FocusState private var focused: Bool
-    @State private var showAccount = false
     var body: some View {
       NavigationStack {
         ScrollView {
-            LazyVStack(spacing: 18) {
-                header
-                searchBar
-                Picker("Search type", selection: $mode) {
-                    ForEach(SearchMode.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented)
-                if searching {
-                    HStack(spacing: 12) { ProgressView(); Text("Searching YouTube Music…").foregroundStyle(.secondary) }
-                        .frame(maxWidth: .infinity).padding(28).waveGlass(radius: 24)
-                } else if results.isEmpty && albums.isEmpty {
-                    discoveryHero
-                    featureStrip
-                } else if mode == .albums {
-                    albumSectionHeader
-                    ForEach(albums) { album in
-                        NavigationLink { AlbumDetailView(album: album) } label: { AlbumResultRow(album: album) }
-                            .buttonStyle(.plain)
+            CapyScreenContainer {
+                LazyVStack(spacing: 18) {
+                    header
+                    searchBar
+                    Picker("Search type", selection: $mode) {
+                        ForEach(SearchMode.allCases) { Text($0.rawValue).tag($0) }
+                    }.pickerStyle(.segmented)
+                    if searching {
+                        HStack(spacing: 12) { ProgressView(); Text("Searching YouTube Music…").foregroundStyle(.secondary) }
+                            .frame(maxWidth: .infinity).padding(28).waveGlass(radius: 24)
+                    } else if results.isEmpty && albums.isEmpty {
+                        discoveryHero
+                        featureStrip
+                    } else if mode == .albums {
+                        albumSectionHeader
+                        ForEach(albums) { album in
+                            NavigationLink { AlbumDetailView(album: album) } label: { AlbumResultRow(album: album) }
+                                .buttonStyle(.plain)
+                        }
+                    } else {
+                        if !artistSuggestions.isEmpty { artistSection }
+                        if !matchingPlaylists.isEmpty { localPlaylistSection }
+                        sectionHeader
+                        ForEach(results) { TrackCard(track: $0) }
                     }
-                } else {
-                    if !artistSuggestions.isEmpty { artistSection }
-                    if !matchingPlaylists.isEmpty { localPlaylistSection }
-                    sectionHeader
-                    ForEach(results) { TrackCard(track: $0) }
                 }
+                .padding(.top, 10).padding(.bottom, 30)
             }
-            .padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
         }.scrollIndicators(.hidden).toolbar(.hidden, for: .navigationBar)
         .task(id: query) {
             let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -319,22 +598,10 @@ private struct SearchHomeView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 14) {
+            CapyProfileButton(action: openProfileDrawer)
             CapyScreenTitle(title: "Search", subtitle: "Songs, artists, albums and your playlists")
-            Spacer()
-            Button { showAccount = true } label: {
-                Group {
-                    if let url = auth.user?.photoURL {
-                        AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { Image(systemName: "person.crop.circle") }
-                    } else {
-                        Image(systemName: "person.crop.circle")
-                    }
-                }
-                .font(.title2.bold()).frame(width: 54, height: 54).clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            }
-            .buttonStyle(.plain).waveGlass(radius: 22)
         }
-        .sheet(isPresented: $showAccount) { AccountSheet() }
     }
 
     private var searchBar: some View {
@@ -474,72 +741,81 @@ private struct AccountSheet: View {
         NavigationStack {
             ZStack {
                 WaveBackdrop()
-                VStack(spacing: 20) {
-                    Group {
-                        if let url = auth.user?.photoURL {
-                            AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { ProgressView() }
-                        } else {
-                            Image(systemName: "person.crop.circle.fill").resizable().scaledToFit().foregroundStyle(Color.waveBlue)
-                        }
-                    }
-                    .frame(width: 104, height: 104).clipShape(Circle())
-                    if let user = auth.user {
-                        VStack(spacing: 5) {
-                            Text(user.displayName ?? "CapyFlow listener").font(.title2.bold())
-                            if let profile = social.profile {
-                                Text("@" + profile.username).font(.subheadline.weight(.semibold)).foregroundStyle(Color.waveBlue)
-                                Text("\(social.followerCount) followers  •  \(social.followingCount) following")
-                                    .font(.caption).foregroundStyle(.secondary)
+                ScrollView {
+                    CapyScreenContainer {
+                        VStack(spacing: 20) {
+                            Group {
+                                if let profile = social.profile {
+                                    SocialAvatar(profile: profile, size: 104)
+                                } else if let url = auth.user?.photoURL {
+                                    AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { ProgressView() }
+                                } else {
+                                    Image(systemName: "person.crop.circle.fill").resizable().scaledToFit().foregroundStyle(Color.waveBlue)
+                                }
                             }
-                            Text(user.email ?? "Signed in with Google").foregroundStyle(.secondary)
-                        }
-                        NavigationLink {
-                            SocialHubView()
-                        } label: {
-                            Label("Profile, friends & shared playlists", systemImage: "person.2.fill")
-                                .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
-                        Button(role: .destructive) { auth.signOut() } label: {
-                            Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
-                                .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
-                        }.buttonStyle(.bordered)
-                    } else {
-                        VStack(spacing: 6) {
-                            Text("Sign in to CapyFlow").font(.title2.bold())
-                            Text("Use your Google account now; shared profiles and playlists can build on this account next.")
-                                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        }
-                        Button { Task { await auth.signInWithGoogle() } } label: {
-                            Group { if auth.working { ProgressView() } else { Label("Continue with Google", systemImage: "person.badge.key.fill") } }
-                                .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
-                        }
-                        .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black).disabled(auth.working)
-                    }
-                    NavigationLink {
-                        BackendSettingsView()
-                    } label: {
-                        Label("Streaming server", systemImage: "bolt.horizontal.circle.fill")
-                            .frame(maxWidth: .infinity).frame(height: 48).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.bordered)
-                    if let error = auth.error {
-                        Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
-                    }
-                    if auth.user != nil, social.connectionState != .ready {
-                        HStack(spacing: 10) {
-                            Image(systemName: social.connectionState.systemImage).foregroundStyle(CapyColor.warning)
-                            Text(social.error ?? social.connectionState.detail).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
-                            Spacer()
-                            if social.connectionState.canRetry {
-                                Button("Retry") { social.retryConnection() }.font(.capyCaption).foregroundStyle(CapyColor.accent)
+                            .frame(width: 104, height: 104).clipShape(Circle())
+                            if let user = auth.user {
+                                VStack(spacing: 5) {
+                                    Text(social.profile?.displayName ?? user.displayName ?? "CapyFlow listener").font(.title2.bold())
+                                    if let profile = social.profile {
+                                        Text("@" + profile.username).font(.subheadline.weight(.semibold)).foregroundStyle(Color.waveBlue)
+                                        Text("\(social.followerCount) followers  •  \(social.followingCount) following")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Text(user.email ?? "Signed in with Google").foregroundStyle(.secondary)
+                                }
+                                NavigationLink {
+                                    ProfilePageView()
+                                } label: {
+                                    Label("Open and customize profile", systemImage: "person.crop.circle.fill")
+                                        .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
+                                Button(role: .destructive) { auth.signOut() } label: {
+                                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                                        .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
+                                }.buttonStyle(.bordered)
+                            } else {
+                                VStack(spacing: 6) {
+                                    Text("Sign in to CapyFlow").font(.title2.bold())
+                                    Text("Use your Google account now; shared profiles and playlists can build on this account next.")
+                                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                                }
+                                Button { Task { await auth.signInWithGoogle() } } label: {
+                                    Group { if auth.working { ProgressView() } else { Label("Continue with Google", systemImage: "person.badge.key.fill") } }
+                                        .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
+                                }
+                                .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black).disabled(auth.working)
                             }
-                        }.padding(13).waveSurface(radius: 18)
+                            NavigationLink {
+                                BackendSettingsView()
+                            } label: {
+                                Label("Streaming server", systemImage: "bolt.horizontal.circle.fill")
+                                    .frame(maxWidth: .infinity).frame(height: 48).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.bordered)
+                            if let error = auth.error {
+                                Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
+                            }
+                            if auth.user != nil, social.connectionState != .ready {
+                                HStack(spacing: 10) {
+                                    Image(systemName: social.connectionState.systemImage).foregroundStyle(CapyColor.warning)
+                                    Text(social.error ?? social.connectionState.detail).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                                    Spacer()
+                                    if social.connectionState.canRetry {
+                                        Button("Retry") { social.retryConnection() }.font(.capyCaption).foregroundStyle(CapyColor.accent)
+                                    }
+                                }.padding(13).waveSurface(radius: 18)
+                            }
+                            Spacer(minLength: 12)
+                        }
+                        .padding(.top, 24)
+                        .padding(.bottom, 30)
                     }
-                    Spacer()
-                }.padding(28)
+                }
+                .scrollIndicators(.hidden)
             }
-            .navigationTitle("Account").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
         .presentationDetents([.medium, .large])
@@ -557,7 +833,8 @@ private struct AlbumResultRow: View {
                     .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 Text("Album").font(.caption.weight(.bold)).foregroundStyle(Color.waveBlue)
             }
-            Spacer()
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
             Image(systemName: "chevron.right").foregroundStyle(.secondary)
         }
         .padding(12).contentShape(Rectangle()).waveSurface(radius: 22)
@@ -567,59 +844,104 @@ private struct AlbumResultRow: View {
 private struct AlbumDetailView: View {
     @EnvironmentObject var player: WavePlayer
     let album: Album
-    @State private var tracks: [Track] = []
-    @State private var loading = true
+    private let fixtureTracks: [Track]?
+    @State private var tracks: [Track]
+    @State private var loading: Bool
+
+    init(album: Album, fixtureTracks: [Track]? = nil) {
+        self.album = album
+        self.fixtureTracks = fixtureTracks
+        _tracks = State(initialValue: fixtureTracks ?? [])
+        _loading = State(initialValue: fixtureTracks == nil)
+    }
     private var downloadableAlbum: ImportedPlaylist { ImportedPlaylist(id: "album:" + album.id, name: album.title, tracks: tracks) }
     var body: some View {
         ZStack {
             CapyAmbientBackdrop(seed: album.id, artworkURL: album.artwork)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    HStack(alignment: .bottom, spacing: 18) {
-                        AlbumArtwork(album: album, size: 168, radius: 24)
-                            .shadow(color: .black.opacity(0.28), radius: 22, y: 12)
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("ALBUM").font(.caption2.weight(.black)).tracking(2).foregroundStyle(CapyColor.accent)
-                            Text(album.title).font(.system(size: 30, weight: .black, design: .rounded)).lineLimit(3)
-                            Text(album.artist).font(.capyBody).foregroundStyle(CapyColor.accent).lineLimit(2)
-                            Text([album.year, tracks.isEmpty ? nil : "\(tracks.count) songs"].compactMap { $0 }.joined(separator: " • "))
-                                .font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
-                        }
-                    }
-                    if loading {
-                        CapyScreenState(kind: .loading, title: "Loading album", message: "Bringing in the complete track list…")
-                    } else {
-                        HStack(spacing: 10) {
-                            Button { play(tracks) } label: { Label("Play", systemImage: "play.fill") }
-                                .buttonStyle(CapyPrimaryButtonStyle()).disabled(tracks.isEmpty)
-                            Button { play(tracks.shuffled()) } label: { Label("Shuffle", systemImage: "shuffle") }
-                                .buttonStyle(CapySecondaryButtonStyle()).disabled(tracks.isEmpty)
-                        }
-                        HStack(spacing: 18) {
-                            Button { Task { await player.downloadPlaylist(downloadableAlbum) }; CapyHaptics.impact() } label: {
-                                Label(player.playlistDownloadProgress[downloadableAlbum.id].map { "Downloading \($0)" } ?? (player.isPlaylistDownloaded(downloadableAlbum) ? "Downloaded" : "Download"), systemImage: player.isPlaylistDownloaded(downloadableAlbum) ? "arrow.down.circle.fill" : "arrow.down.circle")
-                                    .frame(minHeight: 48).contentShape(Rectangle())
+                CapyScreenContainer {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        albumHeader
+                        if loading {
+                            CapyScreenState(kind: .loading, title: "Loading album", message: "Bringing in the complete track list…")
+                        } else {
+                            HStack(spacing: 10) {
+                                Button { play(tracks) } label: { Label("Play", systemImage: "play.fill") }
+                                    .buttonStyle(CapyPrimaryButtonStyle()).disabled(tracks.isEmpty)
+                                Button { play(tracks.shuffled()) } label: { Label("Shuffle", systemImage: "shuffle") }
+                                    .buttonStyle(CapySecondaryButtonStyle()).disabled(tracks.isEmpty)
                             }
-                            .buttonStyle(.plain).foregroundStyle(CapyColor.accent)
-                            .disabled(tracks.isEmpty || player.downloadingPlaylists.contains(downloadableAlbum.id))
-                            Button { player.saveAlbum(album, tracks: tracks); CapyHaptics.notification(.success) } label: {
-                                Label("Save album", systemImage: "plus.rectangle.on.folder").frame(minHeight: 48).contentShape(Rectangle())
-                            }.buttonStyle(.plain).foregroundStyle(.white).disabled(tracks.isEmpty)
-                            Spacer()
-                        }.font(.capyCallout)
-                        CapySectionHeader("Track list", subtitle: "Actual playback time replaces catalog estimates")
-                        ForEach(tracks) { TrackCard(track: $0) }
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 18) { albumDownloadButton; saveAlbumButton; Spacer(minLength: 0) }
+                                VStack(spacing: 0) { albumDownloadButton; saveAlbumButton }
+                            }
+                            .font(.capyCallout)
+                            if let summary = player.downloadBatchSummary,
+                               summary.playlistID == downloadableAlbum.id {
+                                DownloadBatchStatusView(summary: summary)
+                            }
+                            CapySectionHeader("Track list", subtitle: "Actual playback time replaces catalog estimates")
+                            ForEach(tracks) { TrackCard(track: $0) }
+                        }
                     }
-                }.padding(18).padding(.bottom, 120)
+                    .padding(.top, 18).padding(.bottom, 120)
+                }
             }.scrollIndicators(.hidden)
         }
         .navigationTitle(album.title)
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            guard fixtureTracks == nil else { return }
             do { tracks = try await player.catalog.albumTracks(for: album); player.prewarm(tracks) }
             catch { player.error = error.localizedDescription }
             loading = false
         }
+    }
+
+    private var albumHeader: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .bottom, spacing: 18) {
+                AlbumArtwork(album: album, size: 154, radius: 24)
+                    .shadow(color: .black.opacity(0.28), radius: 22, y: 12)
+                albumMetadata.frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
+            }
+            VStack(alignment: .leading, spacing: 16) {
+                CapyArtworkHero(url: album.artwork, placeholder: "square.stack.fill", maximumSize: 260)
+                    .frame(maxWidth: .infinity)
+                albumMetadata
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var albumMetadata: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("ALBUM").font(.caption2.weight(.black)).tracking(2).foregroundStyle(CapyColor.accent)
+            Text(album.title)
+                .font(.system(size: 30, weight: .black, design: .rounded))
+                .lineLimit(3)
+                .minimumScaleFactor(0.8)
+            Text(album.artist).font(.capyBody).foregroundStyle(CapyColor.accent).lineLimit(2)
+            Text([album.year, tracks.isEmpty ? nil : "\(tracks.count) songs"].compactMap { $0 }.joined(separator: " • "))
+                .font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var albumDownloadButton: some View {
+        Button { Task { await player.downloadPlaylist(downloadableAlbum) }; CapyHaptics.impact() } label: {
+            Label(player.playlistDownloadProgress[downloadableAlbum.id].map { "Downloading \($0)" } ?? (player.isPlaylistDownloaded(downloadableAlbum) ? "Downloaded" : "Download"), systemImage: player.isPlaylistDownloaded(downloadableAlbum) ? "arrow.down.circle.fill" : "arrow.down.circle")
+                .frame(minHeight: 48).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(CapyColor.accent)
+        .disabled(tracks.isEmpty || player.downloadingPlaylists.contains(downloadableAlbum.id))
+    }
+
+    private var saveAlbumButton: some View {
+        Button { player.saveAlbum(album, tracks: tracks); CapyHaptics.notification(.success) } label: {
+            Label("Save album", systemImage: "plus.rectangle.on.folder").frame(minHeight: 48).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).foregroundStyle(.white).disabled(tracks.isEmpty)
     }
 
     private func play(_ ordered: [Track]) {
@@ -639,36 +961,26 @@ private struct ArtistDetailView: View {
         ZStack {
             CapyAmbientBackdrop(seed: artist, artworkURL: tracks.first?.artwork)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
-                    HStack(spacing: 18) {
-                        if let first = tracks.first {
-                            Artwork(track: first, size: 126, radius: 63)
+                CapyScreenContainer {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        artistHeader
+                        if loading {
+                            CapyScreenState(kind: .loading, title: "Finding music", message: "Loading songs by \(artist)…")
+                        } else if tracks.isEmpty {
+                            CapyScreenState(kind: .empty, title: "No songs found", message: "Try searching the artist name from Search.")
                         } else {
-                            Image(systemName: "person.wave.2.fill").font(.system(size: 46))
-                                .frame(width: 126, height: 126).background(CapyColor.surfaceStrong, in: Circle())
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("ARTIST").font(.caption2.weight(.black)).tracking(2).foregroundStyle(CapyColor.accent)
-                            Text(artist).font(.system(size: 32, weight: .black, design: .rounded)).lineLimit(3)
-                            Text("Top matching songs").font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                            Button {
+                                let ordered = tracks
+                                player.queue = Array(ordered.dropFirst())
+                                if let first = ordered.first { Task { await player.play(first) } }
+                                CapyHaptics.impact(.medium)
+                            } label: { Label("Play artist mix", systemImage: "play.fill") }
+                                .buttonStyle(CapyPrimaryButtonStyle())
+                            ForEach(tracks) { TrackCard(track: $0) }
                         }
                     }
-                    if loading {
-                        CapyScreenState(kind: .loading, title: "Finding music", message: "Loading songs by \(artist)…")
-                    } else if tracks.isEmpty {
-                        CapyScreenState(kind: .empty, title: "No songs found", message: "Try searching the artist name from Search.")
-                    } else {
-                        Button {
-                            let ordered = tracks
-                            player.queue = Array(ordered.dropFirst())
-                            if let first = ordered.first { Task { await player.play(first) } }
-                            CapyHaptics.impact(.medium)
-                        } label: { Label("Play artist mix", systemImage: "play.fill") }
-                            .buttonStyle(CapyPrimaryButtonStyle())
-                        ForEach(tracks) { TrackCard(track: $0) }
-                    }
+                    .padding(.top, 18).padding(.bottom, 110)
                 }
-                .padding(18).padding(.bottom, 110)
             }
             .scrollIndicators(.hidden)
         }
@@ -679,6 +991,38 @@ private struct ArtistDetailView: View {
             catch { player.error = error.localizedDescription }
             loading = false
         }
+    }
+
+    private var artistHeader: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 18) {
+                artistArtwork(size: 126)
+                artistMetadata.frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
+            }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack { Spacer(minLength: 0); artistArtwork(size: 126); Spacer(minLength: 0) }
+                artistMetadata
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func artistArtwork(size: CGFloat) -> some View {
+        if let first = tracks.first {
+            Artwork(track: first, size: size, radius: size / 2)
+        } else {
+            Image(systemName: "person.wave.2.fill").font(.system(size: 46))
+                .frame(width: size, height: size).background(CapyColor.surfaceStrong, in: Circle())
+        }
+    }
+
+    private var artistMetadata: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("ARTIST").font(.caption2.weight(.black)).tracking(2).foregroundStyle(CapyColor.accent)
+            Text(artist).font(.system(size: 32, weight: .black, design: .rounded)).lineLimit(3).minimumScaleFactor(0.8)
+            Text("Top matching songs").font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -699,63 +1043,67 @@ private struct PlaylistLibraryView: View {
     @State private var playlistToRename: ImportedPlaylist?
     @State private var filter: LibraryFilter = .all
     @State private var sort: LibrarySort = .recent
+    let openProfileDrawer: () -> Void
     var body: some View {
       NavigationStack {
        ZStack {
-        CapyAmbientBackdrop(seed: "capyflow-library", artworkURL: visiblePlaylists.first?.tracks.first?.artwork, intensity: 0.78)
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    CapyScreenTitle(title: "Library", subtitle: "Everything you made yours")
-                    Spacer()
-                    Menu {
-                        Picker("Sort library", selection: $sort) {
-                            ForEach(LibrarySort.allCases) { Text($0.rawValue).tag($0) }
-                        }
-                    } label: { Image(systemName: "arrow.up.arrow.down").frame(width: 48, height: 48) }
-                        .buttonStyle(CapyIconButtonStyle())
-                    Button { showCreator = true; CapyHaptics.impact() } label: { Image(systemName: "plus") }
-                        .buttonStyle(CapyIconButtonStyle(prominent: true))
-                        .accessibilityLabel("Create playlist")
-                }
-                ScrollView(.horizontal) {
+         CapyAmbientBackdrop(seed: "capyflow-library", artworkURL: visiblePlaylists.first?.tracks.first?.artwork, intensity: 0.78)
+         ScrollView {
+            CapyScreenContainer {
+                LazyVStack(alignment: .leading, spacing: 18) {
                     HStack(spacing: 8) {
-                        ForEach(LibraryFilter.allCases) { item in
-                            Button { filter = item; CapyHaptics.selection() } label: {
-                                Text(item.rawValue).font(.capyCaption).padding(.horizontal, 15).frame(height: 40)
-                                    .foregroundStyle(filter == item ? CapyColor.background : .white)
-                                    .background(filter == item ? CapyColor.accent : CapyColor.surfaceStrong, in: Capsule())
-                            }.buttonStyle(.plain)
-                        }
+                        CapyProfileButton(action: openProfileDrawer)
+                        CapyScreenTitle(title: "Library", subtitle: "Everything you made yours")
+                        Menu {
+                            Picker("Sort library", selection: $sort) {
+                                ForEach(LibrarySort.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                        } label: { Image(systemName: "arrow.up.arrow.down").frame(width: 48, height: 48) }
+                            .buttonStyle(CapyIconButtonStyle())
+                        Button { showCreator = true; CapyHaptics.impact() } label: { Image(systemName: "plus") }
+                            .buttonStyle(CapyIconButtonStyle(prominent: true))
+                            .accessibilityLabel("Create playlist")
                     }
-                }.scrollIndicators(.hidden)
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 8) {
+                            ForEach(LibraryFilter.allCases) { item in
+                                Button { filter = item; CapyHaptics.selection() } label: {
+                                    Text(item.rawValue).font(.capyCaption).padding(.horizontal, 15).frame(height: 40)
+                                        .foregroundStyle(filter == item ? CapyColor.background : .white)
+                                        .background(filter == item ? CapyColor.accent : CapyColor.surfaceStrong, in: Capsule())
+                                }.buttonStyle(.plain)
+                            }
+                        }
+                    }.scrollIndicators(.hidden)
 
-                if filter == .downloads {
-                    downloadsSection
-                } else if filter == .shared {
-                    sharedSection
-                } else if visiblePlaylists.isEmpty {
-                    CapyScreenState(kind: .empty, title: emptyTitle, message: emptyMessage) {
-                        Button("Create playlist") { showCreator = true }.buttonStyle(CapyPrimaryButtonStyle()).frame(maxWidth: 220)
-                    }
-                } else {
-                    CapySectionHeader(filter == .albums ? "Saved albums" : "Your collection", subtitle: "\(visiblePlaylists.count) saved")
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145, maximum: 230), spacing: 14)], spacing: 18) {
-                        ForEach(visiblePlaylists) { playlist in
-                            NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: { PlaylistGridCard(playlist: playlist) }
-                                .buttonStyle(.plain)
-                                .contextMenu {
-                                    Button { playlistToRename = playlist } label: { Label("Rename", systemImage: "pencil") }
-                                    Button(role: .destructive) { player.deletePlaylist(playlist.id) } label: { Label("Delete playlist", systemImage: "trash") }
-                                }
-                        }
-                    }
-                    if filter == .all {
-                        downloadsPreview
+                    if filter == .downloads {
+                        downloadsSection
+                    } else if filter == .shared {
                         sharedSection
+                    } else if visiblePlaylists.isEmpty {
+                        CapyScreenState(kind: .empty, title: emptyTitle, message: emptyMessage) {
+                            Button("Create playlist") { showCreator = true }.buttonStyle(CapyPrimaryButtonStyle()).frame(maxWidth: 220)
+                        }
+                    } else {
+                        CapySectionHeader(filter == .albums ? "Saved albums" : "Your collection", subtitle: "\(visiblePlaylists.count) saved")
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 230), spacing: 14)], spacing: 18) {
+                            ForEach(visiblePlaylists) { playlist in
+                                NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: { PlaylistGridCard(playlist: playlist) }
+                                    .buttonStyle(.plain)
+                                    .contextMenu {
+                                        Button { playlistToRename = playlist } label: { Label("Rename", systemImage: "pencil") }
+                                        Button(role: .destructive) { player.deletePlaylist(playlist.id) } label: { Label("Delete playlist", systemImage: "trash") }
+                                    }
+                            }
+                        }
+                        if filter == .all {
+                            downloadsPreview
+                            sharedSection
+                        }
                     }
                 }
-            }.padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
+                .padding(.top, 10).padding(.bottom, 30)
+            }
         }.scrollIndicators(.hidden)
        }
        .toolbar(.hidden, for: .navigationBar)
@@ -971,62 +1319,38 @@ private struct PlaylistDetailView: View {
         ZStack {
             CapyAmbientBackdrop(seed: playlistID, artworkURL: playlist?.tracks.first?.artwork)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    if let playlist {
-                        HStack(alignment: .bottom, spacing: 18) {
-                            PlaylistCover(playlist: playlist, size: 168, radius: 24)
-                                .shadow(color: .black.opacity(0.28), radius: 22, y: 12)
-                            VStack(alignment: .leading, spacing: 7) {
-                                Text(playlist.id.hasPrefix("album:") ? "SAVED ALBUM" : "PLAYLIST")
-                                    .font(.caption2.weight(.black)).tracking(2).foregroundStyle(CapyColor.accent)
-                                Text(playlist.name).font(.system(size: 30, weight: .black, design: .rounded)).lineLimit(4)
-                                Text(auth.user?.displayName.map { "By \($0)" } ?? "Made on this iPhone")
-                                    .font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
-                                Text("\(playlist.tracks.count) songs")
-                                    .font(.capyCaption).foregroundStyle(CapyColor.tertiaryText)
-                            }
-                        }
-                        HStack(spacing: 10) {
-                            Button { play(playlist.tracks) } label: { Label("Play", systemImage: "play.fill") }
-                                .buttonStyle(CapyPrimaryButtonStyle()).disabled(playlist.tracks.isEmpty)
-                            Button { play(playlist.tracks.shuffled()) } label: { Label("Shuffle", systemImage: "shuffle") }
-                                .buttonStyle(CapySecondaryButtonStyle()).disabled(playlist.tracks.isEmpty)
-                        }
-                        HStack(spacing: 8) {
-                            compactAction(
-                                player.isPlaylistDownloaded(playlist) ? "Downloaded" : "Download",
-                                icon: player.isPlaylistDownloaded(playlist) ? "arrow.down.circle.fill" : "arrow.down.circle"
-                            ) {
-                                Task { await player.downloadPlaylist(playlist) }
-                                CapyHaptics.impact()
-                            }
-                            .disabled(player.downloadingPlaylists.contains(playlist.id) || playlist.tracks.isEmpty)
-                            PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                                Label("Artwork", systemImage: "photo.badge.plus").frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain).font(.capyCaption).foregroundStyle(.white)
-                            if auth.user != nil {
-                                compactAction("Collaborate", icon: "person.2.badge.plus") { showCollaborate = true }
-                            }
-                        }
-                        if let progress = player.playlistDownloadProgress[playlist.id] {
+                CapyScreenContainer {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        if let playlist {
+                            playlistHeader(playlist)
                             HStack(spacing: 10) {
-                                ProgressView().tint(CapyColor.accent)
-                                Text("Downloading \(progress) to this iPhone").font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                                Button { play(playlist.tracks) } label: { Label("Play", systemImage: "play.fill") }
+                                    .buttonStyle(CapyPrimaryButtonStyle()).disabled(playlist.tracks.isEmpty)
+                                Button { play(playlist.tracks.shuffled()) } label: { Label("Shuffle", systemImage: "shuffle") }
+                                    .buttonStyle(CapySecondaryButtonStyle()).disabled(playlist.tracks.isEmpty)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(13).waveSurface(radius: 18)
-                        } else if let failed = playlist.tracks.first(where: { player.downloadFailures[$0.id] != nil }) {
-                            Label("Some downloads need attention: \(failed.title)", systemImage: "exclamationmark.triangle.fill")
-                                .font(.capyCaption).foregroundStyle(CapyColor.warning)
-                        }
-                        CapySectionHeader("Songs", subtitle: playlist.tracks.isEmpty ? "Add music from Search" : "Tap a row to play")
-                        if playlist.tracks.isEmpty {
-                            CapyScreenState(kind: .empty, title: "This playlist is ready", message: "Find a song in Search, open its menu, then choose Add to playlist.")
-                        } else {
-                            ForEach(playlist.tracks) { TrackCard(track: $0) }
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 8) { playlistActions(playlist) }
+                                VStack(spacing: 0) { playlistActions(playlist) }
+                            }
+                            if let summary = player.downloadBatchSummary,
+                               summary.playlistID == playlist.id {
+                                DownloadBatchStatusView(summary: summary)
+                            } else if let failed = playlist.tracks.first(where: { player.downloadFailures[$0.id] != nil }) {
+                                Label("Some downloads need attention: \(failed.title)", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.capyCaption).foregroundStyle(CapyColor.warning)
+                                    .lineLimit(3)
+                            }
+                            CapySectionHeader("Songs", subtitle: playlist.tracks.isEmpty ? "Add music from Search" : "Tap a row to play")
+                            if playlist.tracks.isEmpty {
+                                CapyScreenState(kind: .empty, title: "This playlist is ready", message: "Find a song in Search, open its menu, then choose Add to playlist.")
+                            } else {
+                                ForEach(playlist.tracks) { TrackCard(track: $0) }
+                            }
                         }
                     }
-                }.padding(18).padding(.bottom, 120)
+                    .padding(.top, 18).padding(.bottom, 120)
+                }
             }.scrollIndicators(.hidden)
         }
         .navigationTitle(playlist?.name ?? "Playlist")
@@ -1055,6 +1379,60 @@ private struct PlaylistDetailView: View {
                 do { try player.setPlaylistArtwork(data, for: playlistID) }
                 catch { player.error = error.localizedDescription }
             }
+        }
+    }
+
+    private func playlistHeader(_ playlist: ImportedPlaylist) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .bottom, spacing: 18) {
+                PlaylistCover(playlist: playlist, size: 154, radius: 24)
+                    .shadow(color: .black.opacity(0.28), radius: 22, y: 12)
+                playlistMetadata(playlist).frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
+            }
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Spacer(minLength: 0)
+                    PlaylistCover(playlist: playlist, size: 230, radius: 28)
+                    Spacer(minLength: 0)
+                }
+                playlistMetadata(playlist)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func playlistMetadata(_ playlist: ImportedPlaylist) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(playlist.id.hasPrefix("album:") ? "SAVED ALBUM" : "PLAYLIST")
+                .font(.caption2.weight(.black)).tracking(2).foregroundStyle(CapyColor.accent)
+            Text(playlist.name)
+                .font(.system(size: 30, weight: .black, design: .rounded))
+                .lineLimit(4)
+                .minimumScaleFactor(0.8)
+            Text(auth.user?.displayName.map { "By \($0)" } ?? "Made on this iPhone")
+                .font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(2)
+            Text("\(playlist.tracks.count) songs")
+                .font(.capyCaption).foregroundStyle(CapyColor.tertiaryText)
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func playlistActions(_ playlist: ImportedPlaylist) -> some View {
+        compactAction(
+            player.isPlaylistDownloaded(playlist) ? "Downloaded" : "Download",
+            icon: player.isPlaylistDownloaded(playlist) ? "arrow.down.circle.fill" : "arrow.down.circle"
+        ) {
+            Task { await player.downloadPlaylist(playlist) }
+            CapyHaptics.impact()
+        }
+        .disabled(player.downloadingPlaylists.contains(playlist.id) || playlist.tracks.isEmpty)
+        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+            Label("Artwork", systemImage: "photo.badge.plus")
+                .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).font(.capyCaption).foregroundStyle(.white)
+        if auth.user != nil {
+            compactAction("Collaborate", icon: "person.2.badge.plus") { showCollaborate = true }
         }
     }
 
@@ -1113,25 +1491,34 @@ private struct TrackCollectionView: View {
     var isOffline = false
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 14) {
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(title).font(.system(size: 42, weight: .black, design: .rounded))
-                        Text(subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: isOffline ? "arrow.down.circle.fill" : "music.note.list")
-                        .font(.title).foregroundStyle(Color.waveBlue).frame(width: 56, height: 56).waveGlass(radius: 22)
-                }.padding(.bottom, 8)
-                if tracks.isEmpty {
-                    VStack(spacing: 18) {
-                        Image(systemName: isOffline ? "internaldrive" : "music.note.list").font(.system(size: 52)).foregroundStyle(Color.waveBlue)
-                        Text(isOffline ? "Nothing downloaded yet" : "Your queue is clear").font(.title3.bold())
-                        Text(isOffline ? "Download any search result to listen without internet." : "Add songs from search and they’ll wait here.")
-                            .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    }.frame(maxWidth: .infinity).padding(.vertical, 70).padding(.horizontal, 30).waveGlass(radius: 30)
-                } else { ForEach(tracks) { TrackCard(track: $0, canDelete: isOffline) } }
-            }.padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 30)
+            CapyScreenContainer {
+                LazyVStack(spacing: 14) {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading) {
+                            Text(title)
+                                .font(.system(size: 42, weight: .black, design: .rounded))
+                                .lineLimit(2)
+                                .minimumScaleFactor(0.72)
+                            Text(subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: isOffline ? "arrow.down.circle.fill" : "music.note.list")
+                            .font(.title).foregroundStyle(Color.waveBlue).frame(width: 56, height: 56).waveGlass(radius: 22)
+                    }.padding(.bottom, 8)
+                    if tracks.isEmpty {
+                        VStack(spacing: 18) {
+                            Image(systemName: isOffline ? "internaldrive" : "music.note.list").font(.system(size: 52)).foregroundStyle(Color.waveBlue)
+                            Text(isOffline ? "Nothing downloaded yet" : "Your queue is clear").font(.title3.bold())
+                            Text(isOffline ? "Download any search result to listen without internet." : "Add songs from search and they’ll wait here.")
+                                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        }
+                        .padding(.horizontal, 30).padding(.vertical, 70)
+                        .frame(maxWidth: .infinity)
+                        .waveGlass(radius: 30)
+                    } else { ForEach(tracks) { TrackCard(track: $0, canDelete: isOffline) } }
+                }
+                .padding(.top, 10).padding(.bottom, 30)
+            }
         }.scrollIndicators(.hidden)
     }
 }
@@ -1154,22 +1541,24 @@ private struct TrackCard: View {
                                 Text("•"); Text(shortTime(duration)).monospacedDigit()
                             }
                         }.font(.caption.weight(.semibold)).foregroundStyle(CapyColor.secondaryText)
+                        if let state = player.downloadStates[track.id], state.stage != .downloaded {
+                            Text(state.statusText)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(state.stage == .failed ? CapyColor.warning : CapyColor.accent)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                        }
                     }
-                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(.plain)
-            Spacer(minLength: 6)
-            if let progress = player.downloadProgress[track.id] {
-                VStack(spacing: 2) {
-                    if progress > 0 {
-                        ProgressView(value: progress).tint(CapyColor.accent).frame(width: 48)
-                        Text("\(Int(progress * 100))%").font(.caption2.monospacedDigit())
-                    } else {
-                        ProgressView().tint(CapyColor.accent)
-                        Text("MSI").font(.caption2.weight(.bold))
-                    }
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 }
-                .foregroundStyle(CapyColor.secondaryText)
-                .accessibilityLabel(player.downloadDiagnostics[track.id] ?? "Preparing download")
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+            if let state = player.downloadStates[track.id] {
+                downloadIndicator(state)
             } else if player.isDownloaded(track) {
                 Image(systemName: "arrow.down.circle.fill").foregroundStyle(Color.waveBlue).accessibilityLabel("Downloaded")
             } else if let reason = player.downloadFailures[track.id] {
@@ -1214,6 +1603,74 @@ private struct TrackCard: View {
     private func shortTime(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "" }
         return String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
+    }
+
+    @ViewBuilder private func downloadIndicator(_ state: TrackDownloadState) -> some View {
+        switch state.stage {
+        case .queued:
+            Image(systemName: "clock.badge.checkmark")
+                .foregroundStyle(CapyColor.secondaryText)
+                .frame(width: 42, height: 42)
+                .accessibilityLabel(state.statusText)
+        case .preparing, .saving:
+            ProgressView()
+                .tint(CapyColor.accent)
+                .frame(width: 42, height: 42)
+                .accessibilityLabel(state.statusText)
+        case .downloading:
+            VStack(spacing: 3) {
+                ProgressView(value: state.progress ?? 0)
+                    .tint(CapyColor.accent)
+                    .frame(width: 44)
+                Text("\(Int(((state.progress ?? 0) * 100).rounded()))%")
+                    .font(.caption2.monospacedDigit())
+            }
+            .foregroundStyle(CapyColor.secondaryText)
+            .accessibilityLabel(state.statusText)
+        case .downloaded:
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundStyle(CapyColor.accent)
+                .frame(width: 42, height: 42)
+                .accessibilityLabel(state.statusText)
+        case .failed:
+            Button {
+                Task { await player.download(track) }
+            } label: {
+                Image(systemName: "arrow.clockwise.circle.fill")
+                    .foregroundStyle(CapyColor.warning)
+                    .frame(width: 42, height: 42)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Retry download. \(state.detail ?? "Previous download failed.")")
+        }
+    }
+}
+
+private struct DownloadBatchStatusView: View {
+    let summary: DownloadBatchSummary
+
+    var body: some View {
+        HStack(spacing: 11) {
+            if summary.finishedAt == nil {
+                ProgressView().tint(CapyColor.accent)
+            } else {
+                Image(systemName: summary.failed == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    .foregroundStyle(summary.failed == 0 ? CapyColor.accent : CapyColor.warning)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(summary.finishedAt == nil ? "Download queue" : "Download finished")
+                    .font(.capyCallout)
+                Text(summary.statusText)
+                    .font(.capyCaption)
+                    .foregroundStyle(CapyColor.secondaryText)
+                    .lineLimit(2)
+            }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(13)
+        .waveSurface(radius: 18, highlighted: summary.finishedAt == nil)
     }
 }
 
@@ -1321,12 +1778,18 @@ struct PlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var scrubPosition = 0.0
     @State private var isScrubbing = false
-    @State private var showLyrics = false
+    @State private var showLyrics: Bool
     @State private var showQueue = false
+
+    init(showLyricsInitially: Bool = false) {
+        _showLyrics = State(initialValue: showLyricsInitially)
+    }
     var body: some View {
         GeometryReader { geometry in
+            let horizontalInset = max(18, max(geometry.safeAreaInsets.leading, geometry.safeAreaInsets.trailing) + 18)
+            let contentWidth = max(1, geometry.size.width - (horizontalInset * 2))
             let artworkSize = min(
-                geometry.size.width - 52,
+                contentWidth,
                 showLyrics ? max(126, geometry.size.height * 0.18) : min(340, geometry.size.height * 0.36)
             )
             ZStack {
@@ -1369,7 +1832,8 @@ struct PlayerView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(player.current?.title ?? "CapyFlow").font(.system(size: showLyrics ? 24 : 29, weight: .black, design: .rounded)).lineLimit(2)
                         Text(player.current?.artist ?? "").font(.capyBody).foregroundStyle(CapyColor.accent).lineLimit(1)
-                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     VStack(spacing: 1) {
                         CapyPlaybackSlider(value: $scrubPosition, range: 0...max(player.duration, 1)) { editing in
                             isScrubbing = editing
@@ -1428,11 +1892,18 @@ struct PlayerView: View {
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
-                .frame(maxWidth: CapyMetric.readableWidth, maxHeight: .infinity, alignment: .top)
-                .padding(.horizontal, max(18, geometry.safeAreaInsets.leading + 18))
+                // The inset must be applied before the outer flexible frame.
+                // Otherwise the full-width stack grows by another 36 points
+                // and is clipped/shifted on 390-point iPhones.
+                .padding(.horizontal, horizontalInset)
                 .padding(.top, max(8, geometry.safeAreaInsets.top))
                 .padding(.bottom, max(10, geometry.safeAreaInsets.bottom))
-                .frame(maxWidth: .infinity)
+                .frame(
+                    maxWidth: CapyMetric.readableWidth + (horizontalInset * 2),
+                    maxHeight: .infinity,
+                    alignment: .top
+                )
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .tint(CapyColor.accent)

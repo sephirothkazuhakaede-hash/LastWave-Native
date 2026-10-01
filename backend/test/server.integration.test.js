@@ -132,11 +132,16 @@ test('server proxies Range, refreshes a 403, and then serves its persistent cach
   ]);
   assert.equal(freshOne.status, 200);
   assert.equal(freshTwo.status, 200);
-  assert.equal(freshOne.headers.get('x-capyflow-cache'), 'HIT');
-  assert.equal(freshTwo.headers.get('x-capyflow-cache'), 'HIT');
+  assert.equal(freshOne.headers.get('x-capyflow-cache'), 'MISS');
+  assert.equal(freshTwo.headers.get('x-capyflow-cache'), 'MISS');
+  assert.match(freshOne.headers.get('server-timing'), /extract;desc="new extraction";dur=\d/);
   assert.deepEqual(Buffer.from(await freshOne.arrayBuffer()), audio);
   assert.deepEqual(Buffer.from(await freshTwo.arrayBuffer()), audio);
   assert.equal(downloadCounts.get('fresh123xyz'), 1, 'simultaneous downloads must share one MSI cache job');
+
+  const freshHit = await fetch(`${root}/v1/download/fresh123xyz?quality=automatic`);
+  assert.equal(freshHit.headers.get('x-capyflow-cache'), 'HIT');
+  assert.equal(downloadCounts.get('fresh123xyz'), 1);
 
   const health = await fetch(`${root}/health`);
   assert.equal(health.status, 200);

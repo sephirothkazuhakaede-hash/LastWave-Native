@@ -175,7 +175,10 @@ struct CapyArtworkHero: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let dimension = min(maximumSize, max(220, geometry.size.width))
+            // Never impose a minimum that is wider than the container. The
+            // previous 220-point floor could make artwork escape compact
+            // split views and smaller iPhones.
+            let dimension = max(1, min(maximumSize, geometry.size.width))
             CapyArtworkImage(
                 url: url,
                 size: dimension,
@@ -200,13 +203,13 @@ struct CapyScreenContainer<Content: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            Spacer(minLength: 0)
-            content()
-                .frame(maxWidth: CapyMetric.readableWidth, alignment: .leading)
-            Spacer(minLength: 0)
-        }
+        content()
+            .frame(maxWidth: CapyMetric.readableWidth, alignment: .leading)
         .padding(.horizontal, CapyMetric.horizontalInset)
+        // Padding must be inside the final full-width frame. Applying it to
+        // an HStack that had already expanded to the device width made every
+        // screen 32 points too wide on an iPhone 13.
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 }
 
@@ -219,6 +222,8 @@ struct CapyScreenTitle: View {
             Text(title)
                 .font(.capyHero)
                 .foregroundStyle(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.82)
             if let subtitle, !subtitle.isEmpty {
                 Text(subtitle)
                     .font(.capyBody)
@@ -227,6 +232,7 @@ struct CapyScreenTitle: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .layoutPriority(1)
         .accessibilityElement(children: .combine)
     }
 }
@@ -254,6 +260,7 @@ struct CapySectionHeader<Trailing: View>: View {
                     Text(subtitle).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
                 }
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: CapySpacing.small)
             trailing()
         }
@@ -375,6 +382,8 @@ struct CapyMediaRow<Leading: View, Trailing: View>: View {
                         .lineLimit(1)
                 }
             }
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
             Spacer(minLength: CapySpacing.small)
             trailing()
         }
@@ -429,8 +438,8 @@ struct CapyPrimaryButtonStyle: ButtonStyle {
         configuration.label
             .font(.capyCallout)
             .foregroundStyle(CapyColor.background)
-            .frame(maxWidth: .infinity, minHeight: CapyMetric.minimumTapTarget)
             .padding(.horizontal, CapySpacing.regular)
+            .frame(maxWidth: .infinity, minHeight: CapyMetric.minimumTapTarget)
             .background(CapyColor.accent.opacity(isEnabled ? 1 : 0.38), in: Capsule())
             .contentShape(Capsule())
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.975 : 1)
@@ -447,8 +456,8 @@ struct CapySecondaryButtonStyle: ButtonStyle {
         configuration.label
             .font(.capyCallout)
             .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.38))
-            .frame(maxWidth: .infinity, minHeight: CapyMetric.minimumTapTarget)
             .padding(.horizontal, CapySpacing.regular)
+            .frame(maxWidth: .infinity, minHeight: CapyMetric.minimumTapTarget)
             .background(CapyColor.surfaceStrong, in: Capsule())
             .overlay { Capsule().stroke(CapyColor.surfaceStroke, lineWidth: 0.75) }
             .contentShape(Capsule())
@@ -549,9 +558,9 @@ struct CapyScreenState<Action: View>: View {
             }
             action()
         }
-        .frame(maxWidth: .infinity)
         .padding(.horizontal, CapySpacing.xLarge)
         .padding(.vertical, CapySpacing.section)
+        .frame(maxWidth: .infinity)
         .waveSurface(radius: CapyRadius.large)
         .accessibilityElement(children: .contain)
     }

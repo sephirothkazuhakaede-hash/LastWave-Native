@@ -36,8 +36,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.seph.capyflow
         SWIFT_VERSION: '5.0'
         TARGETED_DEVICE_FAMILY: '1,2'
-        MARKETING_VERSION: 0.4.1
-        CURRENT_PROJECT_VERSION: 8
+        MARKETING_VERSION: 0.4.2
+        CURRENT_PROJECT_VERSION: 9
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: CapyFlow
@@ -68,3 +68,28 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         UILaunchScreen: {}
+  CapyFlowUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: '17.0'
+    sources:
+      - path: UITests
+    dependencies:
+      - target: CapyFlow
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.seph.capyflow.uitests
+        SWIFT_VERSION: '5.0'
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: CapyFlow
+schemes:
+  CapyFlow:
+    build:
+      targets:
+        CapyFlow: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - CapyFlowUITests

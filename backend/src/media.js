@@ -38,12 +38,19 @@ function validateRemoteRange(value) {
   return value;
 }
 
-export async function serveCachedFile(request, response, entry, { attachment = false, timings } = {}) {
+export async function serveCachedFile(request, response, entry, {
+  attachment = false,
+  timings,
+  cacheState = 'HIT',
+  preparationDurationMs = 0,
+} = {}) {
   const transferStarted = performance.now();
   const range = parseByteRange(request.headers.range, entry.size);
-  const timing = 'cache;desc="hit";dur=0';
+  const timing = cacheState === 'HIT'
+    ? 'cache;desc="hit";dur=0'
+    : `extract;desc="new extraction";dur=${Math.max(0, Number(preparationDurationMs) || 0).toFixed(1)}`;
   setCommonHeaders(response, {
-    cacheState: 'HIT',
+    cacheState,
     quality: entry.quality,
     duration: entry.duration,
     serverTiming: timing,
@@ -65,7 +72,9 @@ export async function serveCachedFile(request, response, entry, { attachment = f
   response.writeHead(status, headers);
   if (request.method === 'HEAD') {
     response.end();
-    timings?.record('transfer-total', elapsedMilliseconds(transferStarted), true, { source: 'cache', bytes: 0 });
+    timings?.record('transfer-total', elapsedMilliseconds(transferStarted), true, {
+      source: cacheState === 'HIT' ? 'cache' : 'new-extraction', bytes: 0,
+    });
     return;
   }
   let bytes = 0;
@@ -75,18 +84,22 @@ export async function serveCachedFile(request, response, entry, { attachment = f
       bytes += chunk.length;
       if (firstByte) {
         firstByte = false;
-        timings?.record('first-client-byte', elapsedMilliseconds(transferStarted), true, { source: 'cache' });
+        timings?.record('first-client-byte', elapsedMilliseconds(transferStarted), true, {
+          source: cacheState === 'HIT' ? 'cache' : 'new-extraction',
+        });
       }
       callback(null, chunk);
     },
   });
   try {
     await pipeline(fs.createReadStream(entry.audioPath, { start, end }), meter, response);
-    timings?.record('transfer-total', elapsedMilliseconds(transferStarted), true, { source: 'cache', bytes });
+    timings?.record('transfer-total', elapsedMilliseconds(transferStarted), true, {
+      source: cacheState === 'HIT' ? 'cache' : 'new-extraction', bytes,
+    });
   } catch (error) {
     const clientClosed = request.aborted || response.destroyed || error?.code === 'ERR_STREAM_PREMATURE_CLOSE';
     timings?.record('transfer-total', elapsedMilliseconds(transferStarted), clientClosed, {
-      source: 'cache', bytes, clientClosed,
+      source: cacheState === 'HIT' ? 'cache' : 'new-extraction', bytes, clientClosed,
     });
     if (!clientClosed) throw error;
   }

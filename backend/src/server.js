@@ -116,12 +116,18 @@ export function createServer({
           // MSI's single cache job, then transfer that verified local file.
           // Streaming stays progressive through /audio, while /download no
           // longer starts a second upstream transfer beside cache creation.
+          const preparationStarted = performance.now();
           const cachedEntry = await cache.ensure(
             videoId,
             quality,
             (temporaryPath) => resolver.download(videoId, quality, temporaryPath),
           );
-          await serveCachedFile(request, response, cachedEntry, { attachment: true, timings });
+          await serveCachedFile(request, response, cachedEntry, {
+            attachment: true,
+            timings,
+            cacheState: 'MISS',
+            preparationDurationMs: elapsedMilliseconds(preparationStarted),
+          });
         } else {
           await proxyAudio(request, response, {
             videoId,

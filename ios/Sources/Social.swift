@@ -9,6 +9,9 @@ struct SocialProfile: Identifiable, Equatable {
     let displayName: String
     let bio: String
     let avatarURL: URL?
+    let avatarData: Data?
+    let usernameChangedAt: Date?
+    let usernameIsGenerated: Bool
 
     init?(id: String, data: [String: Any]) {
         guard let username = data["username"] as? String else { return nil }
@@ -17,6 +20,80 @@ struct SocialProfile: Identifiable, Equatable {
         self.displayName = data["displayName"] as? String ?? username
         self.bio = data["bio"] as? String ?? ""
         self.avatarURL = (data["avatarURL"] as? String).flatMap(URL.init(string:))
+        self.avatarData = data["avatarData"] as? Data
+        self.usernameChangedAt = (data["usernameChangedAt"] as? Timestamp)?.dateValue()
+        let generatedSuffix = "_" + String(id.prefix(6)).lowercased()
+        self.usernameIsGenerated = data["usernameIsGenerated"] as? Bool ?? username.hasSuffix(generatedSuffix)
+    }
+}
+
+enum UsernamePolicy {
+    static let minimumLength = 3
+    static let maximumLength = 20
+    static let changeCooldown: TimeInterval = 14 * 24 * 60 * 60
+
+    private static let reserved: Set<String> = [
+        "admin", "administrator", "api", "apple", "capyflow", "everyone", "firebase",
+        "google", "help", "here", "moderator", "mods", "null", "official", "owner",
+        "root", "security", "staff", "support", "system", "undefined"
+    ]
+
+    static func key(from raw: String) -> String {
+        var candidate = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if candidate.hasPrefix("@") { candidate.removeFirst() }
+        return candidate.lowercased(with: Locale(identifier: "en_US_POSIX"))
+    }
+
+    static func validationMessage(for raw: String) -> String? {
+        let username = key(from: raw)
+        guard (minimumLength...maximumLength).contains(username.count) else {
+            return "Usernames must be \(minimumLength)–\(maximumLength) characters."
+        }
+        guard username.allSatisfy({ character in
+            character.isASCII && (character.isLetter || character.isNumber || character == "_" || character == ".")
+        }) else {
+            return "Use only letters, numbers, underscores, and dots."
+        }
+        guard username.first != ".", username.last != ".", !username.contains("..") else {
+            return "Dots cannot be first, last, or repeated."
+        }
+        guard !reserved.contains(username) else {
+            return "That username is reserved. Please choose another."
+        }
+        return nil
+    }
+
+    static func isValid(_ raw: String) -> Bool { validationMessage(for: raw) == nil }
+}
+
+enum UsernameAvailability: Equatable {
+    case idle
+    case checking(String)
+    case current(String)
+    case available(String)
+    case taken(String)
+    case invalid(String)
+    case cooldown(until: Date)
+    case unavailable(String)
+
+    var canSave: Bool {
+        switch self {
+        case .current, .available: return true
+        default: return false
+        }
+    }
+
+    var message: String? {
+        switch self {
+        case .idle: return nil
+        case .checking: return "Checking availability…"
+        case .current: return "This is your current username."
+        case .available(let username): return "@\(username) is available."
+        case .taken(let username): return "@\(username) is already taken."
+        case .invalid(let message), .unavailable(let message): return message
+        case .cooldown(let date):
+            return "You can change your username again \(date.formatted(date: .abbreviated, time: .omitted))."
+        }
     }
 }
 
@@ -99,6 +176,7 @@ enum SocialConnectionState: Equatable {
     @Published var working = false
     @Published var error: String?
     @Published private(set) var connectionState: SocialConnectionState = .signedOut
+    @Published private(set) var usernameAvailability: UsernameAvailability = .idle
 
     private let db = Firestore.firestore()
     private var userID: String?
@@ -116,6 +194,7 @@ enum SocialConnectionState: Equatable {
         followerCount = 0
         followingCount = 0
         searchResults = []
+        usernameAvailability = .idle
         error = nil
         boundUser = user
         userID = user?.uid
@@ -144,48 +223,100 @@ enum SocialConnectionState: Equatable {
         }
     }
 
-    func saveProfile(username rawUsername: String, displayName rawDisplayName: String, bio rawBio: String) async {
+    func saveProfile(
+        username rawUsername: String,
+        displayName rawDisplayName: String,
+        bio rawBio: String,
+        avatarData newAvatarData: Data? = nil
+    ) async {
         guard let uid = userID else { return }
-        let username = Self.normalizedUsername(rawUsername)
+        let username = UsernamePolicy.key(from: rawUsername)
         let displayName = rawDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let bio = String(rawBio.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
-        guard Self.validUsername(username) else {
-            error = "Use 3–20 lowercase letters, numbers, underscores, or single dots for your username."
+        if let validationMessage = UsernamePolicy.validationMessage(for: rawUsername) {
+            usernameAvailability = .invalid(validationMessage)
+            error = validationMessage
             return
         }
         guard !displayName.isEmpty else { error = "Add a display name first."; return }
+        guard displayName.count <= 60 else { error = "Display names can be up to 60 characters."; return }
+        let avatarData = newAvatarData ?? profile?.avatarData
+        guard avatarData?.count ?? 0 <= 131_072 else {
+            error = "That profile photo is still too large. Choose another image."
+            return
+        }
+        if username != profile?.username, let nextChange = nextUsernameChangeDate, nextChange > Date() {
+            usernameAvailability = .cooldown(until: nextChange)
+            error = usernameAvailability.message
+            return
+        }
         working = true; error = nil
         defer { working = false }
         do {
-            let usernameRef = db.collection("usernames").document(username)
-            let existing = try await usernameRef.getDocument()
-            if let owner = existing.data()?["uid"] as? String, owner != uid {
-                throw SocialError.message("That username is already taken.")
+            try await commitProfileUpdate(
+                uid: uid,
+                username: username,
+                displayName: displayName,
+                bio: bio,
+                avatarURL: profile?.avatarURL?.absoluteString ?? "",
+                avatarData: avatarData
+            )
+            usernameAvailability = .current(username)
+        } catch {
+            if isSocialTransactionError(error, code: .usernameTaken) {
+                usernameAvailability = .taken(username)
             }
-            let profileRef = db.collection("profiles").document(uid)
-            let oldUsername = profile?.username
-            let batch = db.batch()
-            if !existing.exists {
-                batch.setData(["uid": uid, "createdAt": FieldValue.serverTimestamp()], forDocument: usernameRef)
-            }
-            batch.setData([
-                "username": username,
-                "usernameKey": username,
-                "displayName": displayName,
-                "bio": bio,
-                "avatarURL": profile?.avatarURL?.absoluteString ?? "",
-                "updatedAt": FieldValue.serverTimestamp()
-            ], forDocument: profileRef, merge: true)
-            if let oldUsername, oldUsername != username {
-                batch.deleteDocument(db.collection("usernames").document(oldUsername))
-            }
-            try await batch.commit()
-        } catch { handleSocialError(error) }
+            handleSocialError(error)
+        }
+    }
+
+    var nextUsernameChangeDate: Date? {
+        guard let changedAt = profile?.usernameChangedAt else { return nil }
+        return changedAt.addingTimeInterval(UsernamePolicy.changeCooldown)
+    }
+
+    @discardableResult
+    func checkUsernameAvailability(_ rawUsername: String) async -> UsernameAvailability {
+        let username = UsernamePolicy.key(from: rawUsername)
+        if let validationMessage = UsernamePolicy.validationMessage(for: rawUsername) {
+            let state = UsernameAvailability.invalid(validationMessage)
+            usernameAvailability = state
+            return state
+        }
+        if username == profile?.username {
+            let state = UsernameAvailability.current(username)
+            usernameAvailability = state
+            return state
+        }
+        if let nextChange = nextUsernameChangeDate, nextChange > Date() {
+            let state = UsernameAvailability.cooldown(until: nextChange)
+            usernameAvailability = state
+            return state
+        }
+
+        usernameAvailability = .checking(username)
+        do {
+            let snapshot = try await db.collection("usernames").document(username).getDocument()
+            guard !Task.isCancelled else { return usernameAvailability }
+            let owner = snapshot.data()?["uid"] as? String
+            let state: UsernameAvailability = owner == nil || owner == userID ? .available(username) : .taken(username)
+            usernameAvailability = state
+            return state
+        } catch {
+            guard !Task.isCancelled else { return usernameAvailability }
+            let state = UsernameAvailability.unavailable("Couldn't verify availability. Check your connection and try again.")
+            usernameAvailability = state
+            return state
+        }
     }
 
     func search(_ rawQuery: String) async {
-        let query = Self.normalizedUsername(rawQuery)
-        guard query.count >= 2 else { searchResults = []; return }
+        let query = UsernamePolicy.key(from: rawQuery)
+        guard query.count >= 2,
+              query.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == ".") }) else {
+            searchResults = []
+            return
+        }
         do {
             let request = db.collection("profiles")
                 .whereField("usernameKey", isGreaterThanOrEqualTo: query)
@@ -198,8 +329,26 @@ enum SocialConnectionState: Equatable {
                 snapshot = try await request.getDocuments(source: .cache)
                 connectionState = .offline
             }
-            searchResults = snapshot.documents.compactMap { SocialProfile(id: $0.documentID, data: $0.data()) }
+            var people = snapshot.documents.compactMap { SocialProfile(id: $0.documentID, data: $0.data()) }
+
+            // The reservation lookup also finds exact legacy profiles that predate
+            // usernameKey prefix indexing. Relationships continue to use the UID.
+            if !people.contains(where: { $0.username == query }) {
+                let reservation = try? await db.collection("usernames").document(query).getDocument()
+                if let exactID = reservation?.data()?["uid"] as? String,
+                   let exact = await loadProfile(exactID) {
+                    people.append(exact)
+                }
+            }
+            guard !Task.isCancelled else { return }
+            searchResults = people
                 .filter { $0.id != userID }
+                .uniqued(by: \SocialProfile.id)
+                .sorted {
+                    if $0.username == query { return true }
+                    if $1.username == query { return false }
+                    return $0.username.localizedStandardCompare($1.username) == .orderedAscending
+                }
         } catch { handleSocialError(error) }
     }
 
@@ -253,8 +402,12 @@ enum SocialConnectionState: Equatable {
     }
 
     func invite(username rawUsername: String, to playlist: ImportedPlaylist) async {
-        let username = Self.normalizedUsername(rawUsername)
-        guard !username.isEmpty, let playlistID = await publish(playlist) else { return }
+        let username = UsernamePolicy.key(from: rawUsername)
+        guard UsernamePolicy.isValid(username) else {
+            error = UsernamePolicy.validationMessage(for: rawUsername) ?? "Enter a valid username."
+            return
+        }
+        guard let playlistID = await publish(playlist) else { return }
         do {
             let reservation = try await db.collection("usernames").document(username).getDocument()
             guard let inviteeID = reservation.data()?["uid"] as? String else {
@@ -275,6 +428,95 @@ enum SocialConnectionState: Equatable {
                 "updatedAt": FieldValue.serverTimestamp()
             ])
         } catch { handleSocialError(error) }
+    }
+
+    private func commitProfileUpdate(
+        uid: String,
+        username: String,
+        displayName: String,
+        bio: String,
+        avatarURL: String,
+        avatarData: Data?
+    ) async throws {
+        let usernames = db.collection("usernames")
+        let profileRef = db.collection("profiles").document(uid)
+        let usernameRef = usernames.document(username)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            db.runTransaction({ transaction, errorPointer -> Any? in
+                do {
+                    let profileSnapshot = try transaction.getDocument(profileRef)
+                    guard let profileData = profileSnapshot.data(),
+                          let previousUsername = profileData["username"] as? String else {
+                        throw socialTransactionError(.profileMissing, "Your profile is still being prepared. Please try again.")
+                    }
+
+                    // Firestore retries this entire block when another client changes
+                    // either document. The reservation check and profile rename are one
+                    // atomic operation, so two users cannot claim the same key.
+                    let reservation = try transaction.getDocument(usernameRef)
+                    if let owner = reservation.data()?["uid"] as? String, owner != uid {
+                        throw socialTransactionError(.usernameTaken, "That username is already taken.")
+                    }
+
+                    let isRename = previousUsername != username
+                    if isRename,
+                       let changedAt = (profileData["usernameChangedAt"] as? Timestamp)?.dateValue() {
+                        let nextChange = changedAt.addingTimeInterval(UsernamePolicy.changeCooldown)
+                        if nextChange > Date() {
+                            throw socialTransactionError(
+                                .usernameCooldown,
+                                "You can change your username again \(nextChange.formatted(date: .abbreviated, time: .omitted))."
+                            )
+                        }
+                    }
+
+                    if !reservation.exists {
+                        transaction.setData([
+                            "uid": uid,
+                            "createdAt": FieldValue.serverTimestamp()
+                        ], forDocument: usernameRef)
+                    }
+
+                    var update: [String: Any] = [
+                        "username": username,
+                        "usernameKey": username,
+                        "displayName": displayName,
+                        "bio": bio,
+                        "avatarURL": avatarURL,
+                        "updatedAt": FieldValue.serverTimestamp()
+                    ]
+                    if let avatarData { update["avatarData"] = avatarData }
+                    if isRename {
+                        update["usernameIsGenerated"] = false
+                        update["usernameChangedAt"] = FieldValue.serverTimestamp()
+                    }
+                    transaction.updateData(update, forDocument: profileRef)
+
+                    if isRename {
+                        transaction.deleteDocument(usernames.document(previousUsername))
+                    }
+                    return nil
+                } catch {
+                    errorPointer?.pointee = error as NSError
+                    return nil
+                }
+            }, completion: { _, failure in
+                if let failure { continuation.resume(throwing: failure) }
+                else { continuation.resume() }
+            })
+        }
+    }
+
+    private func loadProfile(_ uid: String) async -> SocialProfile? {
+        let ref = db.collection("profiles").document(uid)
+        let snapshot: DocumentSnapshot?
+        do {
+            snapshot = try await ref.getDocument()
+        } catch {
+            snapshot = try? await ref.getDocument(source: .cache)
+        }
+        guard let data = snapshot?.data() else { return nil }
+        return SocialProfile(id: uid, data: data)
     }
 
     private func ensureProfileWithRetry(for user: FirebaseAuth.User) async {
@@ -311,28 +553,87 @@ enum SocialConnectionState: Equatable {
         do {
             let snapshot = try await ref.getDocument()
             guard !snapshot.exists else { return }
-            let base = Self.normalizedUsername(user.displayName ?? user.email?.components(separatedBy: "@").first ?? "capy")
-            let prefix = String(user.uid.prefix(6)).lowercased()
-            let stem = String((base.isEmpty ? "capy" : base).prefix(13))
-            let username = Self.validUsername(stem) ? stem + "_" + prefix : "capy_" + prefix
-            let usernameRef = db.collection("usernames").document(username)
-            let batch = db.batch()
-            batch.setData(["uid": user.uid, "createdAt": FieldValue.serverTimestamp()], forDocument: usernameRef)
-            batch.setData([
-                "username": username,
-                "usernameKey": username,
-                "displayName": user.displayName ?? "CapyFlow listener",
-                "bio": "",
-                "avatarURL": user.photoURL?.absoluteString ?? "",
-                "createdAt": FieldValue.serverTimestamp(),
-                "updatedAt": FieldValue.serverTimestamp()
-            ], forDocument: ref)
-            try await batch.commit()
+            var lastFailure: Error?
+            for candidate in generatedUsernameCandidates(for: user) {
+                do {
+                    try await createProfile(user: user, username: candidate)
+                    return
+                } catch {
+                    lastFailure = error
+                    guard isSocialTransactionError(error, code: .usernameTaken) else { throw error }
+                }
+            }
+            throw lastFailure ?? socialTransactionError(.usernameTaken, "Couldn't reserve an initial username. Please try again.")
         } catch {
             // Firestore's local cache is useful on a disconnected launch, but it must
             // never be mistaken for proof that a username is available.
             if let cached = try? await ref.getDocument(source: .cache), cached.exists { return }
             throw error
+        }
+    }
+
+    private func createProfile(user: FirebaseAuth.User, username: String) async throws {
+        let profileRef = db.collection("profiles").document(user.uid)
+        let usernameRef = db.collection("usernames").document(username)
+        let rawDisplayName = user.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = String(((rawDisplayName?.isEmpty == false ? rawDisplayName : nil) ?? "CapyFlow listener").prefix(60))
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            db.runTransaction({ transaction, errorPointer -> Any? in
+                do {
+                    let profileSnapshot = try transaction.getDocument(profileRef)
+                    if profileSnapshot.exists { return nil }
+
+                    let reservation = try transaction.getDocument(usernameRef)
+                    if let owner = reservation.data()?["uid"] as? String, owner != user.uid {
+                        throw socialTransactionError(.usernameTaken, "That username is already taken.")
+                    }
+                    if !reservation.exists {
+                        transaction.setData([
+                            "uid": user.uid,
+                            "createdAt": FieldValue.serverTimestamp()
+                        ], forDocument: usernameRef)
+                    }
+                    transaction.setData([
+                        "username": username,
+                        "usernameKey": username,
+                        "usernameIsGenerated": true,
+                        "displayName": displayName,
+                        "bio": "",
+                        "avatarURL": user.photoURL?.absoluteString ?? "",
+                        "createdAt": FieldValue.serverTimestamp(),
+                        "updatedAt": FieldValue.serverTimestamp()
+                    ], forDocument: profileRef)
+                    return nil
+                } catch {
+                    errorPointer?.pointee = error as NSError
+                    return nil
+                }
+            }, completion: { _, failure in
+                if let failure { continuation.resume(throwing: failure) }
+                else { continuation.resume() }
+            })
+        }
+    }
+
+    private func generatedUsernameCandidates(for user: FirebaseAuth.User) -> [String] {
+        let source = user.displayName ?? user.email?.components(separatedBy: "@").first ?? "capy"
+        var stem = UsernamePolicy.key(from: source)
+            .map { character in
+                character.isASCII && (character.isLetter || character.isNumber || character == "_") ? character : "_"
+            }
+            .reduce(into: "") { partial, character in
+                if character != "_" || partial.last != "_" { partial.append(character) }
+            }
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        if stem.count < UsernamePolicy.minimumLength { stem = "capy" }
+
+        var uidKey = user.uid.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        if uidKey.count < 6 { uidKey += String(UUID().uuidString.lowercased().filter(\.isLetter).prefix(6)) }
+        let suffixes = [String(uidKey.prefix(6)), String(uidKey.prefix(10)), String(UUID().uuidString.lowercased().filter(\.isLetter).prefix(8))]
+        return suffixes.map { suffix in
+            let stemLimit = max(3, UsernamePolicy.maximumLength - suffix.count - 1)
+            return String(stem.prefix(stemLimit)) + "_" + suffix
         }
     }
 
@@ -392,6 +693,17 @@ enum SocialConnectionState: Equatable {
         following = people.sorted { $0.username < $1.username }
     }
 
+#if DEBUG
+    func installLayoutFixture(profile: SocialProfile, following: [SocialProfile] = []) {
+        self.profile = profile
+        self.following = following
+        self.followingCount = following.count
+        self.followerCount = 27
+        self.connectionState = .ready
+        self.error = nil
+    }
+#endif
+
     private func shouldAutomaticallyRetry(_ error: Error) -> Bool {
         let code = (error as NSError).code
         return code == FirestoreErrorCode.unavailable.rawValue ||
@@ -406,7 +718,13 @@ enum SocialConnectionState: Equatable {
             return
         }
 
-        let code = (failure as NSError).code
+        let nsError = failure as NSError
+        if nsError.domain == socialTransactionErrorDomain {
+            error = nsError.localizedDescription
+            return
+        }
+
+        let code = nsError.code
         switch code {
         case FirestoreErrorCode.cancelled.rawValue:
             return
@@ -433,23 +751,39 @@ enum SocialConnectionState: Equatable {
         }
     }
 
-    private static func normalizedUsername(_ raw: String) -> String {
-        raw.lowercased()
-            .replacingOccurrences(of: " ", with: "_")
-            .filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == ".") }
-    }
+}
 
-    private static func validUsername(_ username: String) -> Bool {
-        guard (3...20).contains(username.count),
-              !username.hasPrefix("."), !username.hasSuffix("."),
-              !username.contains("..") else { return false }
-        return !["admin", "capyflow", "support"].contains(username)
-    }
+private let socialTransactionErrorDomain = "com.seph.capyflow.social-transaction"
+
+private enum SocialTransactionErrorCode: Int {
+    case usernameTaken = 1
+    case usernameCooldown = 2
+    case profileMissing = 3
+}
+
+private func socialTransactionError(_ code: SocialTransactionErrorCode, _ message: String) -> NSError {
+    NSError(
+        domain: socialTransactionErrorDomain,
+        code: code.rawValue,
+        userInfo: [NSLocalizedDescriptionKey: message]
+    )
+}
+
+private func isSocialTransactionError(_ error: Error, code: SocialTransactionErrorCode) -> Bool {
+    let nsError = error as NSError
+    return nsError.domain == socialTransactionErrorDomain && nsError.code == code.rawValue
 }
 
 private enum SocialError: LocalizedError {
     case message(String)
     var errorDescription: String? { if case .message(let message) = self { return message }; return nil }
+}
+
+private extension Sequence {
+    func uniqued<Key: Hashable>(by keyPath: KeyPath<Element, Key>) -> [Element] {
+        var seen = Set<Key>()
+        return filter { seen.insert($0[keyPath: keyPath]).inserted }
+    }
 }
 
 private extension Track {

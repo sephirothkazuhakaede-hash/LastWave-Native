@@ -29,6 +29,40 @@ jobs:
       - uses: actions/checkout@v4
       - run: brew install xcodegen
       - run: xcodegen generate
+      - name: Test responsive layouts on small, iPhone 13, and large screens
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/layout-results
+          RUNTIME=$(xcrun simctl list runtimes --json | python3 -c 'import json,sys; items=[r for r in json.load(sys.stdin)["runtimes"] if r.get("isAvailable") and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS")]; print(items[-1]["identifier"])')
+          for SPEC in \
+            'small|com.apple.CoreSimulator.SimDeviceType.iPhone-SE-3rd-generation' \
+            'iphone13|com.apple.CoreSimulator.SimDeviceType.iPhone-13' \
+            'large|com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max'
+          do
+            LABEL=${SPEC%%|*}
+            DEVICE_TYPE=${SPEC#*|}
+            UDID=$(xcrun simctl create "CapyFlow-${LABEL}" "$DEVICE_TYPE" "$RUNTIME")
+            xcrun simctl boot "$UDID"
+            xcrun simctl bootstatus "$UDID" -b
+            xcodebuild \
+              -project CapyFlow.xcodeproj \
+              -scheme CapyFlow \
+              -configuration Debug \
+              -destination "platform=iOS Simulator,id=$UDID" \
+              -only-testing:CapyFlowUITests/ResponsiveLayoutTests \
+              -resultBundlePath "build/layout-results/${LABEL}.xcresult" \
+              test
+            xcrun simctl shutdown "$UDID"
+            xcrun simctl delete "$UDID"
+          done
+      - name: Upload responsive layout results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: CapyFlow-0.4.2-layout-tests
+          path: ios/build/layout-results
+          if-no-files-found: warn
       - run: xcodebuild -project CapyFlow.xcodeproj -scheme CapyFlow -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
       - name: Verify compiled app icon
         run: |
@@ -38,17 +72,17 @@ jobs:
         run: |
           APP_PLIST=build/Build/Products/Release-iphoneos/CapyFlow.app/Info.plist
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PLIST")" = "CapyFlow"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")" = "0.4.1"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")" = "8"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")" = "0.4.2"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")" = "9"
       - name: Package unsigned IPA
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/CapyFlow.app Payload/
-          zip -r CapyFlow-0.4.1-unsigned.ipa Payload
-          unzip -t CapyFlow-0.4.1-unsigned.ipa
+          zip -r CapyFlow-0.4.2-unsigned.ipa Payload
+          unzip -t CapyFlow-0.4.2-unsigned.ipa
       - uses: actions/upload-artifact@v4
         with:
-          name: CapyFlow-0.4.1-unsigned-IPA
-          path: ios/CapyFlow-0.4.1-unsigned.ipa
+          name: CapyFlow-0.4.2-unsigned-IPA
+          path: ios/CapyFlow-0.4.2-unsigned.ipa
           if-no-files-found: error
           compression-level: 0

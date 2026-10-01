@@ -1,5 +1,22 @@
 # Changelog
 
+## CapyFlow iOS 0.4.2 — 2026-10-01
+
+- Fixed shared container and button sizing that made Now Playing, lyrics, album,
+  playlist, and social screens wider than the available iPhone safe area.
+- Made Download All expose every queued track immediately, including honest
+  preparation, transfer, saving, completion, failure, retry, and overall states.
+- Fixed album tracks saved into playlists retaining an incorrect extended
+  duration after the playable audio had already ended.
+- Added editable display names and collision-safe, searchable usernames with
+  availability feedback, validation, and a rename cooldown.
+- Added a Spotify-style profile drawer available from every main tab, a full
+  profile page, and custom profile photos shared through Firestore.
+- Added automated horizontal-overflow UI tests for a small iPhone, iPhone 13,
+  and a large iPhone before the unsigned IPA is packaged.
+- Preserved the fast MSI backend, persistent cache, direct fallback, offline
+  audio and lyrics, lock-screen artwork, and native navigation behavior.
+
 ## CapyFlow iOS 0.4.1 — 2026-10-01
 
 - Rebuilt Home, Search, Library, album, artist, playlist, social, mini-player,

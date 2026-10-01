@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UIKit
 
 struct SocialHubView: View {
     @EnvironmentObject private var social: SocialStore
@@ -9,56 +11,61 @@ struct SocialHubView: View {
         ZStack {
             CapyAmbientBackdrop(seed: social.profile?.id ?? "capyflow-social", artworkURL: social.profile?.avatarURL, intensity: 0.85)
             ScrollView {
-                LazyVStack(spacing: 16) {
-                    connectionCard
-                    if let profile = social.profile {
-                        HStack(spacing: 15) {
-                            SocialAvatar(profile: profile, size: 70)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(profile.displayName).font(.title2.bold())
-                                Text("@" + profile.username).foregroundStyle(Color.waveBlue)
-                                Text("\(social.followerCount) followers  •  \(social.followingCount) following")
-                                    .font(.caption).foregroundStyle(.secondary)
+                CapyScreenContainer {
+                    LazyVStack(spacing: 16) {
+                        connectionCard
+                        if let profile = social.profile {
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 15) {
+                                    SocialAvatar(profile: profile, size: 70)
+                                    profileSummary(profile)
+                                    Button("Edit") { showEditor = true }.buttonStyle(.bordered)
+                                }
+                                VStack(alignment: .leading, spacing: 14) {
+                                    HStack(spacing: 14) {
+                                        SocialAvatar(profile: profile, size: 70)
+                                        profileSummary(profile)
+                                    }
+                                    Button("Edit profile") { showEditor = true }
+                                        .buttonStyle(CapySecondaryButtonStyle())
+                                }
                             }
-                            Spacer()
-                            Button("Edit") { showEditor = true }.buttonStyle(.bordered)
+                            .padding(16).waveSurface(radius: 24, highlighted: true)
+                        } else if social.working {
+                            HStack { ProgressView(); Text("Setting up your CapyFlow profile…") }.padding(24)
                         }
-                        .padding(16).waveSurface(radius: 24, highlighted: true)
-                    } else if social.working {
-                        HStack { ProgressView(); Text("Setting up your CapyFlow profile…") }.padding(24)
-                    }
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Find people").font(.title3.bold())
-                        HStack {
-                            Image(systemName: "magnifyingglass").foregroundStyle(Color.waveBlue)
-                            TextField("Search @username", text: $query)
-                                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            if !query.isEmpty { Button { query = ""; social.searchResults = [] } label: { Image(systemName: "xmark.circle.fill") } }
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Find people").font(.title3.bold())
+                            HStack {
+                                Image(systemName: "magnifyingglass").foregroundStyle(Color.waveBlue)
+                                TextField("Search @username", text: $query)
+                                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                if !query.isEmpty { Button { query = ""; social.searchResults = [] } label: { Image(systemName: "xmark.circle.fill") } }
+                            }
+                            .padding(.horizontal, 15).frame(height: 52).waveGlass(radius: 20)
                         }
-                        .padding(.horizontal, 15).frame(height: 52).waveGlass(radius: 20)
-                    }
 
-                    if !social.searchResults.isEmpty {
-                        VStack(spacing: 10) {
-                            ForEach(social.searchResults) { person in SocialPersonRow(person: person) }
+                        if !social.searchResults.isEmpty {
+                            VStack(spacing: 10) {
+                                ForEach(social.searchResults) { person in SocialPersonRow(person: person) }
+                            }
+                        } else if !social.following.isEmpty {
+                            HStack { Text("Following").font(.title3.bold()); Spacer() }
+                            ForEach(social.following) { person in SocialPersonRow(person: person) }
                         }
-                    } else if !social.following.isEmpty {
-                        HStack { Text("Following").font(.title3.bold()); Spacer() }
-                        ForEach(social.following) { person in SocialPersonRow(person: person) }
-                    }
 
-                    if !social.sharedPlaylists.isEmpty {
-                        HStack { Text("Shared playlists").font(.title3.bold()); Spacer(); Image(systemName: "person.2.fill").foregroundStyle(Color.waveBlue) }
-                        ForEach(social.sharedPlaylists) { playlist in
-                            NavigationLink { SharedPlaylistDetailView(playlistID: playlist.id) } label: {
-                                SharedPlaylistRow(playlist: playlist)
-                            }.buttonStyle(.plain)
+                        if !social.sharedPlaylists.isEmpty {
+                            HStack { Text("Shared playlists").font(.title3.bold()); Spacer(); Image(systemName: "person.2.fill").foregroundStyle(Color.waveBlue) }
+                            ForEach(social.sharedPlaylists) { playlist in
+                                NavigationLink { SharedPlaylistDetailView(playlistID: playlist.id) } label: {
+                                    SharedPlaylistRow(playlist: playlist)
+                                }.buttonStyle(.plain)
+                            }
                         }
                     }
-
+                    .padding(.top, 10).padding(.bottom, 30)
                 }
-                .padding(18).padding(.bottom, 30)
             }
         }
         .navigationTitle("Profile & Friends")
@@ -73,6 +80,17 @@ struct SocialHubView: View {
             await social.search(query)
         }
         .sheet(isPresented: $showEditor) { ProfileEditorSheet() }
+    }
+
+    private func profileSummary(_ profile: SocialProfile) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(profile.displayName).font(.title2.bold()).lineLimit(2)
+            Text("@" + profile.username).foregroundStyle(Color.waveBlue).lineLimit(1)
+            Text("\(social.followerCount) followers  •  \(social.followingCount) following")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .layoutPriority(1)
     }
 
     private var connectionCard: some View {
@@ -104,10 +122,11 @@ private struct SocialPersonRow: View {
         HStack(spacing: 13) {
             SocialAvatar(profile: person, size: 52)
             VStack(alignment: .leading, spacing: 2) {
-                Text(person.displayName).font(.headline)
-                Text("@" + person.username).font(.subheadline).foregroundStyle(.secondary)
+                Text(person.displayName).font(.headline).lineLimit(2)
+                Text("@" + person.username).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer()
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
             let follows = social.isFollowing(person.id)
             Button(follows ? "Following" : "Follow") {
                 Task { await social.setFollowing(person, following: !follows) }
@@ -120,12 +139,15 @@ private struct SocialPersonRow: View {
     }
 }
 
-private struct SocialAvatar: View {
+struct SocialAvatar: View {
     let profile: SocialProfile
     let size: CGFloat
     var body: some View {
         Group {
-            if let url = profile.avatarURL {
+            if let data = profile.avatarData,
+               let image = SocialAvatarImageCache.image(profileID: profile.id, data: data) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else if let url = profile.avatarURL {
                 AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { avatarFallback }
             } else { avatarFallback }
         }
@@ -139,48 +161,228 @@ private struct SocialAvatar: View {
     }
 }
 
+@MainActor private enum SocialAvatarImageCache {
+    private static let images = NSCache<NSString, UIImage>()
+
+    static func image(profileID: String, data: Data) -> UIImage? {
+        let key = "\(profileID):\(data.count):\(data.hashValue)" as NSString
+        if let cached = images.object(forKey: key) { return cached }
+        guard let decoded = UIImage(data: data) else { return nil }
+        images.setObject(decoded, forKey: key, cost: data.count)
+        return decoded
+    }
+}
+
+struct ProfilePageView: View {
+    @EnvironmentObject private var auth: AuthSession
+    @EnvironmentObject private var social: SocialStore
+    @State private var showEditor = false
+
+    var body: some View {
+        ZStack {
+            CapyAmbientBackdrop(seed: social.profile?.id ?? "capyflow-profile", artworkURL: social.profile?.avatarURL, intensity: 0.9)
+            ScrollView {
+                CapyScreenContainer {
+                    VStack(spacing: 20) {
+                        if let profile = social.profile {
+                            SocialAvatar(profile: profile, size: 132)
+                                .overlay { Circle().stroke(CapyColor.surfaceStroke, lineWidth: 1) }
+                                .shadow(color: .black.opacity(0.3), radius: 24, y: 12)
+                            VStack(spacing: 6) {
+                                Text(profile.displayName).font(.system(size: 32, weight: .black, design: .rounded)).multilineTextAlignment(.center)
+                                Text("@" + profile.username).font(.capyBody).foregroundStyle(CapyColor.accent)
+                                if !profile.bio.isEmpty {
+                                    Text(profile.bio).font(.capyBody).foregroundStyle(CapyColor.secondaryText).multilineTextAlignment(.center)
+                                }
+                            }
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 12) {
+                                    profileMetric("\(social.followerCount)", "Followers")
+                                    profileMetric("\(social.followingCount)", "Following")
+                                    profileMetric("\(social.sharedPlaylists.count)", "Shared")
+                                }
+                                VStack(spacing: 10) {
+                                    profileMetric("\(social.followerCount)", "Followers")
+                                    profileMetric("\(social.followingCount)", "Following")
+                                    profileMetric("\(social.sharedPlaylists.count)", "Shared")
+                                }
+                            }
+                            Button { showEditor = true; CapyHaptics.selection() } label: {
+                                Label("Customize profile", systemImage: "person.crop.circle.badge.plus")
+                            }
+                            .buttonStyle(CapyPrimaryButtonStyle())
+
+                            NavigationLink { SocialHubView() } label: {
+                                Label("Friends & shared playlists", systemImage: "person.2.fill")
+                                    .frame(maxWidth: .infinity, minHeight: 50).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain).waveSurface(radius: 20)
+                        } else if auth.user == nil {
+                            Image(systemName: "person.crop.circle.badge.plus").font(.system(size: 72)).foregroundStyle(CapyColor.accent)
+                            Text("Your CapyFlow profile").font(.capyTitle)
+                            Text("Sign in with Google to choose a username, profile picture, follow friends, and share playlists.")
+                                .font(.capyBody).foregroundStyle(CapyColor.secondaryText).multilineTextAlignment(.center)
+                            Button { Task { await auth.signInWithGoogle() } } label: {
+                                Label("Continue with Google", systemImage: "person.badge.key.fill")
+                            }
+                            .buttonStyle(CapyPrimaryButtonStyle())
+                            .disabled(auth.working)
+                        } else if social.working || social.connectionState == .connecting {
+                            ProgressView("Preparing your profile…").tint(CapyColor.accent).padding(40)
+                        } else {
+                            Image(systemName: social.connectionState.systemImage)
+                                .font(.system(size: 64))
+                                .foregroundStyle(CapyColor.warning)
+                            Text(social.connectionState.title).font(.capyTitle).multilineTextAlignment(.center)
+                            Text(social.error ?? social.connectionState.detail)
+                                .font(.capyBody)
+                                .foregroundStyle(CapyColor.secondaryText)
+                                .multilineTextAlignment(.center)
+                            if social.connectionState.canRetry {
+                                Button { social.retryConnection(); CapyHaptics.selection() } label: {
+                                    Label("Try again", systemImage: "arrow.clockwise")
+                                }
+                                .buttonStyle(CapyPrimaryButtonStyle())
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 24).padding(.bottom, 40)
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+        .navigationTitle("Profile")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showEditor) { ProfileEditorSheet() }
+    }
+
+    private func profileMetric(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 4) {
+            Text(value).font(.title3.bold().monospacedDigit())
+            Text(label).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 14).waveSurface(radius: 18)
+    }
+}
+
 private struct ProfileEditorSheet: View {
     @EnvironmentObject private var social: SocialStore
     @Environment(\.dismiss) private var dismiss
     @State private var username = ""
     @State private var displayName = ""
     @State private var bio = ""
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var avatarData: Data?
+    @State private var processingPhoto = false
     var body: some View {
         NavigationStack {
             ZStack {
                 WaveBackdrop()
-                VStack(spacing: 15) {
-                    TextField("Username", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled().padding(16).waveGlass(radius: 20)
-                    TextField("Display name", text: $displayName).padding(16).waveGlass(radius: 20)
-                    TextField("Bio", text: $bio, axis: .vertical).lineLimit(3...5).padding(16).waveGlass(radius: 20)
-                    Text("Friends find you by your unique @username. Your email is never shown publicly.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if let error = social.error {
-                        Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(CapyColor.warning)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(12)
-                            .waveSurface(radius: 16)
+                ScrollView {
+                    VStack(spacing: 15) {
+                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                            ZStack(alignment: .bottomTrailing) {
+                                avatarPreview
+                                    .frame(width: 112, height: 112).clipShape(Circle())
+                                Image(systemName: "camera.fill")
+                                    .foregroundStyle(CapyColor.background)
+                                    .padding(10).background(CapyColor.accent, in: Circle())
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        Text("Tap the photo to choose a custom profile picture.")
+                            .font(.capyCaption).foregroundStyle(CapyColor.secondaryText).multilineTextAlignment(.center)
+                        TextField("Username", text: $username)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .padding(16).waveGlass(radius: 20)
+                        availabilityLabel
+                        TextField("Display name", text: $displayName).padding(16).waveGlass(radius: 20)
+                        TextField("Bio", text: $bio, axis: .vertical).lineLimit(3...5).padding(16).waveGlass(radius: 20)
+                        Text("Friends find you by your unique @username. Names ignore capitalization and can be changed once every 14 days.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        if let error = social.error {
+                            Label(error, systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(CapyColor.warning)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .waveSurface(radius: 16)
+                        }
                     }
-                    Spacer()
-                }.padding(22)
+                    .padding(22).padding(.bottom, 30)
+                }
             }
             .navigationTitle("Edit Profile").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { Task { await social.saveProfile(username: username, displayName: displayName, bio: bio); if social.error == nil { dismiss() } } }
-                        .disabled(social.working)
+                    Button("Save") {
+                        Task {
+                            social.clearError()
+                            await social.saveProfile(username: username, displayName: displayName, bio: bio, avatarData: avatarData)
+                            if social.error == nil { dismiss() }
+                        }
+                    }
+                    .disabled(social.working || processingPhoto || !social.usernameAvailability.canSave || displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .onAppear {
+                social.clearError()
                 username = social.profile?.username ?? ""
                 displayName = social.profile?.displayName ?? ""
                 bio = social.profile?.bio ?? ""
+                avatarData = social.profile?.avatarData
+            }
+            .task(id: username) {
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                guard !Task.isCancelled else { return }
+                _ = await social.checkUsernameAvailability(username)
+            }
+            .onChange(of: selectedPhoto) { _, item in
+                guard let item else { return }
+                Task {
+                    processingPhoto = true
+                    defer { processingPhoto = false }
+                    guard let data = try? await item.loadTransferable(type: Data.self),
+                          let resized = profileAvatarJPEG(from: data) else {
+                        social.error = "That image couldn't be used. Try a different photo."
+                        return
+                    }
+                    avatarData = resized
+                    CapyHaptics.notification(.success)
+                }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
+    }
+
+    @ViewBuilder private var avatarPreview: some View {
+        if let avatarData, let image = UIImage(data: avatarData) {
+            Image(uiImage: image).resizable().scaledToFill()
+        } else if let profile = social.profile {
+            SocialAvatar(profile: profile, size: 112)
+        } else {
+            Image(systemName: "person.crop.circle.fill").resizable().scaledToFit().foregroundStyle(CapyColor.accent)
+        }
+    }
+
+    @ViewBuilder private var availabilityLabel: some View {
+        if let message = social.usernameAvailability.message {
+            HStack(spacing: 8) {
+                switch social.usernameAvailability {
+                case .checking:
+                    ProgressView().controlSize(.small)
+                case .available, .current:
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(CapyColor.accent)
+                default:
+                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(CapyColor.warning)
+                }
+                Text(message).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
@@ -241,32 +443,46 @@ struct SharedPlaylistDetailView: View {
         ZStack {
             CapyAmbientBackdrop(seed: playlistID, artworkURL: playlist?.tracks.first?.artwork)
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 15) {
-                    if let playlist {
-                        HStack(alignment: .bottom, spacing: 18) {
-                            SharedCover(tracks: playlist.tracks, size: 154)
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("SHARED PLAYLIST").font(.caption2.weight(.black)).tracking(2).foregroundStyle(CapyColor.accent)
-                                Text(playlist.name).font(.system(size: 30, weight: .black, design: .rounded)).lineLimit(3)
-                                Label("By @\(playlist.ownerName)", systemImage: "person.2.fill").font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
-                                Text("\(playlist.tracks.count) songs • \(playlist.memberIDs.count) collaborators").font(.capyCaption).foregroundStyle(CapyColor.tertiaryText)
+                CapyScreenContainer {
+                    LazyVStack(alignment: .leading, spacing: 15) {
+                        if let playlist {
+                            ViewThatFits(in: .horizontal) {
+                                HStack(alignment: .bottom, spacing: 18) {
+                                    SharedCover(tracks: playlist.tracks, size: 154)
+                                    sharedMetadata(playlist).frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
+                                }
+                                VStack(alignment: .leading, spacing: 16) {
+                                    HStack { Spacer(minLength: 0); SharedCover(tracks: playlist.tracks, size: 230); Spacer(minLength: 0) }
+                                    sharedMetadata(playlist)
+                                }
                             }
-                        }
-                        HStack(spacing: 10) {
-                            Button { player.queue = Array(playlist.tracks.dropFirst()); if let first = playlist.tracks.first { Task { await player.play(first) } } } label: {
-                                Label("Play", systemImage: "play.fill")
-                            }.buttonStyle(CapyPrimaryButtonStyle())
-                            Button { Task { await player.downloadPlaylist(playlist.imported) } } label: {
-                                Label("Download", systemImage: "arrow.down.circle")
-                            }.buttonStyle(CapySecondaryButtonStyle())
-                        }
-                        CapySectionHeader("Songs", subtitle: "Everyone in this playlist sees shared changes")
-                        ForEach(playlist.tracks) { track in SocialTrackRow(track: track) }
-                    } else { ProgressView().padding(50) }
-                }.padding(18).padding(.bottom, 100)
+                            HStack(spacing: 10) {
+                                Button { player.queue = Array(playlist.tracks.dropFirst()); if let first = playlist.tracks.first { Task { await player.play(first) } } } label: {
+                                    Label("Play", systemImage: "play.fill")
+                                }.buttonStyle(CapyPrimaryButtonStyle())
+                                Button { Task { await player.downloadPlaylist(playlist.imported) } } label: {
+                                    Label("Download", systemImage: "arrow.down.circle")
+                                }.buttonStyle(CapySecondaryButtonStyle())
+                            }
+                            CapySectionHeader("Songs", subtitle: "Everyone in this playlist sees shared changes")
+                            ForEach(playlist.tracks) { track in SocialTrackRow(track: track) }
+                        } else { ProgressView().padding(50) }
+                    }
+                    .padding(.top, 18).padding(.bottom, 100)
+                }
             }
         }
         .navigationTitle("Shared Playlist").navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func sharedMetadata(_ playlist: SharedPlaylist) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("SHARED PLAYLIST").font(.caption2.weight(.black)).tracking(2).foregroundStyle(CapyColor.accent)
+            Text(playlist.name).font(.system(size: 30, weight: .black, design: .rounded)).lineLimit(3).minimumScaleFactor(0.8)
+            Label("By @\(playlist.ownerName)", systemImage: "person.2.fill").font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(2)
+            Text("\(playlist.tracks.count) songs • \(playlist.memberIDs.count) collaborators").font(.capyCaption).foregroundStyle(CapyColor.tertiaryText).lineLimit(2)
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -276,13 +492,37 @@ struct SharedPlaylistRow: View {
         HStack(spacing: 13) {
             SharedCover(tracks: playlist.tracks, size: 68)
             VStack(alignment: .leading, spacing: 4) {
-                Text(playlist.name).font(.headline)
-                Text("@\(playlist.ownerName) • \(playlist.tracks.count) songs").font(.subheadline).foregroundStyle(.secondary)
+                Text(playlist.name).font(.headline).lineLimit(2)
+                Text("@\(playlist.ownerName) • \(playlist.tracks.count) songs").font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer()
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             Image(systemName: "chevron.right").foregroundStyle(.secondary)
         }.padding(11).waveSurface(radius: 22)
     }
+}
+
+private func profileAvatarJPEG(from data: Data) -> Data? {
+    guard let image = UIImage(data: data), image.size.width > 0, image.size.height > 0 else { return nil }
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = true
+    let rendered = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 320), format: format).image { _ in
+        UIColor(CapyColor.background).setFill()
+        UIRectFill(CGRect(x: 0, y: 0, width: 320, height: 320))
+        let scale = max(320 / image.size.width, 320 / image.size.height)
+        let drawSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        image.draw(in: CGRect(
+            x: (320 - drawSize.width) / 2,
+            y: (320 - drawSize.height) / 2,
+            width: drawSize.width,
+            height: drawSize.height
+        ))
+    }
+    let compressionQualities: [CGFloat] = [0.82, 0.68, 0.54, 0.42]
+    for quality in compressionQualities {
+        if let jpeg = rendered.jpegData(compressionQuality: quality), jpeg.count <= 131_072 { return jpeg }
+    }
+    return nil
 }
 
 private struct SharedCover: View {
