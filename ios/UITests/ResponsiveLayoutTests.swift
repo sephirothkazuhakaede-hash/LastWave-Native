@@ -22,7 +22,7 @@ final class ResponsiveLayoutTests: XCTestCase {
         launch("root")
         assertVisibleControlsFitHorizontally(screen: "home")
 
-        app.buttons["Open profile and settings"].tap()
+        app.buttons["home-profile-menu"].tap()
         let closeDrawer = app.buttons["Close profile menu"]
         XCTAssertTrue(closeDrawer.waitForExistence(timeout: 4))
         assertVisibleControlsFitHorizontally(screen: "profile drawer")
@@ -35,7 +35,7 @@ final class ResponsiveLayoutTests: XCTestCase {
         app.buttons["Done"].tap()
         XCTAssertTrue(app.navigationBars["Profile"].waitForNonExistence(timeout: 4))
 
-        app.buttons["Open profile and settings"].tap()
+        app.buttons["home-profile-menu"].tap()
         XCTAssertTrue(closeDrawer.waitForExistence(timeout: 4))
         app.buttons["Settings"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 4))

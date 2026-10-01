@@ -398,6 +398,7 @@ private struct HomeDashboardView: View {
     private var homeHeader: some View {
         HStack(spacing: 14) {
             CapyProfileButton(action: openProfileDrawer)
+                .accessibilityIdentifier("home-profile-menu")
             VStack(alignment: .leading, spacing: 3) {
                 Text(greeting).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
                 Text("CapyFlow").font(.capyHero)
