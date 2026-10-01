@@ -203,13 +203,34 @@ struct CapyScreenContainer<Content: View>: View {
     }
 
     var body: some View {
-        content()
-            .frame(maxWidth: CapyMetric.readableWidth, alignment: .leading)
-        .padding(.horizontal, CapyMetric.horizontalInset)
-        // Padding must be inside the final full-width frame. Applying it to
-        // an HStack that had already expanded to the device width made every
-        // screen 32 points too wide on an iPhone 13.
-        .frame(maxWidth: .infinity, alignment: .center)
+        CapyReadableLayout { content() }
+    }
+}
+
+/// A finite maximum frame can still accept a child's oversized ideal width.
+/// Propose the actual viewport width to scroll content and ViewThatFits so
+/// compact screens choose their vertical layouts before measuring height.
+private struct CapyReadableLayout: Layout {
+    private func contentWidth(_ width: CGFloat) -> CGFloat {
+        max(1, min(CapyMetric.readableWidth, width - 2 * CapyMetric.horizontalInset))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+            ?? CapyMetric.readableWidth + 2 * CapyMetric.horizontalInset
+        let size = subviews.first?.sizeThatFits(
+            ProposedViewSize(width: contentWidth(width), height: proposal.height)
+        ) ?? .zero
+        return CGSize(width: width, height: size.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let width = contentWidth(bounds.width)
+        subviews.first?.place(
+            at: CGPoint(x: bounds.midX - width / 2, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: width, height: bounds.height)
+        )
     }
 }
 

@@ -1787,7 +1787,7 @@ struct PlayerView: View {
     var body: some View {
         GeometryReader { geometry in
             let horizontalInset = max(18, max(geometry.safeAreaInsets.leading, geometry.safeAreaInsets.trailing) + 18)
-            let contentWidth = max(1, geometry.size.width - (horizontalInset * 2))
+            let contentWidth = max(1, min(CapyMetric.readableWidth, geometry.size.width - (horizontalInset * 2)))
             let artworkSize = min(
                 contentWidth,
                 showLyrics ? max(126, geometry.size.height * 0.18) : min(340, geometry.size.height * 0.36)
@@ -1892,17 +1892,14 @@ struct PlayerView: View {
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
-                // The inset must be applied before the outer flexible frame.
-                // Otherwise the full-width stack grows by another 36 points
-                // and is clipped/shifted on 390-point iPhones.
+                // Constrain the stack before padding: maxWidth alone permits
+                // long titles and sliders to retain a wider ideal size.
+                .frame(width: contentWidth)
                 .padding(.horizontal, horizontalInset)
                 .padding(.top, max(8, geometry.safeAreaInsets.top))
                 .padding(.bottom, max(10, geometry.safeAreaInsets.bottom))
-                .frame(
-                    maxWidth: CapyMetric.readableWidth + (horizontalInset * 2),
-                    maxHeight: .infinity,
-                    alignment: .top
-                )
+                .frame(width: contentWidth + (horizontalInset * 2))
+                .frame(maxHeight: .infinity, alignment: .top)
                 .frame(maxWidth: .infinity, alignment: .center)
             }
         }
