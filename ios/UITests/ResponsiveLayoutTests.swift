@@ -52,6 +52,12 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertTrue(staticText(containing: "Everything you made yours").waitForExistence(timeout: 4))
         assertVisibleControlsFitHorizontally(screen: "library")
         attachScreenshot(named: "root-tabs")
+        let filters = app.scrollViews["library-filter-scroll"]
+        filters.swipeLeft()
+        let sharedFilter = app.buttons["library-filter-Shared"]
+        XCTAssertTrue(sharedFilter.isHittable, "The last library filter must be reachable by scrolling")
+        XCTAssertGreaterThanOrEqual(sharedFilter.frame.minX, filters.frame.minX - 1.5)
+        XCTAssertLessThanOrEqual(sharedFilter.frame.maxX, filters.frame.maxX + 1.5)
     }
 
     private func launch(_ fixture: String) {
@@ -91,8 +97,8 @@ final class ResponsiveLayoutTests: XCTestCase {
 
     /// A regression guard for the 0.4.1 bug where full-width content received
     /// horizontal padding afterwards and reported a width larger than its phone.
-    /// Intentional off-screen items in horizontal scrollers are not hittable and
-    /// are therefore excluded from this visible-control check.
+    /// Horizontal filter buttons are checked inside their clipping viewport;
+    /// the final filter is also scrolled fully into view and checked above.
     private func assertVisibleControlsFitHorizontally(screen: String) {
         let window = app.windows.firstMatch
         let bounds = window.frame
@@ -100,9 +106,26 @@ final class ResponsiveLayoutTests: XCTestCase {
         let candidates = app.descendants(matching: .any).allElementsBoundByIndex
 
         for element in candidates where element.exists && element.isHittable {
-            let frame = element.frame
+            var frame = element.frame
             guard !frame.isNull, !frame.isInfinite, frame.width > 0, frame.height > 0 else { continue }
             guard frame.maxY >= bounds.minY, frame.minY <= bounds.maxY else { continue }
+            // UIKit's sheet dimming backdrop covers three screen widths and
+            // heights. It is a system decoration, not the sheet's content.
+            if element.elementType == .other && element.identifier.isEmpty && element.label.isEmpty,
+               abs(frame.width - bounds.width * 3) < tolerance,
+               abs(frame.height - bounds.height * 3) < tolerance,
+               abs(frame.midX - bounds.midX) < tolerance,
+               abs(frame.midY - bounds.midY) < tolerance { continue }
+            if element.identifier.hasPrefix("library-filter-"), element.elementType == .button {
+                let viewport = app.scrollViews["library-filter-scroll"].frame
+                XCTAssertGreaterThanOrEqual(viewport.minX, bounds.minX - tolerance)
+                XCTAssertLessThanOrEqual(viewport.maxX, bounds.maxX + tolerance)
+                frame = frame.intersection(viewport)
+                XCTAssertFalse(frame.isNull, "A hittable filter must intersect its scroll viewport")
+            }
+            // A horizontal scroll content wrapper has the combined chip width.
+            // Its viewport and individual accessible buttons are checked instead.
+            if element.identifier == "library-filter-content" { continue }
             XCTAssertGreaterThanOrEqual(
                 frame.minX,
                 bounds.minX - tolerance,

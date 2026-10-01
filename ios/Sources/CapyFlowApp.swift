@@ -1073,9 +1073,15 @@ private struct PlaylistLibraryView: View {
                                         .foregroundStyle(filter == item ? CapyColor.background : .white)
                                         .background(filter == item ? CapyColor.accent : CapyColor.surfaceStrong, in: Capsule())
                                 }.buttonStyle(.plain)
+                                    .accessibilityElement(children: .ignore)
+                                    .accessibilityLabel(item.rawValue)
+                                    .accessibilityIdentifier("library-filter-\(item.rawValue)")
                             }
                         }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("library-filter-content")
                     }.scrollIndicators(.hidden)
+                        .accessibilityIdentifier("library-filter-scroll")
 
                     if filter == .downloads {
                         downloadsSection
