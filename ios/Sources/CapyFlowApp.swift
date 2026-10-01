@@ -63,7 +63,7 @@ private enum LayoutFixture: String {
         Track(id: "fixture00003", title: "Small Screen Sunrise", artist: "Responsive Ensemble", duration: 241)
     ]
 
-    static let album = Album(
+    static let fixtureAlbum = Album(
         id: "MPREfixturealbum",
         title: "An Album With a Deliberately Long Name for Responsive Layout Testing",
         artist: "Capybara & The Extremely Long Artist Name",
@@ -120,7 +120,7 @@ private struct LayoutFixtureView: View {
         case .playerLyrics:
             PlayerView(showLyricsInitially: true)
         case .album:
-            NavigationStack { AlbumDetailView(album: LayoutFixture.album, fixtureTracks: LayoutFixture.tracks) }
+            NavigationStack { AlbumDetailView(album: LayoutFixture.fixtureAlbum, fixtureTracks: LayoutFixture.tracks) }
         case .playlist:
             NavigationStack { PlaylistDetailView(playlistID: "fixture-playlist") }
         case .social:
