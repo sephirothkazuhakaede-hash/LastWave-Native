@@ -48,6 +48,13 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertTrue(qualityLink.isHittable, "Audio Quality must be reachable in Settings")
         qualityLink.tap()
         XCTAssertTrue(app.navigationBars["Audio Quality"].waitForExistence(timeout: 4))
+        let saver = app.buttons["audio-quality-dataSaver"]
+        let best = app.buttons["audio-quality-automatic"]
+        XCTAssertTrue(saver.waitForExistence(timeout: 4))
+        saver.tap()
+        XCTAssertEqual(saver.value as? String, "Selected")
+        best.tap()
+        XCTAssertEqual(best.value as? String, "Selected")
         assertVisibleControlsFitHorizontally(screen: "audio quality settings")
         attachScreenshot(named: "audio-quality-settings")
         app.navigationBars["Audio Quality"].buttons.firstMatch.tap()

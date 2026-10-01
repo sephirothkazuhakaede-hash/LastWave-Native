@@ -592,7 +592,11 @@ private struct SearchHomeView: View {
                 }
                 .padding(.top, 10).padding(.bottom, 30)
             }
-        }.scrollIndicators(.hidden).toolbar(.hidden, for: .navigationBar)
+        }.scrollIndicators(.hidden)
+        // NavigationStack owns an opaque hosting surface. Put the decorative
+        // backdrop inside that surface so its safe areas share the ambience.
+        .background { CapyAmbientBackdrop(seed: "capyflow-search", intensity: 0.85) }
+        .toolbar(.hidden, for: .navigationBar)
         .task(id: query) {
             let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
             let signature = mode.rawValue + "|" + term
