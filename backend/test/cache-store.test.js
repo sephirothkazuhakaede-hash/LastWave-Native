@@ -23,7 +23,7 @@ test('CacheStore deduplicates producers and reloads completed entries', async (t
     producerCalls += 1;
     await new Promise((resolve) => setTimeout(resolve, 20));
     await fs.writeFile(destination, Buffer.alloc(20_000, 7));
-    return { duration: 123 };
+    return { duration: 123, mediaInfo: { codec: 'mp4a.40.2', bitrateKbps: 128, formatId: '140' } };
   };
 
   const [first, second] = await Promise.all([
@@ -42,6 +42,9 @@ test('CacheStore deduplicates producers and reloads completed entries', async (t
   assert.equal(hit.title, 'Test song');
   assert.equal(hit.duration, 123);
   assert.equal(hit.size, 20_000);
+  assert.equal(hit.mediaInfo.codec, 'mp4a.40.2');
+  assert.equal(hit.mediaInfo.bitrateKbps, 128);
+  assert.equal(hit.mediaInfo.formatId, '140');
 });
 
 test('CacheStore separates data-saver and high-quality files', async (t) => {

@@ -6,13 +6,14 @@ import { HttpError } from './errors.js';
 import { parseByteRange } from './range.js';
 import { elapsedMilliseconds } from './timings.js';
 
-function setCommonHeaders(response, { cacheState, quality, duration, serverTiming }) {
+function setCommonHeaders(response, { cacheState, quality, duration, serverTiming, mediaInfo }) {
   response.setHeader('Accept-Ranges', 'bytes');
   response.setHeader('Content-Type', 'audio/mp4');
   response.setHeader('Cache-Control', 'private, no-store');
   response.setHeader('X-Content-Type-Options', 'nosniff');
   response.setHeader('X-CapyFlow-Cache', cacheState);
   response.setHeader('X-CapyFlow-Audio-Quality', quality);
+  if (mediaInfo) response.setHeader('X-CapyFlow-Media-Info', JSON.stringify(mediaInfo));
   if (Number.isFinite(duration) && duration >= 0) response.setHeader('X-CapyFlow-Duration', String(duration));
   if (serverTiming) response.setHeader('Server-Timing', serverTiming);
 }
@@ -53,6 +54,7 @@ export async function serveCachedFile(request, response, entry, {
     cacheState,
     quality: entry.quality,
     duration: entry.duration,
+    mediaInfo: entry.mediaInfo,
     serverTiming: timing,
   });
   if (attachment) response.setHeader('Content-Disposition', attachmentHeader(entry.title, entry.videoId));
@@ -183,6 +185,7 @@ export async function proxyAudio(request, response, {
     cacheState: 'MISS',
     quality,
     duration: resolved.duration,
+    mediaInfo: resolved.mediaInfo,
     serverTiming: `resolve;dur=${resolveMs}, upstream;dur=${upstreamMs}`,
   });
   copyUpstreamHeaders(upstream, response);

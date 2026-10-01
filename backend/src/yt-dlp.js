@@ -49,6 +49,24 @@ function selectedDownload(json) {
   return requested && typeof requested === 'object' ? requested : json;
 }
 
+export function mediaInfo(json, quality) {
+  const selected = selectedDownload(json);
+  const positive = value => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : null;
+  const formats = (json.formats ?? []).filter(format => format.ext === 'm4a'
+    && format.vcodec === 'none' && String(format.acodec).startsWith('mp4a'));
+  const choices = new Set(formats.map(format => positive(format.abr)).filter(Boolean));
+  return {
+    container: cleanText(selected.ext, 16) || null,
+    codec: cleanText(selected.acodec, 64) || null,
+    bitrateKbps: positive(selected.abr),
+    sampleRateHz: positive(selected.asr),
+    formatId: cleanText(selected.format_id, 64) || null,
+    selectedMode: quality,
+    effectiveMode: choices.size === 1 ? 'automatic' : quality,
+    availableQualityCount: choices.size || null,
+  };
+}
+
 function cleanText(value, maximum = 500) {
   return typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/gu, '').slice(0, maximum) : '';
 }
@@ -188,6 +206,7 @@ export class YtDlpClient {
           : null,
         ext: cleanText(selected.ext || json.ext, 16) || 'm4a',
         acodec: cleanText(selected.acodec || json.acodec, 64),
+        mediaInfo: mediaInfo(json, quality),
         resolution: 'fresh',
       };
     } catch (error) {
@@ -219,16 +238,20 @@ export class YtDlpClient {
         '--fragment-retries', '5',
         '--extractor-retries', '3',
         '--format', formatSelectors[normalizedQuality],
+        '--print', 'after_move:%()j',
         '--output', destinationPath,
         videoUrl(id),
       ];
-      await this.#runner(this.#binaryPath, args, { timeoutMs: this.#downloadTimeoutMs });
+      const result = await this.#runner(this.#binaryPath, args, { timeoutMs: this.#downloadTimeoutMs });
       const stat = await fs.stat(destinationPath);
       if (!stat.isFile() || stat.size < 16_384) {
         throw new ProcessError('yt-dlp produced an incomplete audio file.');
       }
       ok = true;
-      return { videoId: id, quality: normalizedQuality, size: stat.size };
+      let downloadedInfo = null;
+      try { downloadedInfo = mediaInfo(JSON.parse(result.stdout.trim().split(/\r?\n/u).at(-1)), normalizedQuality); }
+      catch { /* Older extractors may not report metadata. Never invent it. */ }
+      return { videoId: id, quality: normalizedQuality, size: stat.size, mediaInfo: downloadedInfo };
     } catch (error) {
       if (error instanceof ProcessError) {
         throw new HttpError(502, 'download_failed', extractorFailureMessage(error.stderr), { cause: error });

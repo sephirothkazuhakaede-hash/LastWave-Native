@@ -127,10 +127,15 @@ struct CapyAmbientBackdrop: View, Equatable {
           .frame(width: geometry.size.width, height: geometry.size.height)
           .clipped()
         }
-        .ignoresSafeArea()
         .allowsHitTesting(false)
-        .accessibilityHidden(true)
         .drawingGroup(opaque: true, colorMode: .linear)
+        // Expand the completed decorative layer, including its compositing
+        // surface. Foreground siblings keep their normal safe-area layout.
+        .ignoresSafeArea(.container, edges: .all)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Ambient background")
+        .accessibilityIdentifier("capyflow-background")
+        .accessibilityHidden(!ProcessInfo.processInfo.arguments.contains("--layout-fixture"))
     }
 }
 

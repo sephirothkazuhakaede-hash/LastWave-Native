@@ -7,6 +7,12 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
     let artist: String
     let duration: Double?
     let artworkURL: URL?
+    var downloadQuality: String? = nil
+    var mediaInfo: AudioMediaInfo? = nil
+    var albumID: String? = nil
+    var musicVideoType: String? = nil
+    var mediaID: String? = nil
+    var playableID: String { mediaID ?? id }
     init(id: String, title: String, artist: String, duration: Double? = nil, artworkURL: URL? = nil) {
         self.id = id; self.title = title; self.artist = artist; self.duration = duration; self.artworkURL = artworkURL
     }
@@ -15,7 +21,14 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
     }
 
     func withDuration(_ correctedDuration: Double) -> Track {
-        Track(id: id, title: title, artist: artist, duration: correctedDuration, artworkURL: artworkURL)
+        var copy = self
+        copy = Track(id: id, title: title, artist: artist, duration: correctedDuration, artworkURL: artworkURL)
+        copy.downloadQuality = downloadQuality
+        copy.mediaInfo = mediaInfo
+        copy.albumID = albumID
+        copy.musicVideoType = musicVideoType
+        copy.mediaID = mediaID
+        return copy
     }
 }
 
@@ -30,9 +43,9 @@ struct Album: Identifiable, Hashable {
 
 enum AudioQuality: String, CaseIterable, Identifiable, Sendable {
     case dataSaver = "Data Saver"
-    case automatic = "Automatic"
-    case high = "High"
+    case automatic = "Best Available"
     var id: String { rawValue }
+    var backendValue: String { self == .dataSaver ? "dataSaver" : "automatic" }
 }
 
 private func upgradedArtworkURL(_ url: URL?) -> URL? {
@@ -65,6 +78,7 @@ actor Catalog {
         let downloadURL: URL?
         let usesBackend: Bool
         let source: Source
+        let mediaInfo: AudioMediaInfo?
 
         init(
             url: URL,
@@ -73,7 +87,8 @@ actor Catalog {
             requestHeaders: [String: String] = [:],
             downloadURL: URL? = nil,
             usesBackend: Bool = false,
-            source: Source = .directFallback
+            source: Source = .directFallback,
+            mediaInfo: AudioMediaInfo? = nil
         ) {
             self.url = url
             self.duration = duration
@@ -82,6 +97,7 @@ actor Catalog {
             self.downloadURL = downloadURL
             self.usesBackend = usesBackend
             self.source = source
+            self.mediaInfo = mediaInfo
         }
     }
     private struct ClientConfig {
@@ -95,6 +111,12 @@ actor Catalog {
     private let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148"
     private var streamCache: [String: (ResolvedStream, Date)] = [:]
     private var durationCache: [String: Double] = [:]
+    private var songMappings: [String: Track] = {
+        guard let data = UserDefaults.standard.data(forKey: "capyflow.albumAudioMappings.v1") else { return [:] }
+        return (try? JSONDecoder().decode([String: Track].self, from: data)) ?? [:]
+    }()
+    private var songMappingTasks: [String: Task<Track, Error>] = [:]
+    private var cachedClientConfig: (ClientConfig, Date)?
     private var resolutionTasks: [String: Task<ResolvedStream, Error>] = [:]
 
     func search(_ query: String) async throws -> [Track] {
@@ -147,7 +169,14 @@ actor Catalog {
                         let duration = columns.flatMap(runs).compactMap { ($0["text"] as? String).flatMap(parseDuration) }.first
                         let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
                         let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
-                        results.append(Track(id: id, title: title, artist: artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:))))
+                        var track = Track(id: id, title: title, artist: artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:)))
+                        track.musicVideoType = Self.stringValue("musicVideoType", in: renderer)
+                        track.albumID = columns.dropFirst().flatMap(runs).compactMap { run in
+                            let endpoint = run["navigationEndpoint"] as? [String: Any]
+                            let browse = endpoint?["browseEndpoint"] as? [String: Any]
+                            return browse?["browseId"] as? String
+                        }.first { $0.hasPrefix("MPRE") }
+                        results.append(track)
                     }
                 }
                 for value in object.values { walk(value) }
@@ -220,7 +249,10 @@ actor Catalog {
                     let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
                     let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
                     if let title = values.first {
-                        tracks.append(Track(id: id, title: title, artist: album.artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:)) ?? album.artworkURL))
+                        var track = Track(id: id, title: title, artist: album.artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:)) ?? album.artworkURL)
+                        track.albumID = album.id
+                        track.musicVideoType = Self.stringValue("musicVideoType", in: renderer)
+                        tracks.append(track)
                     }
                 }
                 object.values.forEach(walk)
@@ -331,6 +363,9 @@ actor Catalog {
     }
 
     private func loadClientConfig() async -> ClientConfig {
+        if let cachedClientConfig, Date().timeIntervalSince(cachedClientConfig.1) < 300 {
+            return cachedClientConfig.0
+        }
         do {
             var request = URLRequest(url: URL(string: "https://music.youtube.com/")!)
             request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
@@ -340,13 +375,15 @@ actor Catalog {
                 return ClientConfig(apiKey: fallbackKey, version: fallbackVersion, visitorData: nil)
             }
             let html = String(decoding: data, as: UTF8.self)
-            return ClientConfig(
+            let config = ClientConfig(
                 apiKey: configValue("INNERTUBE_API_KEY", in: html) ?? fallbackKey,
                 version: configValue("INNERTUBE_CONTEXT_CLIENT_VERSION", in: html)
                     ?? configValue("INNERTUBE_CLIENT_VERSION", in: html)
                     ?? fallbackVersion,
                 visitorData: configValue("VISITOR_DATA", in: html)
             )
+            cachedClientConfig = (config, Date())
+            return config
         } catch {
             return ClientConfig(apiKey: fallbackKey, version: fallbackVersion, visitorData: nil)
         }
@@ -375,15 +412,51 @@ actor Catalog {
         try await resolvedStream(for: track, quality: quality, preferRemote: preferRemote).url
     }
 
-    func resolvedStream(for track: Track, quality: AudioQuality = .automatic, preferRemote: Bool = false) async throws -> ResolvedStream {
-        let cacheKey = track.id + ":" + quality.rawValue + ":" + BackendConfiguration.cacheDiscriminator
+    private static func stringValue(_ key: String, in node: Any) -> String? {
+        if let object = node as? [String: Any] {
+            if let value = object[key] as? String { return value }
+            for value in object.values { if let found = stringValue(key, in: value) { return found } }
+        } else if let array = node as? [Any] {
+            for value in array { if let found = stringValue(key, in: value) { return found } }
+        }
+        return nil
+    }
+
+    func normalizedTrack(_ track: Track) async throws -> Track {
+        guard track.mediaID == nil, track.musicVideoType != "MUSIC_VIDEO_TYPE_ATV",
+              track.albumID != nil || track.musicVideoType == "MUSIC_VIDEO_TYPE_OMV" else { return track }
+        if let mapped = songMappings[track.id] { return mapped }
+        if let task = songMappingTasks[track.id] { return try await task.value }
+        let task = Task { () throws -> Track in
+            let candidates = try await self.search(track.title + " " + track.artist)
+            guard let song = AlbumAudioIdentity.bestMatch(for: track, candidates: candidates) else {
+                throw WaveError.message("The album recording could not be verified. Try finding this song in Search instead.")
+            }
+            var mapped = track.withDuration(song.duration ?? track.duration ?? 0)
+            mapped.mediaID = song.id
+            mapped.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
+            return mapped
+        }
+        songMappingTasks[track.id] = task
+        defer { songMappingTasks.removeValue(forKey: track.id) }
+        let mapped = try await task.value
+        songMappings[track.id] = mapped
+        if let data = try? JSONEncoder().encode(songMappings) {
+            UserDefaults.standard.set(data, forKey: "capyflow.albumAudioMappings.v1")
+        }
+        return mapped
+    }
+
+    func resolvedStream(for requestedTrack: Track, quality: AudioQuality = .automatic, preferRemote: Bool = false) async throws -> ResolvedStream {
+        let track = try await normalizedTrack(requestedTrack)
+        let cacheKey = track.id + ":" + track.playableID + ":" + quality.rawValue + ":" + BackendConfiguration.cacheDiscriminator
         if let cached = streamCache[cacheKey], cacheIsUsable(cached) { return cached.0 }
         streamCache.removeValue(forKey: cacheKey)
         if let existing = resolutionTasks[cacheKey] { return try await existing.value }
         let task = Task { () throws -> ResolvedStream in
             if !preferRemote,
                let backend = await BackendClient.shared.resolveStream(
-                    videoID: track.id,
+                    videoID: track.playableID,
                     quality: quality,
                     knownDuration: self.durationCache[track.id] ?? track.duration
                ) {
@@ -394,7 +467,8 @@ actor Catalog {
                     requestHeaders: backend.requestHeaders,
                     downloadURL: backend.downloadURL,
                     usesBackend: true,
-                    source: backend.source == .cacheHit ? .msiCacheHit : .msiNewExtraction
+                    source: backend.source == .cacheHit ? .msiCacheHit : .msiNewExtraction,
+                    mediaInfo: backend.mediaInfo
                 )
             }
             do {
@@ -403,9 +477,9 @@ actor Catalog {
                 // fallback, and a failed AVPlayer item retries in the opposite order.
                 let youtube: YouTube
                 if preferRemote {
-                    youtube = YouTube(videoID: track.id, methods: [.remote, .local])
+                    youtube = YouTube(videoID: track.playableID, methods: [.remote, .local])
                 } else {
-                    youtube = YouTube(videoID: track.id, methods: [.local, .remote])
+                    youtube = YouTube(videoID: track.playableID, methods: [.local, .remote])
                 }
                 let streams = try await youtube.streams
                 let audio = streams.filterAudioOnly().filter(\.isNativelyPlayable)
@@ -422,11 +496,24 @@ actor Catalog {
                 let authoritativeDuration = self.durationCache[track.id]
                 let knownDuration = authoritativeDuration
                     ?? track.duration.flatMap { $0 > 0 ? $0 : nil }
+                let usable = preferred.isEmpty ? audio : preferred
+                let bitrateChoices = Set(usable.compactMap { $0.averageBitrate ?? $0.bitrate }.filter { $0 > 0 })
+                let receivedBitrate = stream.videoCodec == nil ? (stream.averageBitrate ?? stream.bitrate) : nil
                 return ResolvedStream(
                     url: stream.url,
                     duration: knownDuration,
                     durationIsAuthoritative: authoritativeDuration != nil,
-                    source: .directFallback
+                    source: .directFallback,
+                    mediaInfo: AudioMediaInfo(
+                        container: stream.fileExtension.rawValue,
+                        codec: stream.audioCodec?.rawValue,
+                        bitrateKbps: receivedBitrate.map { Double($0) / 1000 },
+                        sampleRateHz: nil,
+                        formatId: nil,
+                        selectedMode: quality.backendValue,
+                        effectiveMode: bitrateChoices.count == 1 ? "automatic" : quality.backendValue,
+                        availableQualityCount: bitrateChoices.isEmpty ? nil : bitrateChoices.count
+                    )
                 )
             } catch let error as YouTubeKitError {
                 switch error {
@@ -455,10 +542,15 @@ actor Catalog {
     }
 
     func invalidateStream(for track: Track, quality: AudioQuality) {
-        let key = track.id + ":" + quality.rawValue + ":" + BackendConfiguration.cacheDiscriminator
-        streamCache.removeValue(forKey: key)
-        resolutionTasks[key]?.cancel()
-        resolutionTasks.removeValue(forKey: key)
+        let suffix = ":" + quality.rawValue + ":" + BackendConfiguration.cacheDiscriminator
+        let keys = Set(streamCache.keys).union(resolutionTasks.keys).filter {
+            $0.hasPrefix(track.id + ":") && $0.hasSuffix(suffix)
+        }
+        for key in keys {
+            streamCache.removeValue(forKey: key)
+            resolutionTasks[key]?.cancel()
+            resolutionTasks.removeValue(forKey: key)
+        }
     }
 
     private func cacheIsUsable(_ cached: (ResolvedStream, Date)) -> Bool {

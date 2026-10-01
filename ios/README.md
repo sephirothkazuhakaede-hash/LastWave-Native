@@ -1,4 +1,4 @@
-# CapyFlow iOS 0.4.2
+# CapyFlow iOS 0.4.3
 
 CapyFlow is a native SwiftUI music client with YouTube Music search, song and
 album results, playlists, synchronized lyrics, background audio, lock-screen

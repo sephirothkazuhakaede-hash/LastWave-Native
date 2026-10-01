@@ -98,6 +98,7 @@ struct DownloadBatchSummary: Equatable {
     @Published var audioQuality: AudioQuality {
         didSet { UserDefaults.standard.set(audioQuality.rawValue, forKey: "audioQuality") }
     }
+    @Published private(set) var currentAudioInfo: AudioMediaInfo?
     let catalog = Catalog()
     private let lyricsService = LyricsService()
     private let player = AVPlayer()
@@ -115,6 +116,8 @@ struct DownloadBatchSummary: Equatable {
     private var endObserver: NSObjectProtocol?
     private var statusObserver: NSKeyValueObservation?
     private var interruptionObserver: NSObjectProtocol?
+    private var routeObserver: NSObjectProtocol?
+    @Published private(set) var audioOutputName = "iPhone"
     private var folder: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Offline", isDirectory: true)
     }
@@ -122,7 +125,15 @@ struct DownloadBatchSummary: Equatable {
     private var playlistArtworkFolder: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("PlaylistArtwork", isDirectory: true)
     }
-    func localURL(_ track: Track) -> URL { folder.appendingPathComponent(track.id + ".m4a") }
+    func localURL(_ track: Track) -> URL {
+        let suffix = track.downloadQuality.map { "." + $0 } ?? ""
+        return folder.appendingPathComponent(track.playableID + suffix + ".m4a")
+    }
+
+    private func localCopy(for track: Track) -> Track? {
+        downloads.first { $0.id == track.id && $0.playableID == track.playableID && $0.downloadQuality == audioQuality.backendValue
+            && FileManager.default.fileExists(atPath: localURL($0).path) }
+    }
 
     init() {
         autoplayEnabled = UserDefaults.standard.object(forKey: "autoplayEnabled") as? Bool ?? true
@@ -149,7 +160,13 @@ struct DownloadBatchSummary: Equatable {
         if let data = UserDefaults.standard.data(forKey: "importedPlaylists"),
            let saved = try? JSONDecoder().decode([ImportedPlaylist].self, from: data) {
             playlists = saved.map {
-                ImportedPlaylist(id: $0.id, name: $0.name, tracks: $0.tracks.map(canonicalized))
+                let albumID = $0.id.hasPrefix("album:") ? String($0.id.dropFirst(6)) : nil
+                let tracks = $0.tracks.map { original -> Track in
+                    var track = original
+                    if track.albumID == nil { track.albumID = albumID }
+                    return canonicalized(track)
+                }
+                return ImportedPlaylist(id: $0.id, name: $0.name, tracks: tracks)
             }
         }
         if let data = UserDefaults.standard.data(forKey: "recentTracks"),
@@ -208,6 +225,23 @@ struct DownloadBatchSummary: Equatable {
                 if type == AVAudioSession.InterruptionType.began.rawValue { self?.player.pause() }
             }
         }
+        audioOutputName = Self.outputName()
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
+            Task { @MainActor in
+                guard let self else { return }
+                self.audioOutputName = Self.outputName()
+                if AudioRoutePolicy.shouldPause(reason: reason) {
+                    self.player.pause()
+                    self.playing = false
+                    self.publishNowPlaying()
+                }
+                // iOS reroutes the existing player. Do not replace its item,
+                // resolve a stream, or seek when selecting another output.
+            }
+        }
         let commands = MPRemoteCommandCenter.shared()
         commands.playCommand.addTarget { [weak self] _ in Task { @MainActor in self?.player.play() }; return .success }
         commands.pauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.player.pause() }; return .success }
@@ -222,10 +256,18 @@ struct DownloadBatchSummary: Equatable {
         }
     }
 
-    func play(_ track: Track, recordHistory: Bool = true, recovering: Bool = false) async {
+    func play(_ requestedTrack: Track, recordHistory: Bool = true, recovering: Bool = false) async {
         let token = UUID(); generation = token
         loading = true; error = nil
         player.pause()
+        let track: Track
+        do { track = try await catalog.normalizedTrack(requestedTrack) }
+        catch { if token == generation { loading = false; error = error.localizedDescription }; return }
+        guard token == generation else { return }
+        if track.playableID != requestedTrack.id {
+            lastPersistedDuration.removeValue(forKey: track.id)
+            lastPersistedDurationAuthority.removeValue(forKey: track.id)
+        }
         if !recovering { playbackRetryCount = 0 }
         if !recovering, recordHistory, let current, current.id != track.id {
             playbackHistory.append(current)
@@ -258,11 +300,14 @@ struct DownloadBatchSummary: Equatable {
             let url: URL
             var resolvedHeaders: [String: String] = [:]
             var usedBackend = false
-            let isLocal = FileManager.default.fileExists(atPath: localURL(track).path)
-            if isLocal { url = localURL(track) }
+            let saved = localCopy(for: track)
+            let isLocal = saved != nil
+            currentAudioInfo = nil
+            if let saved { url = localURL(saved); currentAudioInfo = saved.mediaInfo }
             else {
                 let resolved = try await catalog.resolvedStream(for: track, quality: audioQuality, preferRemote: recovering)
                 url = resolved.url
+                currentAudioInfo = resolved.mediaInfo
                 if let resolvedDuration = resolved.duration, resolvedDuration > 0 {
                     let playableDuration = durationCappedByKnownTrack(
                         resolvedDuration,
@@ -279,8 +324,9 @@ struct DownloadBatchSummary: Equatable {
                 usedBackend = resolved.usesBackend
             }
             guard token == generation else { return }
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+            try AudioRoutePolicy.configure(AVAudioSession.sharedInstance())
             try AVAudioSession.sharedInstance().setActive(true)
+            audioOutputName = Self.outputName()
             let item: AVPlayerItem
             if isLocal {
                 item = AVPlayerItem(url: url)
@@ -400,17 +446,20 @@ struct DownloadBatchSummary: Equatable {
             }
         }
     }
-    func isDownloaded(_ track: Track) -> Bool { downloads.contains { $0.id == track.id } }
+    func isDownloaded(_ track: Track) -> Bool { localCopy(for: track) != nil }
     func isPlaylistDownloaded(_ playlist: ImportedPlaylist) -> Bool {
         !playlist.tracks.isEmpty && playlist.tracks.allSatisfy { isDownloaded($0) }
     }
     @discardableResult func download(
-        _ track: Track,
+        _ requestedTrack: Track,
         reportError: Bool = true,
         preferRemote: Bool = false,
         attemptNumber: Int = 1,
         startedAt: Date = Date()
     ) async -> Bool {
+        let track: Track
+        do { track = try await catalog.normalizedTrack(requestedTrack) }
+        catch { if reportError { self.error = error.localizedDescription }; return false }
         if isDownloaded(track) {
             downloadStates[track.id] = TrackDownloadState(
                 stage: .downloaded, progress: 1, source: "Offline copy", attempt: attemptNumber,
@@ -439,8 +488,9 @@ struct DownloadBatchSummary: Equatable {
         error = nil
         defer { downloading.remove(track.id); downloadProgress.removeValue(forKey: track.id) }
         var usedBackend = false
+        let downloadQuality = audioQuality
         do {
-            let resolved = try await catalog.resolvedStream(for: track, quality: audioQuality, preferRemote: preferRemote)
+            let resolved = try await catalog.resolvedStream(for: track, quality: downloadQuality, preferRemote: preferRemote)
             usedBackend = resolved.usesBackend
             var sourceLabel: String
             switch resolved.source {
@@ -494,7 +544,14 @@ struct DownloadBatchSummary: Equatable {
                 try? FileManager.default.removeItem(at: temporary)
                 throw WaveError.message("The downloaded audio was incomplete. Please retry.")
             }
-            let target = localURL(track)
+            var downloadTrack = track
+            downloadTrack.downloadQuality = downloadQuality.backendValue
+            downloadTrack.mediaInfo = resolved.mediaInfo
+            if let value = http.value(forHTTPHeaderField: "X-CapyFlow-Media-Info"),
+               let data = value.data(using: .utf8) {
+                downloadTrack.mediaInfo = try? JSONDecoder().decode(AudioMediaInfo.self, from: data)
+            }
+            let target = localURL(downloadTrack)
             downloadStates[track.id] = TrackDownloadState(
                 stage: .saving, progress: 1, source: sourceLabel, attempt: attemptNumber,
                 elapsedSeconds: Date().timeIntervalSince(startedAt), detail: nil
@@ -507,18 +564,17 @@ struct DownloadBatchSummary: Equatable {
             // Prefer a consensus over AVAsset alone. A malformed adaptive file
             // can report several minutes of empty tail; the backend header and
             // YouTube Music row duration let us reject that high outlier.
-            let exactDuration = consensusDuration([
-                localSeconds,
-                headerDuration,
-                resolved.duration,
-                track.duration
-            ])
+            let exactDuration = [headerDuration, resolved.durationIsAuthoritative ? resolved.duration : nil, localSeconds]
+                .compactMap { $0 }.first { $0.isFinite && $0 > 0 }
             let savedTrack: Track
             if let exact = exactDuration {
                 adoptAuthoritativeDuration(exact, for: track.id, source: .localFile)
-                savedTrack = track.withDuration(exact)
+                savedTrack = downloadTrack.withDuration(exact)
             } else {
-                savedTrack = track
+                savedTrack = downloadTrack
+            }
+            for previous in downloads where previous.id == track.id && localURL(previous) != target {
+                try? FileManager.default.removeItem(at: localURL(previous))
             }
             downloads.removeAll { $0.id == track.id }
             downloads.append(savedTrack)
@@ -786,6 +842,11 @@ struct DownloadBatchSummary: Equatable {
             try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
         } catch { self.error = error.localizedDescription }
     }
+    private static func outputName() -> String {
+        let names = AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portName)
+        return names.isEmpty ? "iPhone" : names.joined(separator: ", ")
+    }
+
     private func publishNowPlaying() {
         guard let current else { return }
         var info: [String: Any] = [
@@ -892,14 +953,10 @@ struct DownloadBatchSummary: Equatable {
         }
     }
 
-    /// YouTube Music list durations are precise enough to reject the known
-    /// multi-minute adaptive-stream tail bug while still tolerating generous
-    /// metadata differences, encoder padding, and one-second display rounding.
+    /// Never disguise a mismatched recording by clamping its actual duration.
+    /// Album source identity is corrected before resolving or downloading it.
     private func durationCappedByKnownTrack(_ measured: Double, knownDuration: Double?) -> Double {
-        guard measured.isFinite, measured > 0,
-              let knownDuration, knownDuration.isFinite, knownDuration > 0 else { return measured }
-        let tolerance = max(30, knownDuration * 0.20)
-        return measured > knownDuration + tolerance ? knownDuration : measured
+        measured.isFinite && measured > 0 ? measured : (knownDuration ?? 0)
     }
 
     /// Selects the lower median so a single implausibly long container duration

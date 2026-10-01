@@ -10,6 +10,11 @@ import GoogleSignIn
     @StateObject private var social: SocialStore
     init() {
         FirebaseApp.configure()
+        let navigationAppearance = UINavigationBarAppearance()
+        navigationAppearance.configureWithTransparentBackground()
+        UINavigationBar.appearance().standardAppearance = navigationAppearance
+        UINavigationBar.appearance().scrollEdgeAppearance = navigationAppearance
+        UINavigationBar.appearance().compactAppearance = navigationAppearance
         let player = WavePlayer()
         let auth = AuthSession()
         let social = SocialStore()
@@ -25,6 +30,7 @@ import GoogleSignIn
     var body: some Scene {
         WindowGroup {
             appContent
+                .background { WaveBackdrop() }
                 .environmentObject(player)
                 .environmentObject(auth)
                 .environmentObject(social)
@@ -182,6 +188,9 @@ struct RootView: View {
             CapyDock(selection: $tab) { showPlayer = true }
                 .padding(.horizontal, 12)
         }
+        // Attach the window backdrop outside the dock's safe-area inset so
+        // the inset cannot reduce its drawing bounds to the content region.
+        .background { WaveBackdrop() }
         .overlay {
             if showProfileDrawer {
                 GeometryReader { geometry in
@@ -788,6 +797,13 @@ private struct AccountSheet: View {
                                 }
                                 .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black).disabled(auth.working)
                             }
+                            NavigationLink {
+                                AudioQualitySettingsView()
+                            } label: {
+                                Label("Audio Quality", systemImage: "waveform")
+                                    .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.bordered)
                             NavigationLink {
                                 BackendSettingsView()
                             } label: {
@@ -1786,6 +1802,7 @@ struct PlayerView: View {
     @State private var isScrubbing = false
     @State private var showLyrics: Bool
     @State private var showQueue = false
+    @State private var showAudioInfo = false
 
     init(showLyricsInitially: Bool = false) {
         _showLyrics = State(initialValue: showLyricsInitially)
@@ -1812,13 +1829,13 @@ struct PlayerView: View {
                         Spacer()
                         VStack(spacing: 2) {
                             Text("NOW PLAYING").font(.caption2.weight(.black)).tracking(2)
-                            Text(player.audioQuality.rawValue.uppercased()).font(.caption2).foregroundStyle(CapyColor.secondaryText)
+                            Text(player.audioOutputName).font(.caption2)
+                                .foregroundStyle(CapyColor.secondaryText).lineLimit(1)
                         }
                         Spacer()
+                        AudioOutputPicker().frame(width: 44, height: 44)
                         Menu {
-                            Picker("Audio quality", selection: $player.audioQuality) {
-                                ForEach(AudioQuality.allCases) { quality in Text(quality.rawValue).tag(quality) }
-                            }
+                            Button("Audio Info / Current Quality") { showAudioInfo = true }
                             Toggle("Autoplay related songs", isOn: $player.autoplayEnabled)
                             Divider()
                             Button("Clear queue", role: .destructive) { player.queue.removeAll() }
@@ -1916,6 +1933,11 @@ struct PlayerView: View {
             scrubPosition = 0
         }
         .sheet(isPresented: $showQueue) { QueueSheet().presentationDetents([.medium, .large]) }
+        .alert("Audio Info / Current Quality", isPresented: $showAudioInfo) {
+            Button("Done", role: .cancel) {}
+        } message: {
+            Text(player.currentAudioInfo?.description ?? "Media details unavailable")
+        }
     }
     private func time(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "0:00" }

@@ -1,0 +1,13 @@
+{
+  "name": "capyflow-security-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "firebase emulators:exec --config ../firebase.json --project demo-capyflow --only firestore \"node --test test/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "5.0.2",
+    "firebase": "12.19.0",
+    "firebase-tools": "15.32.1"
+  }
+}

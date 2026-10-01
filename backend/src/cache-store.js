@@ -15,6 +15,7 @@ function publicMetadata(metadata) {
     title: typeof metadata.title === 'string' ? metadata.title.slice(0, 500) : '',
     artist: typeof metadata.artist === 'string' ? metadata.artist.slice(0, 500) : '',
     duration: Number.isFinite(metadata.duration) ? metadata.duration : null,
+    mediaInfo: metadata.mediaInfo ?? null,
     size: Number.isSafeInteger(metadata.size) ? metadata.size : null,
     createdAt: metadata.createdAt,
     accessedAt: metadata.accessedAt,
@@ -149,6 +150,8 @@ export class CacheStore {
         title: seedMetadata.title || produced?.title || '',
         artist: seedMetadata.artist || produced?.artist || '',
         duration: seedMetadata.duration ?? produced?.duration ?? null,
+        // The completed file's extractor metadata wins over an earlier resolve.
+        mediaInfo: produced?.mediaInfo ?? null,
         size: stat.size,
         createdAt: timestamp,
         accessedAt: timestamp,

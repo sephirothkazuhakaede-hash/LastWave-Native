@@ -24,7 +24,8 @@ service cloud.firestore {
     }
 
     function usernameCooldownElapsed(data) {
-      return !data.keys().hasAny(['usernameChangedAt']) ||
+      return data.get('usernameIsGenerated', false) == true ||
+        !data.keys().hasAny(['usernameChangedAt']) ||
         request.time >= data.usernameChangedAt + duration.value(14, 'd');
     }
 
@@ -58,15 +59,21 @@ service cloud.firestore {
         getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid &&
         (
           (
-            request.resource.data.username == resource.data.username &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'bio', 'avatarURL', 'avatarData', 'updatedAt'])
+            request.resource.data.username == resource.data.get('username', '') &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usernameKey', 'usernameIsGenerated', 'displayName', 'bio', 'avatarURL', 'avatarData', 'updatedAt']) &&
+            request.resource.data.get('usernameIsGenerated', false) == resource.data.get('usernameIsGenerated', false)
           ) ||
           (
-            request.resource.data.username != resource.data.username &&
+            !validUsername(resource.data.get('username', '')) &&
+            request.resource.data.usernameIsGenerated == true
+          ) ||
+          (
+            request.resource.data.username != resource.data.get('username', '') &&
             usernameCooldownElapsed(resource.data) &&
             request.resource.data.usernameIsGenerated == false &&
             request.resource.data.usernameChangedAt == request.time &&
-            !existsAfter(/databases/$(database)/documents/usernames/$(resource.data.username))
+            (resource.data.get('username', '') == '' ||
+              !existsAfter(/databases/$(database)/documents/usernames/$(resource.data.username)))
           )
         );
       allow delete: if owns(uid) &&
@@ -111,11 +118,15 @@ service cloud.firestore {
         request.resource.data.memberIDs == [request.auth.uid];
       allow update: if signedIn() &&
         request.resource.data.ownerID == resource.data.ownerID &&
+        request.resource.data.memberIDs is list &&
+        resource.data.ownerID in request.resource.data.memberIDs &&
         (
           request.auth.uid == resource.data.ownerID ||
           (
             isMember(resource.data) &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tracks', 'updatedAt'])
+            (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['tracks', 'updatedAt']) ||
+              (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIDs', 'updatedAt']) &&
+                request.resource.data.memberIDs == resource.data.memberIDs.removeAll([request.auth.uid])))
           )
         );
       allow delete: if signedIn() && resource.data.ownerID == request.auth.uid;

@@ -182,12 +182,16 @@ enum SocialConnectionState: Equatable {
     private var userID: String?
     private var boundUser: FirebaseAuth.User?
     private var listeners: [ListenerRegistration] = []
+    private var followingListeners: [String: ListenerRegistration] = [:]
+    var currentUserID: String? { userID }
     private var setupTask: Task<Void, Never>?
 
     func bind(to user: FirebaseAuth.User?) {
         setupTask?.cancel()
         listeners.forEach { $0.remove() }
         listeners.removeAll()
+        followingListeners.values.forEach { $0.remove() }
+        followingListeners.removeAll()
         profile = nil
         following = []
         sharedPlaylists = []
@@ -223,32 +227,32 @@ enum SocialConnectionState: Equatable {
         }
     }
 
-    func saveProfile(
+    @discardableResult func saveProfile(
         username rawUsername: String,
         displayName rawDisplayName: String,
         bio rawBio: String,
         avatarData newAvatarData: Data? = nil
-    ) async {
-        guard let uid = userID else { return }
+    ) async -> Bool {
+        guard let uid = userID else { error = "Sign in before saving your profile."; return false }
         let username = UsernamePolicy.key(from: rawUsername)
         let displayName = rawDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let bio = String(rawBio.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
         if let validationMessage = UsernamePolicy.validationMessage(for: rawUsername) {
             usernameAvailability = .invalid(validationMessage)
             error = validationMessage
-            return
+            return false
         }
-        guard !displayName.isEmpty else { error = "Add a display name first."; return }
-        guard displayName.count <= 60 else { error = "Display names can be up to 60 characters."; return }
+        guard !displayName.isEmpty else { error = "Add a display name first."; return false }
+        guard displayName.count <= 60 else { error = "Display names can be up to 60 characters."; return false }
         let avatarData = newAvatarData ?? profile?.avatarData
         guard avatarData?.count ?? 0 <= 131_072 else {
             error = "That profile photo is still too large. Choose another image."
-            return
+            return false
         }
         if username != profile?.username, let nextChange = nextUsernameChangeDate, nextChange > Date() {
             usernameAvailability = .cooldown(until: nextChange)
             error = usernameAvailability.message
-            return
+            return false
         }
         working = true; error = nil
         defer { working = false }
@@ -262,16 +266,18 @@ enum SocialConnectionState: Equatable {
                 avatarData: avatarData
             )
             usernameAvailability = .current(username)
+            return true
         } catch {
             if isSocialTransactionError(error, code: .usernameTaken) {
                 usernameAvailability = .taken(username)
             }
             handleSocialError(error)
+            return false
         }
     }
 
     var nextUsernameChangeDate: Date? {
-        guard let changedAt = profile?.usernameChangedAt else { return nil }
+        guard profile?.usernameIsGenerated != true, let changedAt = profile?.usernameChangedAt else { return nil }
         return changedAt.addingTimeInterval(UsernamePolicy.changeCooldown)
     }
 
@@ -296,7 +302,7 @@ enum SocialConnectionState: Equatable {
 
         usernameAvailability = .checking(username)
         do {
-            let snapshot = try await db.collection("usernames").document(username).getDocument()
+            let snapshot = try await db.collection("usernames").document(username).getDocument(source: .server)
             guard !Task.isCancelled else { return usernameAvailability }
             let owner = snapshot.data()?["uid"] as? String
             let state: UsernameAvailability = owner == nil || owner == userID ? .available(username) : .taken(username)
@@ -376,10 +382,20 @@ enum SocialConnectionState: Equatable {
             return nil
         }
         let key = "capyflow.cloudPlaylist.\(uid).\(playlist.id)"
-        let savedPlaylistID = UserDefaults.standard.string(forKey: key)
+        let savedPlaylistID = playlist.id.hasPrefix("cloud:") ? String(playlist.id.dropFirst(6))
+            : UserDefaults.standard.string(forKey: key)
         let playlistID = savedPlaylistID ?? UUID().uuidString
         let ref = db.collection("playlists").document(playlistID)
         do {
+            if savedPlaylistID != nil {
+                let existing = try await ref.getDocument(source: .server)
+                if existing.exists {
+                    guard existing.data()?["ownerID"] as? String == uid else {
+                        throw SocialError.message("Only the playlist owner can invite collaborators.")
+                    }
+                    return playlistID
+                }
+            }
             var data: [String: Any] = [
                 "sourceID": playlist.id,
                 "name": playlist.name,
@@ -388,10 +404,8 @@ enum SocialConnectionState: Equatable {
                 "tracks": playlist.tracks.map(\.firestoreData),
                 "updatedAt": FieldValue.serverTimestamp()
             ]
-            if savedPlaylistID == nil {
-                data["memberIDs"] = [uid]
-                data["createdAt"] = FieldValue.serverTimestamp()
-            }
+            data["memberIDs"] = [uid]
+            data["createdAt"] = FieldValue.serverTimestamp()
             try await ref.setData(data, merge: true)
             UserDefaults.standard.set(playlistID, forKey: key)
             return playlistID
@@ -401,13 +415,13 @@ enum SocialConnectionState: Equatable {
         }
     }
 
-    func invite(username rawUsername: String, to playlist: ImportedPlaylist) async {
+    func invite(username rawUsername: String, to playlist: ImportedPlaylist) async -> String? {
         let username = UsernamePolicy.key(from: rawUsername)
         guard UsernamePolicy.isValid(username) else {
             error = UsernamePolicy.validationMessage(for: rawUsername) ?? "Enter a valid username."
-            return
+            return nil
         }
-        guard let playlistID = await publish(playlist) else { return }
+        guard let playlistID = await publish(playlist) else { return nil }
         do {
             let reservation = try await db.collection("usernames").document(username).getDocument()
             guard let inviteeID = reservation.data()?["uid"] as? String else {
@@ -417,17 +431,58 @@ enum SocialConnectionState: Equatable {
                 "memberIDs": FieldValue.arrayUnion([inviteeID]),
                 "updatedAt": FieldValue.serverTimestamp()
             ])
-        } catch { handleSocialError(error) }
+            return playlistID
+        } catch { handleSocialError(error); return nil }
     }
 
     func add(_ track: Track, to playlist: SharedPlaylist) async {
-        guard let uid = userID, playlist.memberIDs.contains(uid) else { return }
+        await editSharedTracks(playlistID: playlist.id, adding: track, removingID: nil)
+    }
+
+    func remove(_ track: Track, from playlist: SharedPlaylist) async {
+        await editSharedTracks(playlistID: playlist.id, adding: nil, removingID: track.id)
+    }
+
+    private func editSharedTracks(playlistID: String, adding: Track?, removingID: String?) async {
+        guard let uid = userID else { return }
+        let ref = db.collection("playlists").document(playlistID)
         do {
-            try await db.collection("playlists").document(playlist.id).updateData([
-                "tracks": FieldValue.arrayUnion([track.firestoreData]),
-                "updatedAt": FieldValue.serverTimestamp()
-            ])
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                db.runTransaction({ transaction, errorPointer -> Any? in
+                    do {
+                        let snapshot = try transaction.getDocument(ref)
+                        guard let data = snapshot.data(), (data["memberIDs"] as? [String])?.contains(uid) == true else {
+                            throw SocialError.message("You are no longer a member of this playlist.")
+                        }
+                        var tracks = data["tracks"] as? [[String: Any]] ?? []
+                        if let removingID { tracks.removeAll { $0["id"] as? String == removingID } }
+                        if let adding, !tracks.contains(where: { $0["id"] as? String == adding.id }) { tracks.append(adding.firestoreData) }
+                        transaction.updateData(["tracks": tracks, "updatedAt": FieldValue.serverTimestamp()], forDocument: ref)
+                        return nil
+                    } catch { errorPointer?.pointee = error as NSError; return nil }
+                }, completion: { _, error in
+                    if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+                })
+            }
         } catch { handleSocialError(error) }
+    }
+
+    func rename(_ playlist: SharedPlaylist, to name: String) async {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard playlist.ownerID == userID, !name.isEmpty, name.count <= 100 else {
+            error = "Only the owner can rename a playlist. Use a name of 1–100 characters."; return
+        }
+        do { try await db.collection("playlists").document(playlist.id).updateData(["name": name, "updatedAt": FieldValue.serverTimestamp()]) }
+        catch { handleSocialError(error) }
+    }
+
+    func removeMember(_ uid: String, from playlist: SharedPlaylist) async {
+        guard uid != playlist.ownerID, playlist.ownerID == userID || uid == userID else {
+            error = "Only the owner can remove another collaborator."; return
+        }
+        do { try await db.collection("playlists").document(playlist.id).updateData([
+            "memberIDs": FieldValue.arrayRemove([uid]), "updatedAt": FieldValue.serverTimestamp()
+        ]) } catch { handleSocialError(error) }
     }
 
     private func commitProfileUpdate(
@@ -459,7 +514,7 @@ enum SocialConnectionState: Equatable {
                     }
 
                     let isRename = previousUsername != username
-                    if isRename,
+                    if isRename, profileData["usernameIsGenerated"] as? Bool != true,
                        let changedAt = (profileData["usernameChangedAt"] as? Timestamp)?.dateValue() {
                         let nextChange = changedAt.addingTimeInterval(UsernamePolicy.changeCooldown)
                         if nextChange > Date() {
@@ -539,20 +594,16 @@ enum SocialConnectionState: Equatable {
                 try? await Task.sleep(nanoseconds: UInt64(delay))
             }
         }
-        // A brand-new account that cannot reach Firestore after the bounded
-        // retries usually means the project database/API has not had its
-        // one-time console setup yet. Keep that state out of the audio path.
-        if profile == nil, connectionState == .offline {
-            connectionState = .setupRequired
-            error = "Friends and shared playlists need one-time setup. Music and downloads are unaffected."
-        }
     }
 
     private func ensureProfile(for user: FirebaseAuth.User) async throws {
         let ref = db.collection("profiles").document(user.uid)
         do {
-            let snapshot = try await ref.getDocument()
-            guard !snapshot.exists else { return }
+            let snapshot = try await ref.getDocument(source: .server)
+            if let username = snapshot.data()?["username"] as? String, UsernamePolicy.isValid(username) {
+                try await repairProfile(for: user)
+                return
+            }
             var lastFailure: Error?
             for candidate in generatedUsernameCandidates(for: user) {
                 do {
@@ -567,7 +618,10 @@ enum SocialConnectionState: Equatable {
         } catch {
             // Firestore's local cache is useful on a disconnected launch, but it must
             // never be mistaken for proof that a username is available.
-            if let cached = try? await ref.getDocument(source: .cache), cached.exists { return }
+            if shouldAutomaticallyRetry(error),
+               let cached = try? await ref.getDocument(source: .cache), cached.exists {
+                connectionState = .offline
+            }
             throw error
         }
     }
@@ -582,7 +636,8 @@ enum SocialConnectionState: Equatable {
             db.runTransaction({ transaction, errorPointer -> Any? in
                 do {
                     let profileSnapshot = try transaction.getDocument(profileRef)
-                    if profileSnapshot.exists { return nil }
+                    let existing = profileSnapshot.data() ?? [:]
+                    if let currentName = existing["username"] as? String, UsernamePolicy.isValid(currentName) { return nil }
 
                     let reservation = try transaction.getDocument(usernameRef)
                     if let owner = reservation.data()?["uid"] as? String, owner != user.uid {
@@ -598,12 +653,12 @@ enum SocialConnectionState: Equatable {
                         "username": username,
                         "usernameKey": username,
                         "usernameIsGenerated": true,
-                        "displayName": displayName,
-                        "bio": "",
-                        "avatarURL": user.photoURL?.absoluteString ?? "",
-                        "createdAt": FieldValue.serverTimestamp(),
+                        "displayName": existing["displayName"] as? String ?? displayName,
+                        "bio": existing["bio"] as? String ?? "",
+                        "avatarURL": existing["avatarURL"] as? String ?? user.photoURL?.absoluteString ?? "",
+                        "createdAt": existing["createdAt"] ?? FieldValue.serverTimestamp(),
                         "updatedAt": FieldValue.serverTimestamp()
-                    ], forDocument: profileRef)
+                    ], forDocument: profileRef, merge: true)
                     return nil
                 } catch {
                     errorPointer?.pointee = error as NSError
@@ -611,6 +666,47 @@ enum SocialConnectionState: Equatable {
                 }
             }, completion: { _, failure in
                 if let failure { continuation.resume(throwing: failure) }
+                else { continuation.resume() }
+            })
+        }
+    }
+
+    private func repairProfile(for user: FirebaseAuth.User) async throws {
+        let ref = db.collection("profiles").document(user.uid)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            db.runTransaction({ transaction, errorPointer -> Any? in
+                do {
+                    let snapshot = try transaction.getDocument(ref)
+                    guard let data = snapshot.data(), let username = data["username"] as? String,
+                          UsernamePolicy.isValid(username) else {
+                        throw socialTransactionError(.profileMissing, "Your profile needs repair. Please reconnect and try again.")
+                    }
+                    let reservationRef = self.db.collection("usernames").document(username)
+                    let reservation = try transaction.getDocument(reservationRef)
+                    if let owner = reservation.data()?["uid"] as? String, owner != user.uid {
+                        throw socialTransactionError(.usernameTaken, "Your previous username is reserved by another account. Choose another username in Edit Profile.")
+                    }
+                    var update: [String: Any] = [:]
+                    if data["usernameKey"] as? String != username { update["usernameKey"] = username }
+                    if data["usernameIsGenerated"] == nil {
+                        // A legacy profile has no recorded cooldown. Preserve
+                        // that first free rename without allowing cooldown reset.
+                        update["usernameIsGenerated"] = false
+                    }
+                    if data["displayName"] as? String == nil { update["displayName"] = String((user.displayName ?? username).prefix(60)) }
+                    if data["bio"] as? String == nil { update["bio"] = "" }
+                    if data["avatarURL"] as? String == nil { update["avatarURL"] = user.photoURL?.absoluteString ?? "" }
+                    if !reservation.exists {
+                        transaction.setData(["uid": user.uid, "createdAt": FieldValue.serverTimestamp()], forDocument: reservationRef)
+                    }
+                    if !update.isEmpty {
+                        update["updatedAt"] = FieldValue.serverTimestamp()
+                        transaction.updateData(update, forDocument: ref)
+                    }
+                    return nil
+                } catch { errorPointer?.pointee = error as NSError; return nil }
+            }, completion: { _, error in
+                if let error { continuation.resume(throwing: error) }
                 else { continuation.resume() }
             })
         }
@@ -647,7 +743,6 @@ enum SocialConnectionState: Equatable {
                     self.connectionState = .offline
                 } else if snapshot != nil {
                     self.connectionState = .ready
-                    self.error = nil
                 }
             }
         })
@@ -678,19 +773,23 @@ enum SocialConnectionState: Equatable {
     private func loadFollowing(_ ids: [String], owner uid: String) async {
         guard userID == uid else { return }
         followingCount = ids.count
-        var people: [SocialProfile] = []
-        for id in ids.prefix(50) {
-            let ref = db.collection("profiles").document(id)
-            let snapshot: DocumentSnapshot?
-            do {
-                snapshot = try await ref.getDocument()
-            } catch {
-                snapshot = try? await ref.getDocument(source: .cache)
-            }
-            if let data = snapshot?.data(), let profile = SocialProfile(id: id, data: data) { people.append(profile) }
+        let selected = Set(ids.prefix(50))
+        for id in Array(followingListeners.keys) where !selected.contains(id) {
+            followingListeners.removeValue(forKey: id)?.remove()
         }
-        guard userID == uid else { return }
-        following = people.sorted { $0.username < $1.username }
+        following.removeAll { !selected.contains($0.id) }
+        for id in selected where followingListeners[id] == nil {
+            followingListeners[id] = db.collection("profiles").document(id).addSnapshotListener { [weak self] snapshot, error in
+                Task { @MainActor in
+                    guard let self, self.userID == uid else { return }
+                    if let error { self.handleSocialError(error); return }
+                    self.following.removeAll { $0.id == id }
+                    if let data = snapshot?.data(), let person = SocialProfile(id: id, data: data) { self.following.append(person) }
+                    self.following.sort { $0.username < $1.username }
+                }
+            }
+        }
+        return
     }
 
 #if DEBUG
@@ -724,6 +823,7 @@ enum SocialConnectionState: Equatable {
             return
         }
 
+        print("CapyFlow social update failed: \(nsError.domain) / \(nsError.code): \(nsError.localizedDescription)")
         let code = nsError.code
         switch code {
         case FirestoreErrorCode.cancelled.rawValue:
@@ -733,11 +833,13 @@ enum SocialConnectionState: Equatable {
              FirestoreErrorCode.aborted.rawValue:
             connectionState = .offline
             error = "Friends and shared playlists are temporarily offline. Music and downloads still work normally."
-        case FirestoreErrorCode.permissionDenied.rawValue,
-             FirestoreErrorCode.failedPrecondition.rawValue,
-             FirestoreErrorCode.notFound.rawValue:
+        case FirestoreErrorCode.permissionDenied.rawValue:
+            error = "This change wasn't permitted. Check playlist membership or reconnect your profile and try again."
+        case FirestoreErrorCode.failedPrecondition.rawValue:
             connectionState = .setupRequired
-            error = "Friends and shared playlists need one-time setup. Music and downloads are unaffected."
+            error = "The social service needs an update. Please retry after the update is complete."
+        case FirestoreErrorCode.notFound.rawValue:
+            error = "This profile or playlist is no longer available. Refresh and try again."
         case FirestoreErrorCode.unauthenticated.rawValue:
             connectionState = .offline
             error = "Please sign in again to reconnect friends and shared playlists."
@@ -798,12 +900,18 @@ private extension Track {
             duration: data["duration"] as? Double,
             artworkURL: (data["artworkURL"] as? String).flatMap(URL.init(string:))
         )
+        albumID = data["albumID"] as? String
+        mediaID = data["mediaID"] as? String
+        musicVideoType = data["musicVideoType"] as? String
     }
 
     var firestoreData: [String: Any] {
         var data: [String: Any] = ["id": id, "title": title, "artist": artist]
         if let duration { data["duration"] = duration }
         if let artworkURL { data["artworkURL"] = artworkURL.absoluteString }
+        if let albumID { data["albumID"] = albumID }
+        if let mediaID { data["mediaID"] = mediaID }
+        if let musicVideoType { data["musicVideoType"] = musicVideoType }
         return data
     }
 }

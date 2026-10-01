@@ -1,4 +1,5 @@
 {
+  "emulators": { "firestore": { "port": 8088 }, "ui": { "enabled": false } },
   "firestore": {
     "rules": "firebase/firestore.rules",
     "indexes": "firebase/firestore.indexes.json"

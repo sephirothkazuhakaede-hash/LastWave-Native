@@ -14,6 +14,7 @@ struct BackendResolvedStream: Sendable {
     let durationIsAuthoritative: Bool
     let requestHeaders: [String: String]
     let source: Source
+    let mediaInfo: AudioMediaInfo?
 }
 
 struct BackendProbeResult: Sendable {
@@ -229,7 +230,12 @@ actor BackendClient {
                     ?? knownDuration.flatMap { $0 > 0 ? $0 : nil },
                 durationIsAuthoritative: backendDuration.flatMap { $0 > 0 ? $0 : nil } != nil,
                 requestHeaders: headers,
-                source: cacheHit ? .cacheHit : .newExtraction
+                source: cacheHit ? .cacheHit : .newExtraction,
+                mediaInfo: metadata?["mediaInfo"].flatMap { value in
+                    guard JSONSerialization.isValidJSONObject(value),
+                          let data = try? JSONSerialization.data(withJSONObject: value) else { return nil }
+                    return try? JSONDecoder().decode(AudioMediaInfo.self, from: data)
+                }
             )
         } catch is CancellationError {
             return nil
@@ -455,16 +461,6 @@ enum BackendClientError: LocalizedError {
             return "CapyFlow could not authenticate with the server."
         case .network(let detail):
             return detail
-        }
-    }
-}
-
-private extension AudioQuality {
-    var backendValue: String {
-        switch self {
-        case .automatic: return "automatic"
-        case .high: return "high"
-        case .dataSaver: return "dataSaver"
         }
     }
 }

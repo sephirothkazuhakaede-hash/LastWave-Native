@@ -320,8 +320,9 @@ private struct ProfileEditorSheet: View {
                     Button("Save") {
                         Task {
                             social.clearError()
-                            await social.saveProfile(username: username, displayName: displayName, bio: bio, avatarData: avatarData)
-                            if social.error == nil { dismiss() }
+                            if await social.saveProfile(username: username, displayName: displayName, bio: bio, avatarData: avatarData) {
+                                dismiss()
+                            }
                         }
                     }
                     .disabled(social.working || processingPhoto || !social.usernameAvailability.canSave || displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -407,8 +408,7 @@ struct CollaborateSheet: View {
                     Button {
                         Task {
                             working = true
-                            await social.invite(username: username, to: playlist)
-                            cloudID = await social.publish(playlist)
+                            cloudID = await social.invite(username: username, to: playlist)
                             working = false
                         }
                     } label: {
@@ -420,9 +420,20 @@ struct CollaborateSheet: View {
                     Button {
                         Task { working = true; cloudID = await social.publish(playlist); working = false }
                     } label: {
-                        Label(cloudID == nil ? "Publish shared copy" : "Shared copy updated", systemImage: cloudID == nil ? "icloud.and.arrow.up" : "checkmark.circle.fill")
+                        Label(cloudID == nil ? "Publish shared copy" : "Shared copy ready", systemImage: cloudID == nil ? "icloud.and.arrow.up" : "checkmark.circle.fill")
                             .frame(maxWidth: .infinity).frame(height: 48).contentShape(Rectangle())
                     }.buttonStyle(.bordered).disabled(working)
+                    if let shared = social.sharedPlaylists.first(where: { "cloud:" + $0.id == playlist.id || $0.id == cloudID }) {
+                        ForEach(shared.memberIDs.filter { $0 != shared.ownerID }, id: \.self) { uid in
+                            HStack {
+                                Text(social.following.first(where: { $0.id == uid }).map { "@" + $0.username } ?? "Collaborator")
+                                Spacer()
+                                Button("Remove", role: .destructive) {
+                                    Task { await social.removeMember(uid, from: shared) }
+                                }
+                            }.font(.capyCaption)
+                        }
+                    }
                     if let error = social.error { Text(error).font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center) }
                     Spacer()
                 }.padding(24)
@@ -438,6 +449,10 @@ struct SharedPlaylistDetailView: View {
     @EnvironmentObject private var player: WavePlayer
     @EnvironmentObject private var social: SocialStore
     let playlistID: String
+    @State private var renamePresented = false
+    @State private var playlistName = ""
+    @State private var managePresented = false
+    @Environment(\.dismiss) private var dismiss
     private var playlist: SharedPlaylist? { social.sharedPlaylists.first { $0.id == playlistID } }
     var body: some View {
         ZStack {
@@ -465,7 +480,15 @@ struct SharedPlaylistDetailView: View {
                                 }.buttonStyle(CapySecondaryButtonStyle())
                             }
                             CapySectionHeader("Songs", subtitle: "Everyone in this playlist sees shared changes")
-                            ForEach(playlist.tracks) { track in SocialTrackRow(track: track) }
+                            ForEach(playlist.tracks) { track in
+                                SocialTrackRow(track: track)
+                                    .contextMenu {
+                                        Button("Remove from shared playlist", role: .destructive) {
+                                            Task { await social.remove(track, from: playlist) }
+                                        }
+                                    }
+                            }
+                            if let error = social.error { Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning) }
                         } else { ProgressView().padding(50) }
                     }
                     .padding(.top, 18).padding(.bottom, 100)
@@ -473,6 +496,31 @@ struct SharedPlaylistDetailView: View {
             }
         }
         .navigationTitle("Shared Playlist").navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let playlist {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        if playlist.ownerID == social.currentUserID {
+                            Button("Rename playlist") { playlistName = playlist.name; renamePresented = true }
+                            Button("Manage collaborators") { managePresented = true }
+                        } else if let uid = social.currentUserID {
+                            Button("Leave playlist", role: .destructive) {
+                                Task { await social.removeMember(uid, from: playlist) }
+                            }
+                        }
+                    } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                }
+            }
+        }
+        .alert("Rename playlist", isPresented: $renamePresented) {
+            TextField("Playlist name", text: $playlistName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") { if let playlist { Task { await social.rename(playlist, to: playlistName) } } }
+        }
+        .sheet(isPresented: $managePresented) {
+            if let playlist { CollaborateSheet(playlist: playlist.imported) }
+        }
+        .onChange(of: playlist == nil) { _, missing in if missing { dismiss() } }
     }
 
     private func sharedMetadata(_ playlist: SharedPlaylist) -> some View {

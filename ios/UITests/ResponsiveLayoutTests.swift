@@ -72,6 +72,22 @@ final class ResponsiveLayoutTests: XCTestCase {
         )
     }
 
+    func testRootBackgroundCoversTopAndBottomSafeAreas() throws {
+        launch("root")
+        for screen in ["Home", "Search", "Library"] {
+            if screen != "Home" { app.buttons[screen].tap() }
+            let window = app.windows.firstMatch.frame
+            let backgrounds = app.descendants(matching: .any)
+                .matching(identifier: "capyflow-background").allElementsBoundByIndex
+            XCTAssertTrue(backgrounds.contains { element in
+                let frame = element.frame
+                return frame.minX <= window.minX + 1.5 && frame.maxX >= window.maxX - 1.5
+                    && frame.minY <= window.minY + 1.5 && frame.maxY >= window.maxY - 1.5
+            }, "\(screen) must draw a background across the status-bar and home-indicator regions")
+            attachScreenshot(named: "\(screen)-safe-areas")
+        }
+    }
+
     private func fixtureMarker(for fixture: String) -> XCUIElement {
         switch fixture {
         case "player", "player-lyrics":

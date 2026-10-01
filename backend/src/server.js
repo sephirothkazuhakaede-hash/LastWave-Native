@@ -167,6 +167,7 @@ export function createServer({
           title: metadata.title || '',
           artist: metadata.artist || '',
           duration: metadata.duration ?? null,
+          mediaInfo: metadata.mediaInfo ?? null,
           contentLength: entry?.size ?? metadata.contentLength ?? null,
           cached: Boolean(entry),
           caching: !entry && cache.hasActiveJob(videoId, quality),
