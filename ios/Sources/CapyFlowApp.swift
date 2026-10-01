@@ -312,7 +312,7 @@ private struct SearchHomeView: View {
             guard !Task.isCancelled else { return }
             await search(showSpinner: false)
         }
-        .onChange(of: mode) { _ in
+        .onChange(of: mode) {
             if query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 { Task { await search(showSpinner: false) } }
         }
       }
@@ -906,7 +906,7 @@ private struct NewPlaylistSheet: View {
             }
             .navigationTitle("New Playlist").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-            .onChange(of: selectedPhoto) { item in
+            .onChange(of: selectedPhoto) { _, item in
                 guard let item else { return }
                 Task { photoData = try? await item.loadTransferable(type: Data.self) }
             }
@@ -1048,7 +1048,7 @@ private struct PlaylistDetailView: View {
             if let playlist { CollaborateSheet(playlist: playlist) }
         }
         .task { if let playlist { player.prewarm(playlist.tracks) } }
-        .onChange(of: selectedPhoto) { item in
+        .onChange(of: selectedPhoto) { _, item in
             guard let item else { return }
             Task {
                 guard let data = try? await item.loadTransferable(type: Data.self) else { return }
@@ -1437,8 +1437,8 @@ struct PlayerView: View {
         }
         .tint(CapyColor.accent)
         .onAppear { scrubPosition = player.elapsed }
-        .onChange(of: player.elapsed) { value in if !isScrubbing { scrubPosition = value } }
-        .onChange(of: player.current?.id) { _ in
+        .onChange(of: player.elapsed) { _, value in if !isScrubbing { scrubPosition = value } }
+        .onChange(of: player.current?.id) {
             scrubPosition = 0
         }
         .sheet(isPresented: $showQueue) { QueueSheet().presentationDetents([.medium, .large]) }
@@ -1559,7 +1559,7 @@ private struct LyricsPanel: View {
                 .frame(height: 30)
                 .allowsHitTesting(false)
             }
-            .onChange(of: activeIndex) { index in
+            .onChange(of: activeIndex) { _, index in
                 guard let index else { return }
                 if reduceMotion {
                     scrollTarget = index

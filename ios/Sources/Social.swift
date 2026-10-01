@@ -380,7 +380,12 @@ enum SocialConnectionState: Equatable {
         var people: [SocialProfile] = []
         for id in ids.prefix(50) {
             let ref = db.collection("profiles").document(id)
-            let snapshot = (try? await ref.getDocument()) ?? (try? await ref.getDocument(source: .cache))
+            let snapshot: DocumentSnapshot?
+            do {
+                snapshot = try await ref.getDocument()
+            } catch {
+                snapshot = try? await ref.getDocument(source: .cache)
+            }
             if let data = snapshot?.data(), let profile = SocialProfile(id: id, data: data) { people.append(profile) }
         }
         guard userID == uid else { return }
