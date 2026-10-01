@@ -1,5 +1,24 @@
 # Changelog
 
+## CapyFlow iOS 0.4.1 — 2026-10-01
+
+- Rebuilt Home, Search, Library, album, artist, playlist, social, mini-player,
+  and Now Playing around a reusable high-performance SwiftUI design system.
+- Added a compact integrated three-tab dock that preserves each tab's state,
+  plus native NavigationStack back buttons and interactive edge-swipe back.
+- Made Now Playing controls stay in reach while live lyrics scroll in their own
+  panel, with a larger native scrubber target and lightweight haptics.
+- Made MSI downloads join one deduplicated cache job and serve the verified
+  cached M4A, rather than starting a second upstream transfer on cache misses.
+- Kept track-specific media failures from disabling the healthy MSI backend for
+  every other song in Download All; direct extraction is now a late fallback.
+- Added per-track MSI cache/new extraction/direct fallback download diagnostics.
+- Made backend/AVPlayer duration authoritative and propagate corrections into
+  saved playlists, albums, queue, downloads, recent music, lock screen, lyrics,
+  progress, and end-of-song behavior.
+- Added friendly retryable Firestore states that never affect music, and added
+  scoped production rules for profiles, follows, and collaborative playlists.
+
 ## CapyFlow iOS 0.4.0 (build 7) - 2026-10-01
 
 ### Added

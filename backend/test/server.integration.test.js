@@ -70,6 +70,7 @@ test('server proxies Range, refreshes a 403, and then serves its persistent cach
 
   const invalidated = new Set();
   const resolveCounts = new Map();
+  const downloadCounts = new Map();
   const resolver = {
     inFlightCount: 0,
     isInstalled: async () => true,
@@ -84,6 +85,7 @@ test('server proxies Range, refreshes a 403, and then serves its persistent cach
     },
     invalidate: (videoId) => invalidated.add(videoId),
     download: async (videoId, quality, destination) => {
+      downloadCounts.set(videoId, (downloadCounts.get(videoId) || 0) + 1);
       await fs.writeFile(destination, audio);
       return { videoId, quality, duration: 96 };
     },
@@ -123,6 +125,18 @@ test('server proxies Range, refreshes a 403, and then serves its persistent cach
   assert.equal(cached.headers.get('x-capyflow-cache'), 'HIT');
   assert.match(cached.headers.get('content-disposition'), /^attachment;/u);
   assert.deepEqual(Buffer.from(await cached.arrayBuffer()), audio.subarray(audio.length - 32));
+
+  const [freshOne, freshTwo] = await Promise.all([
+    fetch(`${root}/v1/download/fresh123xyz?quality=automatic`),
+    fetch(`${root}/v1/download/fresh123xyz?quality=automatic`),
+  ]);
+  assert.equal(freshOne.status, 200);
+  assert.equal(freshTwo.status, 200);
+  assert.equal(freshOne.headers.get('x-capyflow-cache'), 'HIT');
+  assert.equal(freshTwo.headers.get('x-capyflow-cache'), 'HIT');
+  assert.deepEqual(Buffer.from(await freshOne.arrayBuffer()), audio);
+  assert.deepEqual(Buffer.from(await freshTwo.arrayBuffer()), audio);
+  assert.equal(downloadCounts.get('fresh123xyz'), 1, 'simultaneous downloads must share one MSI cache job');
 
   const health = await fetch(`${root}/health`);
   assert.equal(health.status, 200);

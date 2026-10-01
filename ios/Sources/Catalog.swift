@@ -13,6 +13,10 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
     var artwork: URL? {
         upgradedArtworkURL(artworkURL) ?? URL(string: "https://i.ytimg.com/vi/\(id)/maxresdefault.jpg")
     }
+
+    func withDuration(_ correctedDuration: Double) -> Track {
+        Track(id: id, title: title, artist: artist, duration: correctedDuration, artworkURL: artworkURL)
+    }
 }
 
 struct Album: Identifiable, Hashable {
@@ -48,24 +52,36 @@ enum WaveError: LocalizedError {
 
 actor Catalog {
     struct ResolvedStream: Sendable {
+        enum Source: Sendable {
+            case msiCacheHit
+            case msiNewExtraction
+            case directFallback
+        }
+
         let url: URL
         let duration: Double?
+        let durationIsAuthoritative: Bool
         let requestHeaders: [String: String]
         let downloadURL: URL?
         let usesBackend: Bool
+        let source: Source
 
         init(
             url: URL,
             duration: Double?,
+            durationIsAuthoritative: Bool = false,
             requestHeaders: [String: String] = [:],
             downloadURL: URL? = nil,
-            usesBackend: Bool = false
+            usesBackend: Bool = false,
+            source: Source = .directFallback
         ) {
             self.url = url
             self.duration = duration
+            self.durationIsAuthoritative = durationIsAuthoritative
             self.requestHeaders = requestHeaders
             self.downloadURL = downloadURL
             self.usesBackend = usesBackend
+            self.source = source
         }
     }
     private struct ClientConfig {
@@ -369,14 +385,16 @@ actor Catalog {
                let backend = await BackendClient.shared.resolveStream(
                     videoID: track.id,
                     quality: quality,
-                    knownDuration: track.duration ?? self.durationCache[track.id]
+                    knownDuration: self.durationCache[track.id] ?? track.duration
                ) {
                 return ResolvedStream(
                     url: backend.audioURL,
                     duration: backend.duration,
+                    durationIsAuthoritative: backend.durationIsAuthoritative,
                     requestHeaders: backend.requestHeaders,
                     downloadURL: backend.downloadURL,
-                    usesBackend: true
+                    usesBackend: true,
+                    source: backend.source == .cacheHit ? .msiCacheHit : .msiNewExtraction
                 )
             }
             do {
@@ -401,8 +419,15 @@ actor Catalog {
                 }
                 // Do not block first audio on a second metadata request. If the
                 // search result had no duration, WavePlayer fills it in later.
-                let knownDuration = track.duration.flatMap { $0 > 0 ? $0 : nil } ?? self.durationCache[track.id]
-                return ResolvedStream(url: stream.url, duration: knownDuration)
+                let authoritativeDuration = self.durationCache[track.id]
+                let knownDuration = authoritativeDuration
+                    ?? track.duration.flatMap { $0 > 0 ? $0 : nil }
+                return ResolvedStream(
+                    url: stream.url,
+                    duration: knownDuration,
+                    durationIsAuthoritative: authoritativeDuration != nil,
+                    source: .directFallback
+                )
             } catch let error as YouTubeKitError {
                 switch error {
                 case .videoPrivate:
@@ -445,31 +470,9 @@ actor Catalog {
         return Date().timeIntervalSince(cached.1) < 1_800
     }
 
-    func duration(for track: Track) async -> Double? {
-        if let duration = track.duration, duration > 0 {
-            durationCache[track.id] = duration
-            return duration
-        }
-        if let cached = durationCache[track.id] { return cached }
-        do {
-            var request = URLRequest(url: URL(string: "https://www.youtube.com/watch?v=\(track.id)")!)
-            request.timeoutInterval = 8
-            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-            let html = String(decoding: data, as: UTF8.self)
-            let patterns = ["\\\"lengthSeconds\\\"\\s*:\\s*\\\"([0-9]+)\\\"", "length_seconds=([0-9]+)"]
-            let range = NSRange(html.startIndex..<html.endIndex, in: html)
-            for pattern in patterns {
-                guard let regex = try? NSRegularExpression(pattern: pattern),
-                      let match = regex.firstMatch(in: html, range: range),
-                      let valueRange = Range(match.range(at: 1), in: html),
-                      let value = Double(html[valueRange]), value > 0 else { continue }
-                durationCache[track.id] = value
-                return value
-            }
-        } catch { }
-        return nil
+    func recordAuthoritativeDuration(_ duration: Double, for trackID: String) {
+        guard duration.isFinite, duration > 0 else { return }
+        durationCache[trackID] = duration
     }
 }
 

@@ -1,4 +1,4 @@
-# CapyFlow iOS 0.4.0
+# CapyFlow iOS 0.4.1
 
 CapyFlow is a native SwiftUI music client with YouTube Music search, song and
 album results, playlists, synchronized lyrics, background audio, lock-screen
@@ -22,7 +22,8 @@ for signing with Sideloadly, AltStore, or your own certificate.
 The included Firebase plist is registered for `com.seph.capyflow`. Google sign-in
 works in sideloaded builds as long as that bundle identifier and URL scheme are
 preserved. Social features additionally require a Cloud Firestore database and
-the rules in `../firebase/firestore.rules` to be deployed.
+the rules in `../firebase/firestore.rules` to be deployed. The CapyFlow project
+uses the default Firestore database in `asia-southeast1` (Singapore).
 
 Downloads use an iOS background URL session, so active transfers can continue
 while the app is suspended. iOS still controls execution time and may stop work
@@ -30,8 +31,9 @@ after the app is force-quit.
 
 YouTube extraction is unofficial and can fail when an upload is private,
 age-restricted, members-only, region-blocked, removed, or rejected by YouTube's
-anti-bot controls. CapyFlow reports the per-song reason and retries through its
-alternate resolver instead of silently skipping the track.
+anti-bot controls. CapyFlow reports the per-song reason, refreshes the MSI
+source first, and uses its on-device resolver only as a true fallback instead
+of silently skipping the track.
 
 ## Attribution
 

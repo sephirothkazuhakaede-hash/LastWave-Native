@@ -111,6 +111,17 @@ export function createServer({
         const entry = await cache.get(videoId, quality);
         if (entry) {
           await serveCachedFile(request, response, entry, { attachment: Boolean(download), timings });
+        } else if (download) {
+          // Offline downloads should be deterministic: finish (or join) the
+          // MSI's single cache job, then transfer that verified local file.
+          // Streaming stays progressive through /audio, while /download no
+          // longer starts a second upstream transfer beside cache creation.
+          const cachedEntry = await cache.ensure(
+            videoId,
+            quality,
+            (temporaryPath) => resolver.download(videoId, quality, temporaryPath),
+          );
+          await serveCachedFile(request, response, cachedEntry, { attachment: true, timings });
         } else {
           await proxyAudio(request, response, {
             videoId,

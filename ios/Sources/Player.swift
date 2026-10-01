@@ -18,7 +18,9 @@ import UIKit
     @Published var downloading: Set<String> = []
     @Published var downloadProgress: [String: Double] = [:]
     @Published var downloadFailures: [String: String] = [:]
+    @Published var downloadDiagnostics: [String: String] = [:]
     @Published var playlists: [ImportedPlaylist] = []
+    @Published private(set) var recentTracks: [Track] = []
     @Published var downloadingPlaylists: Set<String> = []
     @Published var playlistDownloadProgress: [String: String] = [:]
     @Published var autoplayLoading = false
@@ -38,6 +40,7 @@ import UIKit
     private var didReachExpectedEnd = false
     private var durationIsAuthoritative = false
     private var playbackRetryCount = 0
+    private var lastPersistedDuration: [String: Double] = [:]
     private var timer: Any?
     private var endObserver: NSObjectProtocol?
     private var statusObserver: NSKeyValueObservation?
@@ -61,6 +64,8 @@ import UIKit
         }
         if let data = UserDefaults.standard.data(forKey: "importedPlaylists"),
            let saved = try? JSONDecoder().decode([ImportedPlaylist].self, from: data) { playlists = saved }
+        if let data = UserDefaults.standard.data(forKey: "recentTracks"),
+           let saved = try? JSONDecoder().decode([Track].self, from: data) { recentTracks = Array(saved.prefix(20)) }
         timer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self else { return }
@@ -70,6 +75,9 @@ import UIKit
                 if itemDuration.isFinite, itemDuration > 0 {
                     self.expectedDuration = itemDuration
                     self.durationIsAuthoritative = true
+                    if let trackID = self.current?.id {
+                        self.adoptAuthoritativeDuration(itemDuration, for: trackID)
+                    }
                 }
                 let length = (itemDuration.isFinite && itemDuration > 0)
                     ? itemDuration
@@ -125,6 +133,7 @@ import UIKit
         didReachExpectedEnd = false
         durationIsAuthoritative = false
         if !recovering {
+            rememberRecentlyPlayed(track)
             lyrics = []; nowPlayingArtwork = nil
             publishNowPlaying()
             Task { await loadLyrics(for: track, token: token) }
@@ -142,7 +151,10 @@ import UIKit
                 expectedDuration = resolved.duration
                 if let resolvedDuration = resolved.duration, resolvedDuration > 0 {
                     duration = resolvedDuration
-                    durationIsAuthoritative = resolved.usesBackend
+                    durationIsAuthoritative = resolved.durationIsAuthoritative
+                    if resolved.durationIsAuthoritative {
+                        adoptAuthoritativeDuration(resolvedDuration, for: track.id)
+                    }
                 }
                 resolvedHeaders = resolved.requestHeaders
                 usedBackend = resolved.usesBackend
@@ -162,19 +174,6 @@ import UIKit
                 let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
                 item = AVPlayerItem(asset: asset)
                 item.preferredForwardBufferDuration = 2
-            }
-            if expectedDuration == nil {
-                let catalog = self.catalog
-                Task { [weak self, weak item] in
-                    guard let exact = await catalog.duration(for: track), let item else { return }
-                    await MainActor.run {
-                        guard let self, token == self.generation, item === self.player.currentItem else { return }
-                        self.expectedDuration = exact
-                        self.duration = exact
-                        self.durationIsAuthoritative = true
-                        self.publishNowPlaying()
-                    }
-                }
             }
             statusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
                 if item.status == .readyToPlay {
@@ -286,7 +285,12 @@ import UIKit
     func isPlaylistDownloaded(_ playlist: ImportedPlaylist) -> Bool {
         !playlist.tracks.isEmpty && playlist.tracks.allSatisfy { isDownloaded($0) }
     }
-    @discardableResult func download(_ track: Track, reportError: Bool = true, preferRemote: Bool = false) async -> Bool {
+    @discardableResult func download(
+        _ track: Track,
+        reportError: Bool = true,
+        preferRemote: Bool = false,
+        attemptNumber: Int = 1
+    ) async -> Bool {
         if isDownloaded(track) { return true }
         if downloading.contains(track.id) {
             for _ in 0..<240 {
@@ -298,14 +302,21 @@ import UIKit
         downloading.insert(track.id)
         downloadProgress[track.id] = 0
         downloadFailures.removeValue(forKey: track.id)
+        let attemptPrefix = attemptNumber > 1 ? "Retry \(attemptNumber) • " : ""
+        downloadDiagnostics[track.id] = attemptPrefix + (preferRemote ? "Trying direct fallback" : "Checking MSI cache")
         error = nil
         defer { downloading.remove(track.id); downloadProgress.removeValue(forKey: track.id) }
         var usedBackend = false
         do {
             let resolved = try await catalog.resolvedStream(for: track, quality: audioQuality, preferRemote: preferRemote)
             usedBackend = resolved.usesBackend
+            switch resolved.source {
+            case .msiCacheHit: downloadDiagnostics[track.id] = attemptPrefix + "MSI cache hit"
+            case .msiNewExtraction: downloadDiagnostics[track.id] = attemptPrefix + "MSI new extraction"
+            case .directFallback: downloadDiagnostics[track.id] = attemptPrefix + "Direct resolver fallback"
+            }
             var request = URLRequest(url: resolved.downloadURL ?? resolved.url)
-            request.timeoutInterval = 120
+            request.timeoutInterval = 600
             request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
             request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148", forHTTPHeaderField: "User-Agent")
             resolved.requestHeaders.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
@@ -318,6 +329,9 @@ import UIKit
                 let code = (response as? HTTPURLResponse)?.statusCode ?? 0
                 throw WaveError.message(code > 0 ? "The audio server refused this song (HTTP \(code))." : "The audio server did not return a downloadable file.")
             }
+            if usedBackend, http.value(forHTTPHeaderField: "X-CapyFlow-Cache") == "HIT" {
+                downloadDiagnostics[track.id] = attemptPrefix + (resolved.source == .msiNewExtraction ? "MSI new extraction" : "MSI cache hit")
+            }
             let attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
             let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
             guard size > 16_384 else {
@@ -327,11 +341,20 @@ import UIKit
             let target = localURL(track)
             if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
             try FileManager.default.moveItem(at: temporary, to: target)
-            downloads.append(track)
+            let savedTrack: Track
+            if let exact = resolved.duration, resolved.durationIsAuthoritative, exact > 0 {
+                adoptAuthoritativeDuration(exact, for: track.id)
+                savedTrack = track.withDuration(exact)
+            } else {
+                savedTrack = track
+            }
+            downloads.removeAll { $0.id == track.id }
+            downloads.append(savedTrack)
             downloadFailures.removeValue(forKey: track.id)
             try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
-            let lyricsService = self.lyricsService
-            Task { _ = try? await lyricsService.lyrics(for: track) }
+            // A completed offline download is not reported until its available
+            // lyrics have also been written to the on-device cache.
+            _ = try? await lyricsService.lyrics(for: savedTrack)
             return true
         } catch {
             let reason = error.localizedDescription
@@ -452,7 +475,13 @@ import UIKit
     }
     private func downloadWithRetries(_ track: Track) async -> Bool {
         for attempt in 0..<5 {
-            if await download(track, reportError: false, preferRemote: attempt.isMultiple(of: 2) == false) { return true }
+            let directFallback = attempt >= 3
+            if await download(
+                track,
+                reportError: false,
+                preferRemote: directFallback,
+                attemptNumber: attempt + 1
+            ) { return true }
             if attempt < 4 { try? await Task.sleep(nanoseconds: UInt64(650_000_000 * (attempt + 1))) }
         }
         return false
@@ -503,6 +532,73 @@ import UIKit
         ]
         if let nowPlayingArtwork { info[MPMediaItemPropertyArtwork] = nowPlayingArtwork }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func rememberRecentlyPlayed(_ track: Track) {
+        recentTracks.removeAll { $0.id == track.id }
+        recentTracks.insert(track, at: 0)
+        if recentTracks.count > 20 { recentTracks.removeLast(recentTracks.count - 20) }
+        if let data = try? JSONEncoder().encode(recentTracks) {
+            UserDefaults.standard.set(data, forKey: "recentTracks")
+        }
+    }
+
+    /// Search and album durations are estimates. Once the backend or AVPlayer
+    /// reports the playable media duration, replace every persisted copy so an
+    /// old estimate cannot return through a saved album or playlist.
+    private func adoptAuthoritativeDuration(_ seconds: Double, for trackID: String) {
+        guard seconds.isFinite, seconds > 0 else { return }
+        let corrected = (seconds * 100).rounded() / 100
+        expectedDuration = corrected
+        durationIsAuthoritative = true
+        if current?.id == trackID {
+            if abs(duration - corrected) > 0.05 { duration = corrected }
+            if let current, abs((current.duration ?? 0) - corrected) > 0.05 {
+                self.current = current.withDuration(corrected)
+            }
+        }
+
+        let previous = lastPersistedDuration[trackID]
+        guard previous == nil || abs((previous ?? 0) - corrected) > 0.75 else {
+            publishNowPlaying()
+            return
+        }
+        lastPersistedDuration[trackID] = corrected
+
+        queue = queue.map { $0.id == trackID ? $0.withDuration(corrected) : $0 }
+        playbackHistory = playbackHistory.map { $0.id == trackID ? $0.withDuration(corrected) : $0 }
+        recentTracks = recentTracks.map { $0.id == trackID ? $0.withDuration(corrected) : $0 }
+        if let data = try? JSONEncoder().encode(recentTracks) {
+            UserDefaults.standard.set(data, forKey: "recentTracks")
+        }
+
+        var changedDownloads = false
+        downloads = downloads.map {
+            guard $0.id == trackID else { return $0 }
+            changedDownloads = true
+            return $0.withDuration(corrected)
+        }
+        if changedDownloads, let data = try? JSONEncoder().encode(downloads) {
+            try? data.write(to: index, options: .atomic)
+        }
+
+        var changedPlaylists = false
+        playlists = playlists.map { playlist in
+            var changed = false
+            let tracks = playlist.tracks.map { track -> Track in
+                guard track.id == trackID else { return track }
+                changed = true
+                return track.withDuration(corrected)
+            }
+            guard changed else { return playlist }
+            changedPlaylists = true
+            return ImportedPlaylist(id: playlist.id, name: playlist.name, tracks: tracks)
+        }
+        if changedPlaylists { savePlaylists() }
+
+        let catalog = self.catalog
+        Task { await catalog.recordAuthoritativeDuration(corrected, for: trackID) }
+        publishNowPlaying()
     }
 }
 

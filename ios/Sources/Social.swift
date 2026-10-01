@@ -44,6 +44,51 @@ struct SharedPlaylist: Identifiable, Equatable {
     }
 }
 
+enum SocialConnectionState: Equatable {
+    case signedOut
+    case connecting
+    case ready
+    case offline
+    case setupRequired
+
+    var title: String {
+        switch self {
+        case .signedOut: return "Social is off"
+        case .connecting: return "Connecting to friends…"
+        case .ready: return "Friends are connected"
+        case .offline: return "Friends are temporarily offline"
+        case .setupRequired: return "Friends need one-time setup"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .signedOut:
+            return "Sign in to follow friends and share playlists. Music works without an account."
+        case .connecting:
+            return "Your music, downloads, and offline playback are independent from this connection."
+        case .ready:
+            return "Profiles, follows, and shared playlists are up to date."
+        case .offline:
+            return "Saved social information may still appear. Music and downloads keep working normally."
+        case .setupRequired:
+            return "The app owner still needs to enable the CapyFlow social database. Music and downloads are unaffected."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .signedOut: return "person.crop.circle.badge.xmark"
+        case .connecting: return "person.2.circle"
+        case .ready: return "person.2.circle.fill"
+        case .offline: return "wifi.slash"
+        case .setupRequired: return "wrench.and.screwdriver"
+        }
+    }
+
+    var canRetry: Bool { self == .offline || self == .setupRequired }
+}
+
 @MainActor final class SocialStore: ObservableObject {
     @Published private(set) var profile: SocialProfile?
     @Published private(set) var following: [SocialProfile] = []
@@ -53,12 +98,16 @@ struct SharedPlaylist: Identifiable, Equatable {
     @Published var searchResults: [SocialProfile] = []
     @Published var working = false
     @Published var error: String?
+    @Published private(set) var connectionState: SocialConnectionState = .signedOut
 
     private let db = Firestore.firestore()
     private var userID: String?
+    private var boundUser: FirebaseAuth.User?
     private var listeners: [ListenerRegistration] = []
+    private var setupTask: Task<Void, Never>?
 
     func bind(to user: FirebaseAuth.User?) {
+        setupTask?.cancel()
         listeners.forEach { $0.remove() }
         listeners.removeAll()
         profile = nil
@@ -67,12 +116,31 @@ struct SharedPlaylist: Identifiable, Equatable {
         followerCount = 0
         followingCount = 0
         searchResults = []
+        error = nil
+        boundUser = user
         userID = user?.uid
-        guard let user else { return }
-        Task {
-            await ensureProfile(for: user)
-            guard self.userID == user.uid else { return }
-            listen(to: user.uid)
+        guard let user else { connectionState = .signedOut; return }
+        startSocial(for: user)
+    }
+
+    func retryConnection() {
+        guard let user = boundUser, userID == user.uid else { return }
+        setupTask?.cancel()
+        listeners.forEach { $0.remove() }
+        listeners.removeAll()
+        error = nil
+        connectionState = .connecting
+        startSocial(for: user)
+    }
+
+    func clearError() { error = nil }
+
+    private func startSocial(for user: FirebaseAuth.User) {
+        connectionState = .connecting
+        listen(to: user.uid)
+        setupTask = Task { [weak self] in
+            guard let self else { return }
+            await self.ensureProfileWithRetry(for: user)
         }
     }
 
@@ -112,21 +180,27 @@ struct SharedPlaylist: Identifiable, Equatable {
                 batch.deleteDocument(db.collection("usernames").document(oldUsername))
             }
             try await batch.commit()
-        } catch { self.error = error.localizedDescription }
+        } catch { handleSocialError(error) }
     }
 
     func search(_ rawQuery: String) async {
         let query = Self.normalizedUsername(rawQuery)
         guard query.count >= 2 else { searchResults = []; return }
         do {
-            let snapshot = try await db.collection("profiles")
+            let request = db.collection("profiles")
                 .whereField("usernameKey", isGreaterThanOrEqualTo: query)
                 .whereField("usernameKey", isLessThan: query + "\u{f8ff}")
                 .limit(to: 20)
-                .getDocuments()
+            let snapshot: QuerySnapshot
+            do {
+                snapshot = try await request.getDocuments()
+            } catch {
+                snapshot = try await request.getDocuments(source: .cache)
+                connectionState = .offline
+            }
             searchResults = snapshot.documents.compactMap { SocialProfile(id: $0.documentID, data: $0.data()) }
                 .filter { $0.id != userID }
-        } catch { self.error = error.localizedDescription }
+        } catch { handleSocialError(error) }
     }
 
     func isFollowing(_ profileID: String) -> Bool { following.contains { $0.id == profileID } }
@@ -144,7 +218,7 @@ struct SharedPlaylist: Identifiable, Equatable {
             } else {
                 try await ref.delete()
             }
-        } catch { self.error = error.localizedDescription }
+        } catch { handleSocialError(error) }
     }
 
     @discardableResult func publish(_ playlist: ImportedPlaylist) async -> String? {
@@ -153,26 +227,27 @@ struct SharedPlaylist: Identifiable, Equatable {
             return nil
         }
         let key = "capyflow.cloudPlaylist.\(uid).\(playlist.id)"
-        let playlistID = UserDefaults.standard.string(forKey: key) ?? UUID().uuidString
+        let savedPlaylistID = UserDefaults.standard.string(forKey: key)
+        let playlistID = savedPlaylistID ?? UUID().uuidString
         let ref = db.collection("playlists").document(playlistID)
         do {
-            let currentSnapshot = try await ref.getDocument()
-            let current = currentSnapshot.data()
-            let members = current?["memberIDs"] as? [String] ?? [uid]
-            try await ref.setData([
+            var data: [String: Any] = [
                 "sourceID": playlist.id,
                 "name": playlist.name,
                 "ownerID": uid,
                 "ownerName": profile.username,
-                "memberIDs": members,
                 "tracks": playlist.tracks.map(\.firestoreData),
-                "updatedAt": FieldValue.serverTimestamp(),
-                "createdAt": current?["createdAt"] ?? FieldValue.serverTimestamp()
-            ], merge: true)
+                "updatedAt": FieldValue.serverTimestamp()
+            ]
+            if savedPlaylistID == nil {
+                data["memberIDs"] = [uid]
+                data["createdAt"] = FieldValue.serverTimestamp()
+            }
+            try await ref.setData(data, merge: true)
             UserDefaults.standard.set(playlistID, forKey: key)
             return playlistID
         } catch {
-            self.error = error.localizedDescription
+            handleSocialError(error)
             return nil
         }
     }
@@ -189,7 +264,7 @@ struct SharedPlaylist: Identifiable, Equatable {
                 "memberIDs": FieldValue.arrayUnion([inviteeID]),
                 "updatedAt": FieldValue.serverTimestamp()
             ])
-        } catch { self.error = error.localizedDescription }
+        } catch { handleSocialError(error) }
     }
 
     func add(_ track: Track, to playlist: SharedPlaylist) async {
@@ -199,10 +274,39 @@ struct SharedPlaylist: Identifiable, Equatable {
                 "tracks": FieldValue.arrayUnion([track.firestoreData]),
                 "updatedAt": FieldValue.serverTimestamp()
             ])
-        } catch { self.error = error.localizedDescription }
+        } catch { handleSocialError(error) }
     }
 
-    private func ensureProfile(for user: FirebaseAuth.User) async {
+    private func ensureProfileWithRetry(for user: FirebaseAuth.User) async {
+        working = true
+        defer { working = false }
+        for attempt in 0..<3 {
+            guard !Task.isCancelled, userID == user.uid else { return }
+            do {
+                try await ensureProfile(for: user)
+                guard userID == user.uid else { return }
+                error = nil
+                if connectionState != .offline { connectionState = .ready }
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                handleSocialError(error)
+                guard shouldAutomaticallyRetry(error) else { return }
+                guard attempt < 2 else { break }
+                let delay = attempt == 0 ? 1_000_000_000 : 3_000_000_000
+                try? await Task.sleep(nanoseconds: UInt64(delay))
+            }
+        }
+        // A brand-new account that cannot reach Firestore after the bounded
+        // retries usually means the project database/API has not had its
+        // one-time console setup yet. Keep that state out of the audio path.
+        if profile == nil, connectionState == .offline {
+            connectionState = .setupRequired
+            error = "Friends and shared playlists need one-time setup. Music and downloads are unaffected."
+        }
+    }
+
+    private func ensureProfile(for user: FirebaseAuth.User) async throws {
         let ref = db.collection("profiles").document(user.uid)
         do {
             let snapshot = try await ref.getDocument()
@@ -224,7 +328,12 @@ struct SharedPlaylist: Identifiable, Equatable {
                 "updatedAt": FieldValue.serverTimestamp()
             ], forDocument: ref)
             try await batch.commit()
-        } catch { self.error = "Social setup needs Firestore: \(error.localizedDescription)" }
+        } catch {
+            // Firestore's local cache is useful on a disconnected launch, but it must
+            // never be mistaken for proof that a username is available.
+            if let cached = try? await ref.getDocument(source: .cache), cached.exists { return }
+            throw error
+        }
     }
 
     private func listen(to uid: String) {
@@ -232,16 +341,26 @@ struct SharedPlaylist: Identifiable, Equatable {
             Task { @MainActor in
                 guard let self, self.userID == uid else { return }
                 if let data = snapshot?.data() { self.profile = SocialProfile(id: uid, data: data) }
-                if let error { self.error = error.localizedDescription }
+                if let error { self.handleSocialError(error); return }
+                if snapshot?.metadata.isFromCache == true {
+                    self.connectionState = .offline
+                } else if snapshot != nil {
+                    self.connectionState = .ready
+                    self.error = nil
+                }
             }
         })
-        listeners.append(db.collection("follows").whereField("followerID", isEqualTo: uid).addSnapshotListener { [weak self] snapshot, _ in
+        listeners.append(db.collection("follows").whereField("followerID", isEqualTo: uid).addSnapshotListener { [weak self] snapshot, error in
             let ids = snapshot?.documents.compactMap { $0.data()["followingID"] as? String } ?? []
-            Task { @MainActor in await self?.loadFollowing(ids, owner: uid) }
+            Task { @MainActor in
+                if let error { self?.handleSocialError(error); return }
+                await self?.loadFollowing(ids, owner: uid)
+            }
         })
-        listeners.append(db.collection("follows").whereField("followingID", isEqualTo: uid).addSnapshotListener { [weak self] snapshot, _ in
+        listeners.append(db.collection("follows").whereField("followingID", isEqualTo: uid).addSnapshotListener { [weak self] snapshot, error in
             Task { @MainActor in
                 guard let self, self.userID == uid else { return }
+                if let error { self.handleSocialError(error); return }
                 self.followerCount = snapshot?.documents.count ?? 0
             }
         })
@@ -250,7 +369,7 @@ struct SharedPlaylist: Identifiable, Equatable {
                 guard let self, self.userID == uid else { return }
                 self.sharedPlaylists = snapshot?.documents.compactMap { SharedPlaylist(id: $0.documentID, data: $0.data()) }
                     .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } ?? []
-                if let error { self.error = error.localizedDescription }
+                if let error { self.handleSocialError(error) }
             }
         })
     }
@@ -260,11 +379,53 @@ struct SharedPlaylist: Identifiable, Equatable {
         followingCount = ids.count
         var people: [SocialProfile] = []
         for id in ids.prefix(50) {
-            if let snapshot = try? await db.collection("profiles").document(id).getDocument(),
-               let data = snapshot.data(), let profile = SocialProfile(id: id, data: data) { people.append(profile) }
+            let ref = db.collection("profiles").document(id)
+            let snapshot = (try? await ref.getDocument()) ?? (try? await ref.getDocument(source: .cache))
+            if let data = snapshot?.data(), let profile = SocialProfile(id: id, data: data) { people.append(profile) }
         }
         guard userID == uid else { return }
         following = people.sorted { $0.username < $1.username }
+    }
+
+    private func shouldAutomaticallyRetry(_ error: Error) -> Bool {
+        let code = (error as NSError).code
+        return code == FirestoreErrorCode.unavailable.rawValue ||
+            code == FirestoreErrorCode.deadlineExceeded.rawValue ||
+            code == FirestoreErrorCode.aborted.rawValue
+    }
+
+    private func handleSocialError(_ failure: Error) {
+        guard userID != nil else { return }
+        if let socialError = failure as? SocialError {
+            error = socialError.localizedDescription
+            return
+        }
+
+        let code = (failure as NSError).code
+        switch code {
+        case FirestoreErrorCode.cancelled.rawValue:
+            return
+        case FirestoreErrorCode.unavailable.rawValue,
+             FirestoreErrorCode.deadlineExceeded.rawValue,
+             FirestoreErrorCode.aborted.rawValue:
+            connectionState = .offline
+            error = "Friends and shared playlists are temporarily offline. Music and downloads still work normally."
+        case FirestoreErrorCode.permissionDenied.rawValue,
+             FirestoreErrorCode.failedPrecondition.rawValue,
+             FirestoreErrorCode.notFound.rawValue:
+            connectionState = .setupRequired
+            error = "Friends and shared playlists need one-time setup. Music and downloads are unaffected."
+        case FirestoreErrorCode.unauthenticated.rawValue:
+            connectionState = .offline
+            error = "Please sign in again to reconnect friends and shared playlists."
+        case FirestoreErrorCode.alreadyExists.rawValue:
+            error = "That username is already taken."
+        case FirestoreErrorCode.resourceExhausted.rawValue:
+            connectionState = .offline
+            error = "Friends and shared playlists are busy right now. Please try again shortly."
+        default:
+            error = "Friends and shared playlists couldn't update. Music and downloads are unaffected."
+        }
     }
 
     private static func normalizedUsername(_ raw: String) -> String {

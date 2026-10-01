@@ -3,10 +3,17 @@ import Combine
 import FirebaseAuth
 
 struct BackendResolvedStream: Sendable {
+    enum Source: Sendable {
+        case cacheHit
+        case newExtraction
+    }
+
     let audioURL: URL
     let downloadURL: URL
     let duration: Double?
+    let durationIsAuthoritative: Bool
     let requestHeaders: [String: String]
+    let source: Source
 }
 
 struct BackendProbeResult: Sendable {
@@ -213,18 +220,25 @@ actor BackendClient {
             )
             let metadata = (try? JSONSerialization.jsonObject(with: metadataData)) as? [String: Any]
             let backendDuration = (metadata?["duration"] as? NSNumber)?.doubleValue
-            await publish(.connected("Custom server connected"))
+            let cacheHit = (metadata?["cached"] as? Bool) == true
+            await publish(.connected(cacheHit ? "MSI cache hit" : "MSI prepared this song"))
             return BackendResolvedStream(
                 audioURL: configuration.audioURL(videoID: videoID, quality: quality),
                 downloadURL: configuration.downloadURL(videoID: videoID, quality: quality),
                 duration: backendDuration.flatMap { $0 > 0 ? $0 : nil }
                     ?? knownDuration.flatMap { $0 > 0 ? $0 : nil },
-                requestHeaders: headers
+                durationIsAuthoritative: backendDuration.flatMap { $0 > 0 ? $0 : nil } != nil,
+                requestHeaders: headers,
+                source: cacheHit ? .cacheHit : .newExtraction
             )
         } catch is CancellationError {
             return nil
         } catch {
-            retryAfter = Date().addingTimeInterval(30)
+            if Self.shouldQuarantineBackend(after: error) {
+                healthyBaseURL = nil
+                healthyUntil = .distantPast
+                retryAfter = Date().addingTimeInterval(30)
+            }
             await publish(.fallback(Self.fallbackMessage(for: error)))
             return nil
         }
@@ -263,9 +277,9 @@ actor BackendClient {
     }
 
     func reportStreamFailure(_ message: String? = nil) async {
-        healthyBaseURL = nil
-        healthyUntil = .distantPast
-        retryAfter = Date().addingTimeInterval(30)
+        // A media failure is normally specific to one upload or one signed URL.
+        // Do not quarantine a healthy MSI for every other song in Download All.
+        // Connectivity/health failures still set retryAfter in resolveStream.
         let detail = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         let statusMessage: String
         if let detail, !detail.isEmpty {
@@ -404,6 +418,18 @@ actor BackendClient {
             }
         }
         return "The custom server is unavailable. Using direct YouTube."
+    }
+
+    private static func shouldQuarantineBackend(after error: Error) -> Bool {
+        guard let backendError = error as? BackendClientError else { return true }
+        switch backendError {
+        case .httpStatus(401), .httpStatus(403), .missingAuthenticationToken,
+             .invalidAddress, .secureAddressRequired, .invalidResponse, .network:
+            return true
+        case .httpStatus:
+            // Extraction failures (usually 5xx) are often song-specific.
+            return false
+        }
     }
 }
 
