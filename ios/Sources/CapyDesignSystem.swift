@@ -93,7 +93,10 @@ struct CapyAmbientBackdrop: View, Equatable {
 
     var body: some View {
         let palette = CapyAmbientPalette(seed: seed)
-        ZStack {
+        // Artwork is decoration. Isolate its scaled-to-fill dimensions from
+        // the foreground ZStack's layout so it cannot widen the whole screen.
+        GeometryReader { geometry in
+          ZStack {
             CapyColor.background
             if let artworkURL {
                 AsyncImage(url: artworkURL) { phase in
@@ -106,6 +109,7 @@ struct CapyAmbientBackdrop: View, Equatable {
                             .opacity(0.14 * intensity)
                     }
                 }
+                .frame(width: geometry.size.width, height: geometry.size.height)
                 .clipped()
             }
             RadialGradient(
@@ -119,6 +123,9 @@ struct CapyAmbientBackdrop: View, Equatable {
                 startPoint: .topLeading,
                 endPoint: .bottom
             )
+          }
+          .frame(width: geometry.size.width, height: geometry.size.height)
+          .clipped()
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
