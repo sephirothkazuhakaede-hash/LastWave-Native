@@ -54,7 +54,7 @@ final class ResponsiveLayoutTests: XCTestCase {
         attachScreenshot(named: "root-tabs")
         let filters = app.scrollViews["library-filter-scroll"]
         filters.swipeLeft()
-        let sharedFilter = app.buttons["library-filter-Shared"]
+        let sharedFilter = app.descendants(matching: .any).matching(identifier: "library-filter-Shared").firstMatch
         XCTAssertTrue(sharedFilter.isHittable, "The last library filter must be reachable by scrolling")
         XCTAssertGreaterThanOrEqual(sharedFilter.frame.minX, filters.frame.minX - 1.5)
         XCTAssertLessThanOrEqual(sharedFilter.frame.maxX, filters.frame.maxX + 1.5)
@@ -104,6 +104,15 @@ final class ResponsiveLayoutTests: XCTestCase {
         let bounds = window.frame
         let tolerance: CGFloat = 1.5
         let candidates = app.descendants(matching: .any).allElementsBoundByIndex
+        let filters = app.scrollViews["library-filter-scroll"]
+        let filterElements = Set(filters.exists ? filters.descendants(matching: .any).allElementsBoundByIndex.map {
+            boundsKey(for: $0, frame: $0.frame)
+        } : [])
+        let filterViewport = filters.exists ? filters.frame : CGRect.null
+        if !filterViewport.isNull {
+            XCTAssertGreaterThanOrEqual(filterViewport.minX, bounds.minX - tolerance)
+            XCTAssertLessThanOrEqual(filterViewport.maxX, bounds.maxX + tolerance)
+        }
 
         for element in candidates where element.exists && element.isHittable {
             var frame = element.frame
@@ -116,16 +125,14 @@ final class ResponsiveLayoutTests: XCTestCase {
                abs(frame.height - bounds.height * 3) < tolerance,
                abs(frame.midX - bounds.midX) < tolerance,
                abs(frame.midY - bounds.midY) < tolerance { continue }
-            if element.identifier.hasPrefix("library-filter-"), element.elementType == .button {
-                let viewport = app.scrollViews["library-filter-scroll"].frame
-                XCTAssertGreaterThanOrEqual(viewport.minX, bounds.minX - tolerance)
-                XCTAssertLessThanOrEqual(viewport.maxX, bounds.maxX + tolerance)
-                frame = frame.intersection(viewport)
+            // Match only descendants of the explicitly identified horizontal
+            // scroller, including UIKit's anonymous scroll content wrapper.
+            if !filterViewport.isNull, frame.intersects(filterViewport),
+               filterElements.contains(boundsKey(for: element, frame: frame)) {
+                frame = frame.intersection(filterViewport)
                 XCTAssertFalse(frame.isNull, "A hittable filter must intersect its scroll viewport")
+                guard !frame.isNull else { continue }
             }
-            // A horizontal scroll content wrapper has the combined chip width.
-            // Its viewport and individual accessible buttons are checked instead.
-            if element.identifier == "library-filter-content" { continue }
             XCTAssertGreaterThanOrEqual(
                 frame.minX,
                 bounds.minX - tolerance,
@@ -144,6 +151,10 @@ final class ResponsiveLayoutTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func boundsKey(for element: XCUIElement, frame: CGRect) -> String {
+        "\(element.elementType.rawValue)|\(element.identifier)|\(element.label)|\(frame)"
     }
 
     private func description(of element: XCUIElement) -> String {

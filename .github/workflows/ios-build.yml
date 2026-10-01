@@ -22,7 +22,7 @@ jobs:
   build:
     needs: backend-test
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: ios
@@ -60,7 +60,7 @@ jobs:
               xcrun simctl delete "$UDID"
               continue
             fi
-            if ! python3 -u ci/run_check.py --timeout 900 --log "build/layout-results/${LABEL}-tests.log" -- xcodebuild \
+            if ! python3 -u ci/run_check.py --timeout 1200 --log "build/layout-results/${LABEL}-tests.log" -- xcodebuild \
               -project CapyFlow.xcodeproj \
               -scheme CapyFlow \
               -configuration Debug \

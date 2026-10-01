@@ -1065,7 +1065,8 @@ private struct PlaylistLibraryView: View {
                             .buttonStyle(CapyIconButtonStyle(prominent: true))
                             .accessibilityLabel("Create playlist")
                     }
-                    ScrollView(.horizontal) {
+                    GeometryReader { geometry in
+                      ScrollView(.horizontal) {
                         HStack(spacing: 8) {
                             ForEach(LibraryFilter.allCases) { item in
                                 Button { filter = item; CapyHaptics.selection() } label: {
@@ -1073,15 +1074,13 @@ private struct PlaylistLibraryView: View {
                                         .foregroundStyle(filter == item ? CapyColor.background : .white)
                                         .background(filter == item ? CapyColor.accent : CapyColor.surfaceStrong, in: Capsule())
                                 }.buttonStyle(.plain)
-                                    .accessibilityElement(children: .ignore)
-                                    .accessibilityLabel(item.rawValue)
                                     .accessibilityIdentifier("library-filter-\(item.rawValue)")
                             }
                         }
-                        .accessibilityElement(children: .contain)
-                        .accessibilityIdentifier("library-filter-content")
-                    }.scrollIndicators(.hidden)
+                      }.scrollIndicators(.hidden)
+                        .frame(width: geometry.size.width, height: 40)
                         .accessibilityIdentifier("library-filter-scroll")
+                    }.frame(height: 40)
 
                     if filter == .downloads {
                         downloadsSection
