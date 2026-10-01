@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class ResponsiveLayoutTests: XCTestCase {
     private var app: XCUIApplication!
@@ -84,7 +85,31 @@ final class ResponsiveLayoutTests: XCTestCase {
                 return frame.minX <= window.minX + 1.5 && frame.maxX >= window.maxX - 1.5
                     && frame.minY <= window.minY + 1.5 && frame.maxY >= window.maxY - 1.5
             }, "\(screen) must draw a background across the status-bar and home-indicator regions")
+            assertSafeAreaPixelsHaveBackground(screen: screen)
             attachScreenshot(named: "\(screen)-safe-areas")
+        }
+    }
+
+    private func assertSafeAreaPixelsHaveBackground(screen: String) {
+        guard let image = app.screenshot().image.cgImage else { XCTFail("Screenshot unavailable"); return }
+        let width = image.width, height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let rendered = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
+            return true
+        }
+        XCTAssertTrue(rendered)
+        // Sample away from the status text, camera cutout, and home indicator.
+        // A clipped ambient layer leaves an entirely black strip at either edge.
+        for row in [2, height - 3] {
+            let lit = [0.15, 0.25, 0.75, 0.85].contains { fraction in
+                let offset = (row * width + Int(Double(width) * fraction)) * 4
+                return Int(pixels[offset]) + Int(pixels[offset + 1]) + Int(pixels[offset + 2]) > 6
+            }
+            XCTAssertTrue(lit, "\(screen) has a black strip at screen edge \(row)")
         }
     }
 

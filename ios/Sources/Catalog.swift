@@ -232,7 +232,7 @@ actor Catalog {
         }
         func walk(_ node: Any) {
             if let object = node as? [String: Any] {
-                if let renderer = object["musicResponsiveListItemRenderer"] as? [String: Any],
+                if let renderer = object["musicResponsiveListItemRenderer"] as? [String: Any], renderer["index"] != nil,
                    let item = renderer["playlistItemData"] as? [String: Any],
                    let id = item["videoId"] as? String,
                    let columns = renderer["flexColumns"] as? [[String: Any]],
@@ -249,7 +249,7 @@ actor Catalog {
                     let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
                     let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
                     if let title = values.first {
-                        var track = Track(id: id, title: title, artist: album.artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:)) ?? album.artworkURL)
+                        var track = Track(id: id, title: title, artist: values.dropFirst().first ?? album.artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:)) ?? album.artworkURL)
                         track.albumID = album.id
                         track.musicVideoType = Self.stringValue("musicVideoType", in: renderer)
                         tracks.append(track)
@@ -357,9 +357,7 @@ actor Catalog {
     }
 
     private func parseDuration(_ value: String) -> Double? {
-        let parts = value.split(separator: ":").compactMap { Double($0) }
-        guard parts.count == 2 || parts.count == 3 else { return nil }
-        return parts.reduce(0) { $0 * 60 + $1 }
+        MediaDuration.parse(value)
     }
 
     private func loadClientConfig() async -> ClientConfig {

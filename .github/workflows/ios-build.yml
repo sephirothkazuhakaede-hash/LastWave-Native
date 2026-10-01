@@ -19,6 +19,12 @@ jobs:
         with:
           node-version: '24'
       - run: npm test
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install yt-dlp==2026.8.19
+      - name: Verify real yt-dlp format selection
+        run: python test/quality-selector.py
   security-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -3,6 +3,13 @@ import AVFoundation
 @testable import CapyFlow
 
 final class MediaPolicyTests: XCTestCase {
+    func testDurationParsingRejectsMalformedColumns() {
+        XCTAssertEqual(MediaDuration.parse("3:23"), 203)
+        XCTAssertEqual(MediaDuration.parse("1:03:23"), 3803)
+        for value in ["3::23", "LIVE", "3:x:23", "3:99", "NaN:23", "-3:23"] {
+            XCTAssertNil(MediaDuration.parse(value))
+        }
+    }
     func testMusicSessionAllowsSystemLongFormRouting() throws {
         let session = AVAudioSession.sharedInstance()
         try AudioRoutePolicy.configure(session)
