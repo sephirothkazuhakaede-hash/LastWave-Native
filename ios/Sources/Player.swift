@@ -107,7 +107,509 @@ struct DownloadBatchSummary: Equatable {
     private var playbackHistory: [Track] = []
     private var nowPlayingArtwork: MPMediaItemArtwork?
     private var didReachExpectedEnd = false
-    private var durationIsAuthoritati…7039 tokens truncated…gress[track.id],
+    private var durationIsAuthoritative = false
+    private var durationAuthority = DurationAuthority.estimate
+    private var playbackRetryCount = 0
+    private var lastPersistedDuration: [String: Double] = [:]
+    private var lastPersistedDurationAuthority: [String: DurationAuthority] = [:]
+    private var timer: Any?
+    private var endObserver: NSObjectProtocol?
+    private var statusObserver: NSKeyValueObservation?
+    private var interruptionObserver: NSObjectProtocol?
+    private var routeObserver: NSObjectProtocol?
+    @Published private(set) var audioOutputName = "iPhone"
+    private var folder: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Offline", isDirectory: true)
+    }
+    private var index: URL { folder.appendingPathComponent("library.json") }
+    private var playlistArtworkFolder: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("PlaylistArtwork", isDirectory: true)
+    }
+    func localURL(_ track: Track) -> URL {
+        let suffix = track.downloadQuality.map { "." + $0 } ?? ""
+        return folder.appendingPathComponent(track.playableID + suffix + ".m4a")
+    }
+
+    private func localCopy(for track: Track) -> Track? {
+        downloads.first { $0.id == track.id && (track.mediaID == nil || $0.playableID == track.playableID) && $0.downloadQuality == audioQuality.backendValue
+            && FileManager.default.fileExists(atPath: localURL($0).path) }
+    }
+
+    init() {
+        autoplayEnabled = UserDefaults.standard.object(forKey: "autoplayEnabled") as? Bool ?? true
+        audioQuality = AudioQuality(rawValue: UserDefaults.standard.string(forKey: "audioQuality") ?? "") ?? .automatic
+        if let data = UserDefaults.standard.data(forKey: "authoritativeDurations"),
+           let saved = try? JSONDecoder().decode([String: Double].self, from: data) {
+            lastPersistedDuration = saved.filter { $0.value.isFinite && $0.value > 0 }
+        }
+        if let data = UserDefaults.standard.data(forKey: "authoritativeDurationSources"),
+           let saved = try? JSONDecoder().decode([String: Int].self, from: data) {
+            lastPersistedDurationAuthority = saved.reduce(into: [String: DurationAuthority]()) { result, entry in
+                if let authority = DurationAuthority(rawValue: entry.value) {
+                    result[entry.key] = authority
+                }
+            }
+        }
+        player.automaticallyWaitsToMinimizeStalling = false
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if let data = try? Data(contentsOf: index), let tracks = try? JSONDecoder().decode([Track].self, from: data) {
+            downloads = tracks
+                .filter { FileManager.default.fileExists(atPath: localURL($0).path) }
+                .map(canonicalized)
+        }
+        if let data = UserDefaults.standard.data(forKey: "importedPlaylists"),
+           let saved = try? JSONDecoder().decode([ImportedPlaylist].self, from: data) {
+            playlists = saved.map {
+                let albumID = $0.id.hasPrefix("album:") ? String($0.id.dropFirst(6)) : nil
+                let tracks = $0.tracks.map { original -> Track in
+                    var track = original
+                    if track.albumID == nil { track.albumID = albumID }
+                    return canonicalized(track)
+                }
+                return ImportedPlaylist(id: $0.id, name: $0.name, tracks: tracks)
+            }
+        }
+        if let data = UserDefaults.standard.data(forKey: "recentTracks"),
+           let saved = try? JSONDecoder().decode([Track].self, from: data) { recentTracks = Array(saved.prefix(20)) }
+        timer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
+            Task { @MainActor in
+                guard let self else { return }
+                let newElapsed = time.seconds.isFinite ? time.seconds : 0
+                if abs(self.elapsed - newElapsed) > 0.05 { self.elapsed = newElapsed }
+                let itemDuration = self.player.currentItem?.duration.seconds ?? 0
+                if itemDuration.isFinite, itemDuration > 0 {
+                    if let trackID = self.current?.id {
+                        // Some YouTube adaptive streams advertise a much longer
+                        // container timeline than the song itself. Album and
+                        // playlist rows carry YouTube Music's track duration, so
+                        // keep that shorter value when the two disagree by more
+                        // than normal rounding/encoder padding.
+                        let playableDuration = self.durationCappedByKnownTrack(
+                            itemDuration,
+                            knownDuration: self.expectedDuration
+                        )
+                        self.adoptAuthoritativeDuration(playableDuration, for: trackID, source: .playerItem)
+                    }
+                }
+                let playerLength = (itemDuration.isFinite && itemDuration > 0)
+                    ? self.durationCappedByKnownTrack(itemDuration, knownDuration: self.expectedDuration)
+                    : nil
+                let length = self.durationIsAuthoritative
+                    ? (self.expectedDuration ?? playerLength ?? 0)
+                    : (playerLength ?? self.expectedDuration ?? 0)
+                let newDuration = length.isFinite ? length : 0
+                if abs(self.duration - newDuration) > 0.05 { self.duration = newDuration }
+                let isPlaying = self.player.rate > 0
+                if self.playing != isPlaying { self.playing = isPlaying }
+                if self.durationIsAuthoritative,
+                   let expected = self.expectedDuration, expected > 0,
+                   newElapsed >= expected - 0.35, !self.didReachExpectedEnd {
+                    self.didReachExpectedEnd = true
+                    Task { await self.next() }
+                }
+            }
+        }
+        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: nil, queue: .main) { [weak self] note in
+            Task { @MainActor in
+                guard let self, let item = note.object as? AVPlayerItem, item === self.player.currentItem else { return }
+                let endedAt = item.currentTime().seconds
+                if let trackID = self.current?.id, endedAt.isFinite, endedAt > 0 {
+                    self.adoptAuthoritativeDuration(endedAt, for: trackID, source: .playerItem)
+                }
+                await self.next()
+            }
+        }
+        interruptionObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            let type = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            Task { @MainActor in
+                if type == AVAudioSession.InterruptionType.began.rawValue { self?.player.pause() }
+            }
+        }
+        audioOutputName = Self.outputName()
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
+            Task { @MainActor in
+                guard let self else { return }
+                self.audioOutputName = Self.outputName()
+                if AudioRoutePolicy.shouldPause(reason: reason) {
+                    self.player.pause()
+                    self.playing = false
+                    self.publishNowPlaying()
+                }
+                // iOS reroutes the existing player. Do not replace its item,
+                // resolve a stream, or seek when selecting another output.
+            }
+        }
+        let commands = MPRemoteCommandCenter.shared()
+        commands.playCommand.addTarget { [weak self] _ in Task { @MainActor in self?.player.play() }; return .success }
+        commands.pauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.player.pause() }; return .success }
+        commands.nextTrackCommand.addTarget { [weak self] _ in Task { @MainActor in await self?.next() }; return .success }
+        commands.previousTrackCommand.addTarget { [weak self] _ in Task { @MainActor in await self?.previous() }; return .success }
+        commands.skipBackwardCommand.isEnabled = false
+        commands.skipForwardCommand.isEnabled = false
+        commands.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let position = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            Task { @MainActor in self?.seek(position.positionTime) }
+            return .success
+        }
+    }
+
+    func play(_ requestedTrack: Track, recordHistory: Bool = true, recovering: Bool = false) async {
+        let token = UUID(); generation = token
+        loading = true; error = nil
+        player.pause()
+        let track: Track
+        do { track = try await catalog.normalizedTrack(requestedTrack) }
+        catch { if token == generation { loading = false; self.error = error.localizedDescription }; return }
+        guard token == generation else { return }
+        if track.playableID != requestedTrack.id {
+            lastPersistedDuration.removeValue(forKey: track.id)
+            lastPersistedDurationAuthority.removeValue(forKey: track.id)
+        }
+        if !recovering { playbackRetryCount = 0 }
+        if !recovering, recordHistory, let current, current.id != track.id {
+            playbackHistory.append(current)
+            if playbackHistory.count > 50 { playbackHistory.removeFirst(playbackHistory.count - 50) }
+        }
+        let canonicalTrack = canonicalized(track)
+        current = canonicalTrack
+        elapsed = 0
+        duration = canonicalTrack.duration ?? 0
+        expectedDuration = canonicalTrack.duration
+        didReachExpectedEnd = false
+        durationIsAuthoritative = false
+        durationAuthority = .estimate
+        if let persisted = lastPersistedDuration[track.id] {
+            // Duration values written by older builds did not save their source.
+            // Treat those as player observations so a fresh backend/local value
+            // can repair a previously persisted long adaptive-container tail.
+            let persistedAuthority = lastPersistedDurationAuthority[track.id] ?? .playerItem
+            let playableDuration = durationCappedByKnownTrack(persisted, knownDuration: track.duration)
+            adoptAuthoritativeDuration(playableDuration, for: track.id, source: persistedAuthority)
+        }
+        if !recovering {
+            rememberRecentlyPlayed(track)
+            lyrics = []; nowPlayingArtwork = nil
+            publishNowPlaying()
+            Task { await loadLyrics(for: track, token: token) }
+            Task { await loadArtwork(for: track, token: token) }
+        }
+        do {
+            let url: URL
+            var resolvedHeaders: [String: String] = [:]
+            var usedBackend = false
+            let saved = localCopy(for: track)
+            let isLocal = saved != nil
+            currentAudioInfo = nil
+            if let saved { url = localURL(saved); currentAudioInfo = saved.mediaInfo }
+            else {
+                let resolved = try await catalog.resolvedStream(for: track, quality: audioQuality, preferRemote: recovering)
+                guard token == generation else { return }
+                url = resolved.url
+                currentAudioInfo = resolved.mediaInfo
+                if let resolvedDuration = resolved.duration, resolvedDuration > 0 {
+                    let playableDuration = durationCappedByKnownTrack(
+                        resolvedDuration,
+                        knownDuration: canonicalTrack.duration
+                    )
+                    expectedDuration = playableDuration
+                    duration = playableDuration
+                    durationIsAuthoritative = resolved.durationIsAuthoritative
+                    if resolved.durationIsAuthoritative {
+                        adoptAuthoritativeDuration(playableDuration, for: track.id, source: .backend)
+                    }
+                }
+                resolvedHeaders = resolved.requestHeaders
+                usedBackend = resolved.usesBackend
+            }
+            guard token == generation else { return }
+            try AudioRoutePolicy.configure(AVAudioSession.sharedInstance())
+            try AVAudioSession.sharedInstance().setActive(true)
+            audioOutputName = Self.outputName()
+            let item: AVPlayerItem
+            if isLocal {
+                item = AVPlayerItem(url: url)
+            } else {
+                var headers = [
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+                    "Referer": "https://www.youtube.com/"
+                ]
+                resolvedHeaders.forEach { headers[$0.key] = $0.value }
+                let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+                item = AVPlayerItem(asset: asset)
+                item.preferredForwardBufferDuration = 2
+            }
+            statusObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+                if item.status == .readyToPlay {
+                    Task { @MainActor in
+                        guard let self, token == self.generation, item === self.player.currentItem else { return }
+                        self.loading = false
+                        self.player.playImmediately(atRate: 1)
+                    }
+                } else if item.status == .failed {
+                    let message = item.error?.localizedDescription ?? "Playback failed."
+                    Task { @MainActor in
+                        await self?.recoverPlaybackIfPossible(
+                            track,
+                            token: token,
+                            item: item,
+                            wasLocal: isLocal,
+                            usedBackend: usedBackend,
+                            underlyingMessage: message
+                        )
+                    }
+                }
+            }
+            player.replaceCurrentItem(with: item)
+            player.playImmediately(atRate: 1); playing = true
+            publishNowPlaying()
+            if let nextTrack = queue.first { Task { _ = try? await catalog.resolvedStream(for: nextTrack, quality: audioQuality) } }
+        } catch {
+            if token == generation {
+                self.error = error.localizedDescription
+                self.playing = false
+            }
+        }
+        if token == generation { loading = false }
+    }
+
+    private func recoverPlaybackIfPossible(
+        _ track: Track,
+        token: UUID,
+        item: AVPlayerItem,
+        wasLocal: Bool,
+        usedBackend: Bool,
+        underlyingMessage: String
+    ) async {
+        guard token == generation, item === player.currentItem else { return }
+        if wasLocal {
+            error = "The downloaded copy could not be played. Delete it and download the song again."
+            loading = false; playing = false
+            return
+        }
+        if playbackRetryCount == 0 {
+            playbackRetryCount = 1
+            loading = true
+            if usedBackend { await BackendClient.shared.reportStreamFailure(underlyingMessage) }
+            await catalog.invalidateStream(for: track, quality: audioQuality)
+            await play(track, recordHistory: false, recovering: true)
+            return
+        }
+        error = "YouTube returned an audio link that iOS rejected after a fresh retry. \(underlyingMessage)"
+        loading = false; playing = false
+    }
+    func toggle() { if player.rate > 0 { player.pause() } else { player.play() }; playing = player.rate > 0 }
+    func seek(_ value: Double) {
+        guard value.isFinite else { return }
+        let target = min(max(0, value), duration > 0 ? duration : value)
+        elapsed = target
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        publishNowPlaying()
+    }
+    func next() async {
+        if queue.isEmpty, autoplayEnabled, let seed = current {
+            autoplayLoading = true
+            let suggestions = (try? await catalog.search("\(seed.artist) songs")) ?? []
+            queue = Array(suggestions.filter { $0.id != seed.id }.shuffled().prefix(12))
+            autoplayLoading = false
+        }
+        if queue.isEmpty { player.pause(); playing = false; return }
+        await play(queue.removeFirst())
+    }
+    func previous() async {
+        if elapsed > 3 || playbackHistory.isEmpty {
+            seek(0)
+            return
+        }
+        let previous = playbackHistory.removeLast()
+        await play(previous, recordHistory: false)
+    }
+    func removeFromQueue(at index: Int) {
+        guard queue.indices.contains(index) else { return }
+        queue.remove(at: index)
+    }
+    func moveQueueItem(from source: Int, to destination: Int) {
+        guard queue.indices.contains(source), queue.indices.contains(destination), source != destination else { return }
+        let track = queue.remove(at: source)
+        queue.insert(track, at: destination)
+    }
+    func prewarm(_ tracks: [Track]) {
+        let candidates = Array(tracks.prefix(3))
+        let quality = audioQuality
+        let catalog = self.catalog
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for track in candidates {
+                    group.addTask { _ = try? await catalog.resolvedStream(for: track, quality: quality) }
+                }
+            }
+        }
+    }
+    func isDownloaded(_ track: Track) -> Bool { localCopy(for: track) != nil }
+    func isPlaylistDownloaded(_ playlist: ImportedPlaylist) -> Bool {
+        !playlist.tracks.isEmpty && playlist.tracks.allSatisfy { isDownloaded($0) }
+    }
+    @discardableResult func download(
+        _ requestedTrack: Track,
+        reportError: Bool = true,
+        preferRemote: Bool = false,
+        attemptNumber: Int = 1,
+        startedAt: Date = Date()
+    ) async -> Bool {
+        let track: Track
+        do { track = try await catalog.normalizedTrack(requestedTrack) }
+        catch { if reportError { self.error = error.localizedDescription }; return false }
+        if isDownloaded(track) {
+            downloadStates[track.id] = TrackDownloadState(
+                stage: .downloaded, progress: 1, source: "Offline copy", attempt: attemptNumber,
+                elapsedSeconds: Date().timeIntervalSince(startedAt), detail: nil
+            )
+            return true
+        }
+        if downloading.contains(track.id) {
+            for _ in 0..<240 {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                if !downloading.contains(track.id) { return isDownloaded(track) }
+            }
+            return isDownloaded(track)
+        }
+        downloading.insert(track.id)
+        downloadProgress[track.id] = 0
+        downloadFailures.removeValue(forKey: track.id)
+        let attemptPrefix = attemptNumber > 1 ? "Retry \(attemptNumber) • " : ""
+        downloadDiagnostics[track.id] = attemptPrefix + (preferRemote ? "Trying direct fallback" : "Checking MSI cache")
+        let queuedSeconds = max(0, Date().timeIntervalSince(startedAt))
+        let queuedText = queuedSeconds >= 1 ? "queued \(Int(queuedSeconds.rounded()))s" : nil
+        downloadStates[track.id] = TrackDownloadState(
+            stage: .preparing, progress: nil, source: nil, attempt: attemptNumber,
+            elapsedSeconds: queuedSeconds, detail: queuedText
+        )
+        error = nil
+        defer { downloading.remove(track.id); downloadProgress.removeValue(forKey: track.id) }
+        var usedBackend = false
+        let downloadQuality = audioQuality
+        do {
+            let resolved = try await catalog.resolvedStream(for: track, quality: downloadQuality, preferRemote: preferRemote)
+            usedBackend = resolved.usesBackend
+            var sourceLabel: String
+            switch resolved.source {
+            case .msiCacheHit: sourceLabel = "MSI cache hit"
+            case .msiNewExtraction: sourceLabel = "MSI new extraction"
+            case .directFallback: sourceLabel = "Direct resolver fallback"
+            }
+            downloadDiagnostics[track.id] = attemptPrefix +
+                (queuedText.map { "\($0) · " } ?? "") + sourceLabel
+            downloadStates[track.id] = TrackDownloadState(
+                stage: .downloading, progress: 0, source: sourceLabel, attempt: attemptNumber,
+                elapsedSeconds: Date().timeIntervalSince(startedAt), detail: nil
+            )
+            var request = URLRequest(url: resolved.downloadURL ?? resolved.url)
+            request.timeoutInterval = 600
+            request.setValue("https://www.youtube.com/", forHTTPHeaderField: "Referer")
+            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148", forHTTPHeaderField: "User-Agent")
+            resolved.requestHeaders.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+            let transfer = DownloadCoordinator.shared
+            let progressSource = sourceLabel
+            let transferResult = try await transfer.start(request) { [weak self] progress in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.downloadProgress[track.id] = progress
+                    self.downloadStates[track.id] = TrackDownloadState(
+                        stage: .downloading, progress: progress, source: progressSource,
+                        attempt: attemptNumber, elapsedSeconds: Date().timeIntervalSince(startedAt), detail: nil
+                    )
+                }
+            }
+            let temporary = transferResult.location
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            let response = transferResult.response
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                try? FileManager.default.removeItem(at: temporary)
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                throw WaveError.message(code > 0 ? "The audio server refused this song (HTTP \(code))." : "The audio server did not return a downloadable file.")
+            }
+            if usedBackend {
+                switch http.value(forHTTPHeaderField: "X-CapyFlow-Cache")?.uppercased() {
+                case "HIT": sourceLabel = "MSI cache hit"
+                case "MISS": sourceLabel = "MSI new extraction"
+                default: break
+                }
+                let serverTiming = http.value(forHTTPHeaderField: "Server-Timing")
+                downloadDiagnostics[track.id] = attemptPrefix + sourceLabel + (serverTiming.map { " · \($0)" } ?? "")
+            }
+            let attributes = try FileManager.default.attributesOfItem(atPath: temporary.path)
+            let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+            guard size > 16_384 else {
+                try? FileManager.default.removeItem(at: temporary)
+                throw WaveError.message("The downloaded audio was incomplete. Please retry.")
+            }
+            var downloadTrack = track
+            downloadTrack.downloadQuality = downloadQuality.backendValue
+            downloadTrack.mediaInfo = resolved.mediaInfo
+            if let value = http.value(forHTTPHeaderField: "X-CapyFlow-Media-Info"),
+               let data = value.data(using: .utf8) {
+                downloadTrack.mediaInfo = try? JSONDecoder().decode(AudioMediaInfo.self, from: data)
+            }
+            let target = localURL(downloadTrack)
+            downloadStates[track.id] = TrackDownloadState(
+                stage: .saving, progress: 1, source: sourceLabel, attempt: attemptNumber,
+                elapsedSeconds: Date().timeIntervalSince(startedAt), detail: nil
+            )
+            if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+            try FileManager.default.moveItem(at: temporary, to: target)
+            let headerDuration = http.value(forHTTPHeaderField: "X-CapyFlow-Duration").flatMap(Double.init)
+            let localAssetDuration = try? await AVURLAsset(url: target).load(.duration)
+            let localSeconds = localAssetDuration?.seconds
+            // Prefer a consensus over AVAsset alone. A malformed adaptive file
+            // can report several minutes of empty tail; the backend header and
+            // YouTube Music row duration let us reject that high outlier.
+            let exactDuration = [headerDuration, resolved.durationIsAuthoritative ? resolved.duration : nil, localSeconds]
+                .compactMap { $0 }.first { $0.isFinite && $0 > 0 }
+            let savedTrack: Track
+            if let exact = exactDuration {
+                adoptAuthoritativeDuration(exact, for: track.id, source: .localFile)
+                savedTrack = downloadTrack.withDuration(exact)
+            } else {
+                savedTrack = downloadTrack
+            }
+            for previous in downloads where previous.id == track.id && localURL(previous) != target {
+                try? FileManager.default.removeItem(at: localURL(previous))
+            }
+            downloads.removeAll { $0.id == track.id }
+            downloads.append(savedTrack)
+            downloadFailures.removeValue(forKey: track.id)
+            try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
+            // A completed offline download is not reported until its available
+            // lyrics have also been written to the on-device cache.
+            _ = try? await lyricsService.lyrics(for: savedTrack)
+            downloadStates[track.id] = TrackDownloadState(
+                stage: .downloaded, progress: 1, source: sourceLabel, attempt: attemptNumber,
+                elapsedSeconds: Date().timeIntervalSince(startedAt), detail: nil
+            )
+            let total = Date().timeIntervalSince(startedAt)
+            let timingText = total < 1 ? "<1s" : "\(Int(total.rounded()))s"
+            let firstByteText = transferResult.firstByteLatency.map {
+                $0 < 1 ? "first byte <1s" : "first byte \(Int($0.rounded()))s"
+            }
+            let transferText = transferResult.transferDuration < 1
+                ? "transfer <1s"
+                : "transfer \(Int(transferResult.transferDuration.rounded()))s"
+            downloadDiagnostics[track.id] = [
+                downloadDiagnostics[track.id] ?? sourceLabel,
+                firstByteText,
+                transferText,
+                "total \(timingText)"
+            ].compactMap { $0 }.joined(separator: " · ")
+            return true
+        } catch {
+            let reason = error.localizedDescription
+            if usedBackend { await BackendClient.shared.reportStreamFailure(reason) }
+            await catalog.invalidateStream(for: track, quality: audioQuality)
+            downloadFailures[track.id] = reason
+            downloadStates[track.id] = TrackDownloadState(
+                stage: .failed, progress: downloadProgress[track.id],
                 source: downloadDiagnostics[track.id], attempt: attemptNumber,
                 elapsedSeconds: Date().timeIntervalSince(startedAt), detail: reason
             )
