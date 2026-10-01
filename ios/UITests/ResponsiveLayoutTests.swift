@@ -87,14 +87,8 @@ final class ResponsiveLayoutTests: XCTestCase {
         launch("root")
         for screen in ["Home", "Search", "Library"] {
             if screen != "Home" { app.buttons[screen].tap() }
-            let window = app.windows.firstMatch.frame
-            let backgrounds = app.descendants(matching: .any)
-                .matching(identifier: "capyflow-background").allElementsBoundByIndex
-            XCTAssertTrue(backgrounds.contains { element in
-                let frame = element.frame
-                return frame.minX <= window.minX + 1.5 && frame.maxX >= window.maxX - 1.5
-                    && frame.minY <= window.minY + 1.5 && frame.maxY >= window.maxY - 1.5
-            }, "\(screen) must draw a background across the status-bar and home-indicator regions")
+            // Inspect rendered screen pixels: SwiftUI accessibility bounds can
+            // include off-screen gradient/blur extents even when clipped.
             assertSafeAreaPixelsHaveBackground(screen: screen)
             attachScreenshot(named: "\(screen)-safe-areas")
         }
@@ -109,7 +103,7 @@ final class ResponsiveLayoutTests: XCTestCase {
                 bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
             context.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
-     return true
+            return true
         }
         XCTAssertTrue(rendered)
         // Sample away from the status text, camera cutout, and home indicator.

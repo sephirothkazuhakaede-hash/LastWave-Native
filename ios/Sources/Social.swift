@@ -531,7 +531,7 @@ enum SocialConnectionState: Equatable {
                         transaction.setData([
                             "uid": uid,
                             "createdAt": FieldValue.serverTimestamp()
-       ], forDocument: usernameRef)
+                        ], forDocument: usernameRef)
                     }
 
                     var update: [String: Any] = [

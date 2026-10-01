@@ -132,10 +132,7 @@ struct CapyAmbientBackdrop: View, Equatable {
         // Expand the completed decorative layer, including its compositing
         // surface. Foreground siblings keep their normal safe-area layout.
         .ignoresSafeArea(.container, edges: .all)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Ambient background")
-        .accessibilityIdentifier("capyflow-background")
-        .accessibilityHidden(!ProcessInfo.processInfo.arguments.contains("--layout-fixture"))
+        .accessibilityHidden(true)
     }
 }
 

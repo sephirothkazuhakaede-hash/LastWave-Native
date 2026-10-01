@@ -7,7 +7,7 @@
 - Inviting a collaborator used to publish an old local playlist twice, potentially replacing edits. Existing shared copies are reused; track mutations now use transactions and deduplicate by track ID. Membership remains UID based through username changes. Followed profile photos and names update through listeners.
 - High and Automatic selected identical backend formats. Settings → Audio Quality now offers Data Saver and Best Available. The existing automatic/default selector is preserved. Original compatible audio is selected without transcoding. Backend caches, iOS stream caches and offline filenames include quality; offline records include the actual format metadata when available. Unknown legacy quality is not silently treated as the chosen quality.
 - Now Playing has Apple's native audio-output picker and the current system output name. iOS reroutes the existing player; route selection does not reload, seek or resolve a track. Disconnecting the current output pauses playback. The playback session uses the long-form audio policy.
-- Decorative backgrounds expand after compositing, a window-level backdrop covers the root, and navigation bars are transparent. Foreground content keeps safe-area positioning. Responsive tests check root background bounds and actual top/bottom screenshot pixels.
+- Decorative backgrounds expand after compositing, a window-level backdrop covers the root, and navigation bars are transparent. Foreground content keeps safe-area positioning. Responsive tests check actual top/bottom screenshot pixels on the root tabs and primary screens. Decorative gradients stay hidden from accessibility; foreground controls retain the original bounds checks.
 
 ## Automated validation
 

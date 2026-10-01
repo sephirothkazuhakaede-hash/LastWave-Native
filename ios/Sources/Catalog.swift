@@ -479,7 +479,7 @@ actor Catalog {
             do {
                 // Local extraction normally starts faster because it avoids the
                 // Cloudflare WebSocket round trip. The remote extractor remains a
-// fallback, and a failed AVPlayer item retries in the opposite order.
+                // fallback, and a failed AVPlayer item retries in the opposite order.
                 let youtube: YouTube
                 if preferRemote {
                     youtube = YouTube(videoID: track.playableID, methods: [.remote, .local])
