@@ -73,7 +73,8 @@ service cloud.firestore {
             request.resource.data.usernameIsGenerated == false &&
             request.resource.data.usernameChangedAt == request.time &&
             (resource.data.get('username', '') == '' ||
-              !existsAfter(/databases/$(database)/documents/usernames/$(resource.data.username)))
+              !existsAfter(/databases/$(database)/documents/usernames/$(resource.data.username)) ||
+              getAfter(/databases/$(database)/documents/usernames/$(resource.data.username)).data.get('uid', '') != uid)
           )
         );
       allow delete: if owns(uid) &&

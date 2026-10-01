@@ -224,6 +224,10 @@ actor Catalog {
 
     func albumTracks(for album: Album) async throws -> [Track] {
         let root = try await browseResponse(id: album.id)
+        return try Self.parseAlbumTracks(root, album: album)
+    }
+
+    nonisolated static func parseAlbumTracks(_ root: Any, album: Album) throws -> [Track] {
         var tracks: [Track] = []
         func renderedText(_ node: Any?) -> String? {
             guard let object = node as? [String: Any] else { return nil }
@@ -244,12 +248,15 @@ actor Catalog {
                     let fixedColumns = renderer["fixedColumns"] as? [[String: Any]] ?? []
                     let duration = fixedColumns.compactMap { column -> Double? in
                         let fixed = column["musicResponsiveListItemFixedColumnRenderer"] as? [String: Any]
-                        return renderedText(fixed?["text"]).flatMap(parseDuration)
+                        return renderedText(fixed?["text"]).flatMap(MediaDuration.parse)
                     }.first
                     let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
                     let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
                     if let title = values.first {
-                        var track = Track(id: id, title: title, artist: values.dropFirst().first ?? album.artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:)) ?? album.artworkURL)
+                        let artist = values.dropFirst().first.flatMap { value in
+                            value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
+                        } ?? album.artist
+                        var track = Track(id: id, title: title, artist: artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:)) ?? album.artworkURL)
                         track.albumID = album.id
                         track.musicVideoType = Self.stringValue("musicVideoType", in: renderer)
                         tracks.append(track)
@@ -430,7 +437,7 @@ actor Catalog {
             guard let song = AlbumAudioIdentity.bestMatch(for: track, candidates: candidates) else {
                 throw WaveError.message("The album recording could not be verified. Try finding this song in Search instead.")
             }
-            var mapped = track.withDuration(song.duration ?? track.duration ?? 0)
+            var mapped = song.duration.map(track.withDuration) ?? track
             mapped.mediaID = song.id
             mapped.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
             return mapped
@@ -472,7 +479,7 @@ actor Catalog {
             do {
                 // Local extraction normally starts faster because it avoids the
                 // Cloudflare WebSocket round trip. The remote extractor remains a
-                // fallback, and a failed AVPlayer item retries in the opposite order.
+// fallback, and a failed AVPlayer item retries in the opposite order.
                 let youtube: YouTube
                 if preferRemote {
                     youtube = YouTube(videoID: track.playableID, methods: [.remote, .local])
@@ -504,7 +511,15 @@ actor Catalog {
                     source: .directFallback,
                     mediaInfo: AudioMediaInfo(
                         container: stream.fileExtension.rawValue,
-                        codec: stream.audioCodec?.rawValue,
+                        codec: stream.audioCodec.map { codec in
+                            switch codec {
+                            case .mp4a(let version): return version.isEmpty ? "mp4a" : "mp4a.\(version)"
+                            case .opus: return "opus"
+                            case .ec3: return "ec-3"
+                            case .ac3: return "ac-3"
+                            case .unknown(let value): return value
+                            }
+                        },
                         bitrateKbps: receivedBitrate.map { Double($0) / 1000 },
                         sampleRateHz: nil,
                         formatId: nil,

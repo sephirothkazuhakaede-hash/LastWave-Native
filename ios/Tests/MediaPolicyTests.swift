@@ -3,6 +3,25 @@ import AVFoundation
 @testable import CapyFlow
 
 final class MediaPolicyTests: XCTestCase {
+    func testAlbumParserKeepsRecordingIdentityAndUsesAlbumArtistForEmptyColumns() throws {
+        let column: (String) -> [String: Any] = { ["musicResponsiveListItemFlexColumnRenderer": ["text": ["runs": [["text": $0]]]]] }
+        let row: [String: Any] = [
+            "index": ["runs": [["text": "1"]]],
+            "playlistItemData": ["videoId": "h8DLofLM7No"],
+            "flexColumns": [column("Lavender Haze"), column("")],
+            "fixedColumns": [["musicResponsiveListItemFixedColumnRenderer": ["text": ["runs": [["text": "3:23"]]]]]],
+            "navigationEndpoint": ["watchEndpoint": ["watchEndpointMusicSupportedConfigs": ["watchEndpointMusicConfig": ["musicVideoType": "MUSIC_VIDEO_TYPE_OMV"]]]]
+        ]
+        var related = row; related.removeValue(forKey: "index")
+        related["playlistItemData"] = ["videoId": "unrelated01"]
+        let album = Album(id: "MPREb_z0ABWl3jaT0", title: "Midnights", artist: "Taylor Swift", year: nil, artworkURL: nil)
+        let tracks = try Catalog.parseAlbumTracks(["contents": [["musicResponsiveListItemRenderer": row], ["musicResponsiveListItemRenderer": related]]], album: album)
+        XCTAssertEqual(tracks.count, 1)
+        XCTAssertEqual(tracks[0].artist, "Taylor Swift")
+        XCTAssertEqual(tracks[0].duration, 203)
+        XCTAssertEqual(tracks[0].albumID, album.id)
+        XCTAssertEqual(tracks[0].musicVideoType, "MUSIC_VIDEO_TYPE_OMV")
+    }
     func testDurationParsingRejectsMalformedColumns() {
         XCTAssertEqual(MediaDuration.parse("3:23"), 203)
         XCTAssertEqual(MediaDuration.parse("1:03:23"), 3803)

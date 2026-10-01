@@ -14,6 +14,7 @@ final class ResponsiveLayoutTests: XCTestCase {
         for fixture in ["player", "player-lyrics", "album", "playlist", "social", "profile"] {
             launch(fixture)
             assertVisibleControlsFitHorizontally(screen: fixture)
+            assertSafeAreaPixelsHaveBackground(screen: fixture)
             attachScreenshot(named: fixture)
             app.terminate()
         }
@@ -42,6 +43,15 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 4))
         assertVisibleControlsFitHorizontally(screen: "settings sheet")
         attachScreenshot(named: "settings-sheet")
+        let qualityLink = app.buttons["Audio Quality"].firstMatch
+        if !qualityLink.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(qualityLink.isHittable, "Audio Quality must be reachable in Settings")
+        qualityLink.tap()
+        XCTAssertTrue(app.navigationBars["Audio Quality"].waitForExistence(timeout: 4))
+        assertVisibleControlsFitHorizontally(screen: "audio quality settings")
+        attachScreenshot(named: "audio-quality-settings")
+        app.navigationBars["Audio Quality"].buttons.firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 4))
         app.buttons["Done"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForNonExistence(timeout: 4))
 
@@ -99,7 +109,7 @@ final class ResponsiveLayoutTests: XCTestCase {
                 bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
             context.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
-            return true
+     return true
         }
         XCTAssertTrue(rendered)
         // Sample away from the status text, camera cutout, and home indicator.

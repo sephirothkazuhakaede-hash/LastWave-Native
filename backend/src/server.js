@@ -32,7 +32,7 @@ function applyCors(request, response, config) {
     response.setHeader('Access-Control-Allow-Headers', 'Authorization, Range, Content-Type');
     response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
     response.setHeader('Access-Control-Expose-Headers',
-      'Accept-Ranges, Content-Length, Content-Range, Server-Timing, X-CapyFlow-Cache, X-CapyFlow-Duration, X-CapyFlow-Audio-Quality');
+      'Accept-Ranges, Content-Length, Content-Range, Server-Timing, X-CapyFlow-Cache, X-CapyFlow-Duration, X-CapyFlow-Audio-Quality, X-CapyFlow-Media-Info');
   }
 }
 

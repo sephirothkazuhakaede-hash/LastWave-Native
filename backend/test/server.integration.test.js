@@ -71,6 +71,9 @@ test('server proxies Range, refreshes a 403, and then serves its persistent cach
   const invalidated = new Set();
   const resolveCounts = new Map();
   const downloadCounts = new Map();
+  const formatInfo = quality => ({ container: 'm4a', codec: 'mp4a.40.2',
+    bitrateKbps: quality === 'dataSaver' ? 48 : 128, sampleRateHz: 44100,
+    formatId: quality === 'dataSaver' ? '139' : '140', selectedMode: quality });
   const resolver = {
     inFlightCount: 0,
     isInstalled: async () => true,
@@ -81,13 +84,14 @@ test('server proxies Range, refreshes a 403, and then serves its persistent cach
         videoId, quality, url: `${upstreamRoot}${stale ? '/stale' : '/audio'}`,
         headers: {}, title: 'Integration Song', artist: 'Test', duration: 96,
         contentLength: audio.length,
+        mediaInfo: formatInfo(quality),
       };
     },
     invalidate: (videoId) => invalidated.add(videoId),
     download: async (videoId, quality, destination) => {
       downloadCounts.set(videoId, (downloadCounts.get(videoId) || 0) + 1);
-      await fs.writeFile(destination, audio);
-      return { videoId, quality, duration: 96 };
+      await fs.writeFile(destination, quality === 'dataSaver' ? Buffer.alloc(audio.length, 7) : audio);
+      return { videoId, quality, duration: 96, mediaInfo: formatInfo(quality) };
     },
   };
   const config = {
@@ -104,6 +108,7 @@ test('server proxies Range, refreshes a 403, and then serves its persistent cach
   });
   assert.equal(ranged.status, 206);
   assert.equal(ranged.headers.get('x-capyflow-cache'), 'MISS');
+  assert.equal(JSON.parse(ranged.headers.get('x-capyflow-media-info')).bitrateKbps, 128);
   assert.equal(ranged.headers.get('content-range'), `bytes 100-199/${audio.length}`);
   assert.deepEqual(Buffer.from(await ranged.arrayBuffer()), audio.subarray(100, 200));
 
@@ -123,6 +128,7 @@ test('server proxies Range, refreshes a 403, and then serves its persistent cach
   });
   assert.equal(cached.status, 206);
   assert.equal(cached.headers.get('x-capyflow-cache'), 'HIT');
+  assert.equal(JSON.parse(cached.headers.get('x-capyflow-media-info')).formatId, '140');
   assert.match(cached.headers.get('content-disposition'), /^attachment;/u);
   assert.deepEqual(Buffer.from(await cached.arrayBuffer()), audio.subarray(audio.length - 32));
 
@@ -142,6 +148,20 @@ test('server proxies Range, refreshes a 403, and then serves its persistent cach
   const freshHit = await fetch(`${root}/v1/download/fresh123xyz?quality=automatic`);
   assert.equal(freshHit.headers.get('x-capyflow-cache'), 'HIT');
   assert.equal(downloadCounts.get('fresh123xyz'), 1);
+  await freshHit.arrayBuffer();
+
+  const saverDownload = await fetch(`${root}/v1/download/fresh123xyz?quality=dataSaver`);
+  assert.equal(JSON.parse(saverDownload.headers.get('x-capyflow-media-info')).bitrateKbps, 48);
+  assert.deepEqual(Buffer.from(await saverDownload.arrayBuffer()), Buffer.alloc(audio.length, 7));
+  const saverStream = await fetch(`${root}/v1/audio/fresh123xyz?quality=dataSaver`);
+  assert.equal(saverStream.headers.get('x-capyflow-cache'), 'HIT');
+  assert.deepEqual(Buffer.from(await saverStream.arrayBuffer()), Buffer.alloc(audio.length, 7));
+  const saverResolve = await (await fetch(`${root}/v1/resolve/fresh123xyz?quality=dataSaver`)).json();
+  assert.equal(saverResolve.quality, 'dataSaver');
+  assert.equal(saverResolve.mediaInfo.bitrateKbps, 48);
+  assert.equal(saverResolve.mediaInfo.sampleRateHz, 44100);
+  const bestResolve = await (await fetch(`${root}/v1/resolve/fresh123xyz?quality=automatic`)).json();
+  assert.equal(bestResolve.mediaInfo.bitrateKbps, 128);
 
   const health = await fetch(`${root}/health`);
   assert.equal(health.status, 200);

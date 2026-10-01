@@ -82,3 +82,19 @@ test('a partial profile without a username can bootstrap safely', async () => {
   await assertSucceeds(batch.commit());
   await assertSucceeds(rename('alice', 'alice_initial', 'alice_custom'));
 });
+
+test('repairing a conflicting legacy profile never deletes another users reservation', async () => {
+  await create('bob', 'shared_name');
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'profiles', 'alice'), {
+      username: 'shared_name', usernameKey: 'shared_name', usernameIsGenerated: false,
+      displayName: 'Alice', bio: '', avatarURL: '',
+    });
+  });
+  const db = account('alice'), batch = writeBatch(db);
+  batch.update(doc(db, 'profiles', 'alice'), { username: 'alice_fixed', usernameKey: 'alice_fixed',
+    usernameIsGenerated: false, usernameChangedAt: serverTimestamp() });
+  batch.set(doc(db, 'usernames', 'alice_fixed'), { uid: 'alice', createdAt: serverTimestamp() });
+  await assertSucceeds(batch.commit());
+  await assertSucceeds(getDoc(doc(account('bob'), 'usernames', 'shared_name')));
+});

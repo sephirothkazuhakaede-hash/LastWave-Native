@@ -514,6 +514,8 @@ enum SocialConnectionState: Equatable {
                     }
 
                     let isRename = previousUsername != username
+                    let previousReservation = isRename
+                        ? try transaction.getDocument(usernames.document(previousUsername)) : nil
                     if isRename, profileData["usernameIsGenerated"] as? Bool != true,
                        let changedAt = (profileData["usernameChangedAt"] as? Timestamp)?.dateValue() {
                         let nextChange = changedAt.addingTimeInterval(UsernamePolicy.changeCooldown)
@@ -529,7 +531,7 @@ enum SocialConnectionState: Equatable {
                         transaction.setData([
                             "uid": uid,
                             "createdAt": FieldValue.serverTimestamp()
-                        ], forDocument: usernameRef)
+       ], forDocument: usernameRef)
                     }
 
                     var update: [String: Any] = [
@@ -547,7 +549,7 @@ enum SocialConnectionState: Equatable {
                     }
                     transaction.updateData(update, forDocument: profileRef)
 
-                    if isRename {
+                    if isRename, previousReservation?.data()?["uid"] as? String == uid {
                         transaction.deleteDocument(usernames.document(previousUsername))
                     }
                     return nil
@@ -693,8 +695,12 @@ enum SocialConnectionState: Equatable {
                         // that first free rename without allowing cooldown reset.
                         update["usernameIsGenerated"] = false
                     }
-                    if data["displayName"] as? String == nil { update["displayName"] = String((user.displayName ?? username).prefix(60)) }
-                    if data["bio"] as? String == nil { update["bio"] = "" }
+                    let displayName = (data["displayName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    if displayName.isEmpty || displayName.count > 60 {
+                        update["displayName"] = String((displayName.isEmpty ? (user.displayName ?? username) : displayName).prefix(60))
+                    }
+                    let bio = data["bio"] as? String
+                    if bio == nil || bio!.count > 160 { update["bio"] = String((bio ?? "").prefix(160)) }
                     if data["avatarURL"] as? String == nil { update["avatarURL"] = user.photoURL?.absoluteString ?? "" }
                     if !reservation.exists {
                         transaction.setData(["uid": user.uid, "createdAt": FieldValue.serverTimestamp()], forDocument: reservationRef)
