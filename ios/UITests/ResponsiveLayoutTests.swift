@@ -71,8 +71,13 @@ final class ResponsiveLayoutTests: XCTestCase {
         assertVisibleControlsFitHorizontally(screen: "library")
         attachScreenshot(named: "root-tabs")
         let filters = app.scrollViews["library-filter-scroll"]
-        filters.swipeLeft()
         let sharedFilter = app.descendants(matching: .any).matching(identifier: "library-filter-Shared").firstMatch
+        // Swipe distance varies by device and simulator. Reach the final chip
+        // rather than assuming one gesture always lands at the scroll end.
+        for _ in 0..<3 {
+            if sharedFilter.isHittable && sharedFilter.frame.maxX <= filters.frame.maxX + 1.5 { break }
+            filters.swipeLeft()
+        }
         XCTAssertTrue(sharedFilter.isHittable, "The last library filter must be reachable by scrolling")
         XCTAssertGreaterThanOrEqual(sharedFilter.frame.minX, filters.frame.minX - 1.5)
         XCTAssertLessThanOrEqual(sharedFilter.frame.maxX, filters.frame.maxX + 1.5)
