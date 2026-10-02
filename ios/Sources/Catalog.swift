@@ -47,7 +47,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         var copy = Track(id: id, title: song.title, artist: song.artist,
                          duration: song.duration ?? duration, artworkURL: song.artworkURL ?? artworkURL)
         copy.mediaID = song.playableID
-        copy.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
+        copy.musicVideoType = song.musicVideoType
         copy.albumID = albumID ?? song.albumID
         copy.albumTitle = albumTitle ?? song.albumTitle
         copy.trackNumber = trackNumber ?? song.trackNumber
@@ -204,7 +204,7 @@ actor Catalog {
                         let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
                         let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
                         var track = Track(id: id, title: title, artist: artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:)))
-                        track.musicVideoType = Self.stringValue("musicVideoType", in: renderer)
+                        track.musicVideoType = Self.primaryMusicVideoType(in: renderer)
                         track.albumID = columns.dropFirst().flatMap(runs).compactMap { run in
                             let endpoint = run["navigationEndpoint"] as? [String: Any]
                             let browse = endpoint?["browseEndpoint"] as? [String: Any]
@@ -310,7 +310,7 @@ actor Catalog {
                         track.albumTitle = album.title
                         track.trackNumber = renderedText(renderer["index"]).flatMap(Int.init)
                         track.isExplicit = Self.hasExplicitBadge(renderer) ? true : nil
-                        track.musicVideoType = Self.stringValue("musicVideoType", in: renderer)
+                        track.musicVideoType = Self.primaryMusicVideoType(in: renderer)
                         tracks.append(track)
                     }
                 }
@@ -476,6 +476,20 @@ actor Catalog {
         } else if let array = node as? [Any] {
             for value in array { if let found = stringValue(key, in: value) { return found } }
         }
+        return nil
+    }
+
+    private static func primaryMusicVideoType(in renderer: [String: Any]) -> String? {
+        // Menu commands can contain endpoints for another recording. Never let
+        // dictionary traversal classify this row using one of those endpoints.
+        let columns = renderer["flexColumns"] as? [[String: Any]] ?? []
+        let first = columns.first?["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any]
+        let runs = (first?["text"] as? [String: Any])?["runs"] as? [[String: Any]] ?? []
+        for run in runs {
+            if let endpoint = run["navigationEndpoint"], let type = stringValue("musicVideoType", in: endpoint) { return type }
+        }
+        if let endpoint = renderer["navigationEndpoint"], let type = stringValue("musicVideoType", in: endpoint) { return type }
+        if let overlay = renderer["overlay"], let type = stringValue("musicVideoType", in: overlay) { return type }
         return nil
     }
 

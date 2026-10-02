@@ -25,47 +25,131 @@ enum AlbumAudioIdentity {
                            options: [.regularExpression, .caseInsensitive]) != nil
     }
 
-    static func compatible(_ track: Track, _ candidate: Track) -> Bool {
-        guard candidate.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" else { return false }
-        // The same media ID is direct evidence of the same recording, including
-        // localized title/artist metadata or stale Unknown artist saved rows.
-        if candidate.playableID == track.playableID { return true }
-        guard
-              !key(title(track.title)).isEmpty,
-              key(title(track.title)) == key(title(candidate.title)) else { return false }
-        let artistKey = key(artist(track.artist))
-        let missingArtist = isMissingArtist(track.artist)
-        if !missingArtist && artistKey != key(artist(candidate.artist)) { return false }
-        // Version words remain in the title: Live, Remix, Acoustic, Cover,
-        // Extended, Sped Up and Slowed must agree. Explicitness is separate.
-        if let explicit = track.isExplicit, let other = candidate.isExplicit, explicit != other { return false }
-        if let duration = track.duration, let other = candidate.duration, duration > 0, other > 0 {
-            if abs(duration - other) > max(5, min(12, duration * 0.04)) { return false }
+    private static func comparisonTitle(_ value: String) -> String {
+        key(title(value)).replacingOccurrences(of: #"\bmovie ver\b"#, with: "movie version", options: .regularExpression)
+            .replacingOccurrences(of: #"\bmovie edited version\b"#, with: "movie edit", options: .regularExpression)
+    }
+
+    /// Read annotations, not ordinary words in titles such as Live Forever.
+    static func versionMarkers(_ value: String) -> Set<String> {
+        let pattern = #"[\(\[]([^\)\]]+)[\)\]]|\s[-–—]\s(.+)$|\b(live|cover|karaoke|instrumental|remix|slowed|sped up|nightcore|extended|acoustic)(\s+(version|ver\.?|edit))?$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }
+        let text = value as NSString
+        var markers: Set<String> = []
+        for match in regex.matches(in: value, range: NSRange(location: 0, length: text.length)) {
+            let annotation = key(text.substring(with: match.range))
+            if annotation.hasPrefix("feat ") || annotation.hasPrefix("ft ") || annotation.hasPrefix("featuring ") { continue }
+            for marker in ["live", "cover", "karaoke", "instrumental", "remix", "slowed", "sped up", "nightcore", "extended", "acoustic", "english", "japanese"] {
+                if (" " + annotation + " ").contains(" " + marker + " ") { markers.insert(marker) }
+            }
+            if (" " + annotation + " ").contains(" mix ") { markers.insert("remix") }
+            if annotation.contains("movie edit") { markers.insert("movie edit") }
+            else if annotation.contains("movie ver") { markers.insert("movie version") }
+            if annotation.contains("music video") { markers.insert("music video") }
         }
+        return markers
+    }
+
+    private static func artistAgreement(_ lhs: String, _ rhs: String) -> Double {
+        let a = key(artist(lhs)), b = key(artist(rhs))
+        guard !a.isEmpty, !b.isEmpty else { return 0 }
+        if a == b { return 50 }
+        // Credits may move between title and artist; never match a substring
+        // such as Radiohead Tribute to the actual artist.
+        let parts: (String) -> Set<String> = { value in Set(artist(value).components(separatedBy: " & ").map { key($0) }) }
+        return parts(rhs).contains(a) || parts(lhs).contains(b) ? 45 : 0
+    }
+
+    private static func titleSimilarity(_ lhs: String, _ rhs: String) -> Double {
+        let a = comparisonTitle(lhs), b = comparisonTitle(rhs)
+        if a == b || a.replacingOccurrences(of: " ", with: "") == b.replacingOccurrences(of: " ", with: "") { return 1 }
+        let withoutArticle: (String) -> String = { $0.hasPrefix("the ") ? String($0.dropFirst(4)) : $0 }
+        if withoutArticle(a) == withoutArticle(b) { return 0.97 }
+        let left = Array(a), right = Array(b)
+        guard min(left.count, right.count) >= 8 else { return 0 }
+        var previous = Array(0...right.count)
+        for (i, character) in left.enumerated() {
+            var current = [i + 1]
+            for (j, other) in right.enumerated() {
+                current.append(min(current[j] + 1, min(previous[j + 1] + 1, previous[j] + (character == other ? 0 : 1))))
+            }
+            previous = current
+        }
+        return 1 - Double(previous[right.count]) / Double(max(left.count, right.count))
+    }
+
+    /// One eligibility/ranking policy for cold searches and cached recordings.
+    static func score(_ track: Track, _ candidate: Track) -> Double? {
+        let audio = candidate.musicVideoType == "MUSIC_VIDEO_TYPE_ATV"
+        let requestedVersions = versionMarkers(track.title).union(versionMarkers(track.albumTitle ?? ""))
+        let candidateVersions = versionMarkers(candidate.title).union(versionMarkers(candidate.albumTitle ?? ""))
+        if candidate.musicVideoType == "MUSIC_VIDEO_TYPE_OMV", !requestedVersions.contains("music video") { return nil }
+        guard audio || candidate.musicVideoType == nil || candidate.musicVideoType == "MUSIC_VIDEO_TYPE_UGC"
+                || requestedVersions.contains("music video") else { return nil }
+        if candidate.playableID == track.playableID { return 1000 }
         let sameAlbum = track.albumID != nil && track.albumID == candidate.albumID
         let namedAlbum = track.albumTitle != nil && candidate.albumTitle != nil
             && key(title(track.albumTitle!)) == key(title(candidate.albumTitle!))
-        if missingArtist { return (sameAlbum || namedAlbum) && track.duration != nil && candidate.duration != nil }
-        // YouTube assigns different browse IDs to explicit/clean, regional and
-        // reissued album listings. A different ID is not a different recording.
-        // Without album agreement require duration corroboration.
-        return sameAlbum || namedAlbum || (track.duration != nil && candidate.duration != nil)
-            || (track.albumID == nil && track.albumTitle == nil)
+        let missingArtist = isMissingArtist(track.artist)
+        let artistScore = artistAgreement(track.artist, candidate.artist)
+        if !missingArtist && artistScore == 0 { return nil }
+        if let explicit = track.isExplicit, let other = candidate.isExplicit, explicit != other { return nil }
+        var durationScore = 0.0, closeDuration = false
+        if let duration = track.duration, let other = candidate.duration,
+           duration.isFinite, other.isFinite, duration > 0, other > 0 {
+            let delta = abs(duration - other), tolerance = max(5, min(12, duration * 0.04))
+            closeDuration = delta <= tolerance
+            // Video intros/outros justify a bounded difference only with an
+            // exact title/artist and album, never a wrong version.
+            let videoPadding = track.musicVideoType == "MUSIC_VIDEO_TYPE_OMV" && (sameAlbum || namedAlbum)
+                && comparisonTitle(track.title) == comparisonTitle(candidate.title)
+            let limit = videoPadding ? max(tolerance, min(40, duration * 0.15)) : tolerance
+            if delta > limit { return nil }
+            durationScore = 30 - min(15, delta / limit * 15)
+        }
+        var similarity = titleSimilarity(track.title, candidate.title)
+        if requestedVersions != candidateVersions {
+            // A Songs title can omit a movie annotation. Exact album/duration
+            // corroboration is required; movie edit and movie version stay distinct.
+            let movieOnly = !requestedVersions.isEmpty && requestedVersions.isSubset(of: ["movie edit", "movie version"])
+            guard movieOnly, candidateVersions.isEmpty, audio, artistScore > 0,
+                  (sameAlbum || namedAlbum), closeDuration else { return nil }
+            let base = comparisonTitle(track.title).replacingOccurrences(of: #"\s+movie (version|edit)$"#, with: "", options: .regularExpression)
+            guard base == comparisonTitle(candidate.title) else { return nil }
+            similarity = 0.95
+        }
+        guard similarity >= 0.92, !comparisonTitle(track.title).isEmpty else { return nil }
+        if similarity < 1 && !closeDuration && !sameAlbum && !namedAlbum { return nil }
+        if missingArtist && (!(sameAlbum || namedAlbum) || !closeDuration) { return nil }
+        if !audio && (artistScore == 0 || similarity < 1 || !closeDuration) { return nil }
+        var value = similarity * 100 + (missingArtist ? 15 : artistScore) + durationScore + (audio ? 20 : 0)
+        if sameAlbum { value += 40 } else if namedAlbum { value += 30 }
+        if track.isExplicit != nil && candidate.isExplicit == track.isExplicit { value += 8 }
+        if candidate.artist.range(of: #"[-–—]\s*Topic$"#, options: [.regularExpression, .caseInsensitive]) != nil { value += 5 }
+        if candidate.title.range(of: "official audio", options: .caseInsensitive) != nil { value += 3 }
+        return value >= 170 ? value : nil
     }
 
+    static func compatible(_ track: Track, _ candidate: Track) -> Bool { score(track, candidate) != nil }
+
     static func bestMatch(for track: Track, candidates: [Track]) -> Track? {
-        candidates.enumerated().filter { compatible(track, $0.element) }.max { lhs, rhs in
-            func score(_ item: (offset: Int, element: Track)) -> Double {
-                let song = item.element
-                var value = Double(-item.offset) * 0.001
-                if song.playableID == track.playableID { value += 200 }
-                if track.albumID != nil && song.albumID == track.albumID { value += 100 }
-                if let album = track.albumTitle, let other = song.albumTitle, key(title(album)) == key(title(other)) { value += 30 }
-                if let duration = track.duration, let other = song.duration { value += max(0, 15 - abs(duration - other)) }
-                if track.isExplicit != nil && song.isExplicit == track.isExplicit { value += 10 }
-                return value
-            }
-            return score(lhs) < score(rhs)
-        }?.element
+        candidates.enumerated().compactMap { offset, candidate -> (Track, Double)? in
+            score(track, candidate).map { (candidate, $0 - Double(offset) * 0.001) }
+        }.max { $0.1 < $1.1 }?.0
+    }
+
+    static func searchQueries(for track: Track) -> [String] {
+        let performer = isMissingArtist(track.artist) ? "" : artist(track.artist)
+        let normalized = title(track.title), original = track.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let album = title(track.albumTitle ?? "")
+        let base = normalized.replacingOccurrences(of: #"\s*[-–—]\s*movie (ver\.?|version|edit\.?)\s*$"#, with: "", options: [.regularExpression, .caseInsensitive])
+        let join: ([String]) -> String = { $0.filter { !$0.isEmpty }.joined(separator: " ") }
+        let alternatives = [join([performer, normalized]), join([original, performer]), join([performer, original]),
+                            join([normalized, performer]), join([performer, normalized, album]), join([normalized, album, performer]),
+                            join([performer, key(normalized), album]), join([performer, base, album])]
+        var seen: Set<String> = []
+        return alternatives.filter { query in
+            !query.isEmpty && seen.insert(query.lowercased().replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)).inserted
+        }
     }
 }

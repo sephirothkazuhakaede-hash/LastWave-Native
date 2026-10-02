@@ -106,8 +106,7 @@ actor CanonicalTrackResolver {
             track.albumTitle = context.title
         }
         let missingArtist = AlbumAudioIdentity.isMissingArtist(track.artist)
-        if !missingArtist && (track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV"
-            || (track.mediaID != nil && track.albumID == nil && track.albumTitle == nil)),
+        if !missingArtist && track.mediaID != nil && track.albumID == nil && track.albumTitle == nil,
            !index.needsMetadata.contains(track.playableID) {
             var trusted = track
             trusted.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
@@ -117,25 +116,56 @@ actor CanonicalTrackResolver {
         guard track.albumID != nil || track.albumTitle != nil || track.musicVideoType == "MUSIC_VIDEO_TYPE_OMV" || missingArtist else { return track }
         if let task = pending[track.id] { return try await task.value }
         let task = Task { () throws -> Track in
-            let artist = AlbumAudioIdentity.artist(track.artist)
-            let query = AlbumAudioIdentity.title(track.title) + " "
-                + (AlbumAudioIdentity.isMissingArtist(artist) ? (track.albumTitle ?? "") : artist)
-            let first: [Track]
-            do { first = try await search(query) }
-            catch let error as URLError {
-                // Previously verified downloaded recordings must remain usable
-                // offline. Retry metadata enrichment next time; don't persist
-                // this as a fresh canonical result or cache a failed lookup.
-                if track.mediaID != nil || track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" { return track }
-                if let id = self.index.aliases[track.id], let old = self.index.recordings[id] { return track.adoptingRecording(old) }
-                throw error
-            }
-            var candidates = first
-            if AlbumAudioIdentity.bestMatch(for: track, candidates: candidates) == nil, let album = track.albumTitle {
-                candidates += try await search(query + " " + album)
+            let queries = AlbumAudioIdentity.searchQueries(for: track)
+            var candidates: [Track] = []
+            for (attempt, query) in queries.enumerated() {
+                try Task.checkCancellation()
+                do {
+                    let results = try await search(query)
+                    for song in results {
+                        if let position = candidates.firstIndex(where: { $0.playableID == song.playableID }) {
+                            if (AlbumAudioIdentity.score(track, song) ?? -1) > (AlbumAudioIdentity.score(track, candidates[position]) ?? -1) {
+                                candidates[position] = song
+                            }
+                        } else { candidates.append(song) }
+                    }
+                    #if DEBUG
+                    print("[CanonicalSearch] row=\(track.id) attempt=\(attempt + 1)/\(queries.count) query=\(query) returned=\(results.count) pooled=\(candidates.count)")
+                    for candidate in results.prefix(8) {
+                        print("[CanonicalCandidate] media=\(candidate.playableID) score=\(AlbumAudioIdentity.score(track, candidate).map { String($0) } ?? "rejected") type=\(candidate.musicVideoType ?? "unknown") title=\(candidate.title) artist=\(candidate.artist) duration=\(candidate.duration ?? 0)")
+                    }
+                    #endif
+                    if let match = AlbumAudioIdentity.bestMatch(for: track, candidates: candidates),
+                       let score = AlbumAudioIdentity.score(track, match), score >= 185 {
+                        #if DEBUG
+                        print("[CanonicalSearch] selected=\(match.playableID) score=\(score) title=\(match.title) artist=\(match.artist) duration=\(match.duration ?? 0)")
+                        #endif
+                        return self.store(track, recording: match)
+                    }
+                } catch is CancellationError { throw CancellationError() }
+                catch let error as URLError where error.code == .cancelled { throw error }
+                catch let error as URLError where error.code == .notConnectedToInternet || error.code == .networkConnectionLost {
+                    // Keep previously verified downloaded identities usable
+                    // offline; a failed refresh never becomes a cached match.
+                    if track.mediaID != nil || track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" { return track }
+                    if let id = self.index.aliases[track.id], let old = self.index.recordings[id] { return track.adoptingRecording(old) }
+                    throw error
+                } catch {
+                    // Empty Songs responses and transient failures must not
+                    // prevent the remaining query forms from being tried.
+                    #if DEBUG
+                    print("[CanonicalSearch] row=\(track.id) attempt=\(attempt + 1) failed=\(error.localizedDescription); trying next query")
+                    #endif
+                }
             }
             guard let song = AlbumAudioIdentity.bestMatch(for: track, candidates: candidates) else {
-                throw WaveError.message("No matching audio recording was returned for this album track. Please retry when the catalog is available.")
+                // Exhaust the Songs fallbacks first. A primary album endpoint
+                // explicitly marked as audio is still a valid final identity;
+                // never use an album music-video ID as this fallback.
+                if track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV", !missingArtist {
+                    return self.store(track, recording: track)
+                }
+                throw WaveError.message("Couldn’t find the correct recording after trying several Songs searches. Please try again later.")
             }
             return self.store(track, recording: song)
         }

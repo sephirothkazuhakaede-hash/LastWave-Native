@@ -63,9 +63,10 @@ final class CanonicalTrackTests: XCTestCase {
         XCTAssertEqual(calls, 0)
     }
 
-    func testTrustworthyAudioAlbumKeepsTheImmediatePathWithoutSearchOrPriming() async throws {
+    func testRegisteredSongsAudioKeepsTheImmediatePathWithoutAnotherSearch() async throws {
         let resolver = CanonicalTrackResolver(defaults: nil), search = RecordingSearch([])
         let song = songTrack()
+        _ = await resolver.registerSearch([song])
         let canonical = try await resolver.resolve(song) { await search.search($0) }
         XCTAssertEqual(canonical.playableID, song.id)
         XCTAssertEqual(canonical.title, song.title)
@@ -145,7 +146,7 @@ final class CanonicalTrackTests: XCTestCase {
         }
     }
 
-    func testSavedAlbumPlayCountArtistRecoversFromAlbumHeaderWithoutSearch() async throws {
+    func testSavedAlbumPlayCountArtistRecoversFromHeaderAndSongs() async throws {
         let header: [String: Any] = ["musicResponsiveHeaderRenderer": [
             "title": ["runs": [["text": "Your Name."]]],
             "straplineTextOne": ["runs": [["text": "RADWIMPS", "navigationEndpoint": ["browseEndpoint": ["browseId": "UCT418-ChE6rgGuQlqzFsKZA"]]]]],
@@ -158,10 +159,9 @@ final class CanonicalTrackTests: XCTestCase {
         stale.albumID = "MPREb_omNHm3qEN1U"
         stale.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
         let resolver = CanonicalTrackResolver(defaults: nil)
-        let fixed = try await resolver.resolve(stale, albumContext: { _ in context }) { _ in
-            XCTFail("A trustworthy audio ID with a repaired album artist needs no Songs search")
-            return []
-        }
+        var song = stale; song.artist = "RADWIMPS"; song.albumTitle = "Your Name."
+        let search = RecordingSearch([song])
+        let fixed = try await resolver.resolve(stale, albumContext: { _ in context }) { await search.search($0) }
         XCTAssertEqual(fixed.artist, "RADWIMPS")
         XCTAssertEqual(fixed.albumTitle, "Your Name.")
         XCTAssertEqual(fixed.playableID, stale.id)
@@ -207,8 +207,7 @@ final class CanonicalTrackTests: XCTestCase {
             XCTAssertEqual(canonical.lyricsCacheKey, equivalent.lyricsCacheKey)
             XCTAssertEqual(canonical.mediaCacheKey(quality: .automatic), equivalent.mediaCacheKey(quality: .automatic))
             let calls = await probe.calls
-            XCTAssertEqual(calls, row.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" ? 0 : 1,
-                           "Trustworthy album audio is immediate; videos are automatically matched")
+            XCTAssertEqual(calls, 1, "Cold albums automatically reach Songs; cached playback needs no extra search")
         }
     }
 }
