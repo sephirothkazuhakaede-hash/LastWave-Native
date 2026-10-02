@@ -8,7 +8,7 @@ final class MediaPolicyTests: XCTestCase {
         let row: [String: Any] = [
             "index": ["runs": [["text": "1"]]],
             "playlistItemData": ["videoId": "h8DLofLM7No"],
-            "flexColumns": [column("Lavender Haze"), column("")],
+            "flexColumns": [column("Lavender Haze"), ["musicResponsiveListItemFlexColumnRenderer": ["text": [:]]], column("178M plays")],
             "fixedColumns": [["musicResponsiveListItemFixedColumnRenderer": ["text": ["runs": [["text": "3:23"]]]]]],
             "navigationEndpoint": ["watchEndpoint": ["watchEndpointMusicSupportedConfigs": ["watchEndpointMusicConfig": ["musicVideoType": "MUSIC_VIDEO_TYPE_OMV"]]]]
         ]

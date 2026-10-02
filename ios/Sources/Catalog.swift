@@ -3,8 +3,8 @@ import YouTubeKit
 
 struct Track: Identifiable, Codable, Equatable, Sendable {
     let id: String
-    let title: String
-    let artist: String
+    var title: String
+    var artist: String
     let duration: Double?
     let artworkURL: URL?
     var downloadQuality: String? = nil
@@ -138,6 +138,8 @@ actor Catalog {
     private var streamCache: [String: (ResolvedStream, Date)] = [:]
     private var durationCache: [String: Double] = [:]
     private let recordings = CanonicalTrackResolver()
+    private var albumContexts: [String: AlbumRecordingContext] = [:]
+    private var albumContextTasks: [String: Task<AlbumRecordingContext, Error>] = [:]
     private var cachedClientConfig: (ClientConfig, Date)?
     private var resolutionTasks: [String: Task<ResolvedStream, Error>] = [:]
 
@@ -261,6 +263,9 @@ actor Catalog {
     }
 
     func albumTracks(for album: Album) async throws -> [Track] {
+        if !AlbumAudioIdentity.isMissingArtist(album.artist) {
+            albumContexts[album.id] = AlbumRecordingContext(title: album.title, artist: album.artist)
+        }
         let root = try await browseResponse(id: album.id)
         return try Self.parseAlbumTracks(root, album: album)
     }
@@ -279,9 +284,11 @@ actor Catalog {
                    let id = item["videoId"] as? String,
                    let columns = renderer["flexColumns"] as? [[String: Any]],
                    !tracks.contains(where: { $0.id == id }) {
-                    let values = columns.compactMap { column -> String? in
+                    // Preserve column positions. YouTube sends text:{} for an
+                    // absent artist; compactMap shifted the play count into it.
+                    let values = columns.map { column -> String in
                         let flex = column["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any]
-                        return renderedText(flex?["text"])
+                        return renderedText(flex?["text"]) ?? ""
                     }
                     let fixedColumns = renderer["fixedColumns"] as? [[String: Any]] ?? []
                     let duration = fixedColumns.compactMap { column -> Double? in
@@ -485,7 +492,49 @@ actor Catalog {
     }
 
     func normalizedTrack(_ track: Track) async throws -> Track {
-        try await recordings.resolve(track) { query in try await self.searchSongs(query) }
+        try await recordings.resolve(track, albumContext: { id in
+            try await self.albumContext(for: id)
+        }) { query in try await self.searchSongs(query) }
+    }
+
+    private func albumContext(for id: String) async throws -> AlbumRecordingContext {
+        if let context = albumContexts[id] { return context }
+        if let task = albumContextTasks[id] { return try await task.value }
+        let task = Task {
+            let root = try await self.browseResponse(id: id)
+            return try Self.parseAlbumContext(root)
+        }
+        albumContextTasks[id] = task
+        defer { albumContextTasks.removeValue(forKey: id) }
+        let context = try await task.value
+        albumContexts[id] = context
+        return context
+    }
+
+    static func parseAlbumContext(_ root: Any) throws -> AlbumRecordingContext {
+        var result: AlbumRecordingContext?
+        func walk(_ node: Any) {
+            if let object = node as? [String: Any] {
+                for name in ["musicResponsiveHeaderRenderer", "musicDetailHeaderRenderer"] {
+                    if let header = object[name] as? [String: Any],
+                       let titleText = header["title"] as? [String: Any] {
+                        let title = titleText["simpleText"] as? String
+                            ?? (titleText["runs"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined()
+                        let artistRuns = ["straplineTextOne", "straplineText", "subtitle"].flatMap { key -> [[String: Any]] in
+                            (header[key] as? [String: Any])?["runs"] as? [[String: Any]] ?? []
+                        }
+                        if let title, let artist = artistName(in: artistRuns), !AlbumAudioIdentity.isMissingArtist(artist) {
+                            result = AlbumRecordingContext(title: title, artist: artist)
+                            return
+                        }
+                    }
+                }
+                for value in object.values where result == nil { walk(value) }
+            } else if let array = node as? [Any] { for value in array where result == nil { walk(value) } }
+        }
+        walk(root)
+        guard let result else { throw WaveError.message("Album artist metadata is not available yet.") }
+        return result
     }
 
     func resolvedStream(for requestedTrack: Track, quality: AudioQuality = .automatic, preferRemote: Bool = false) async throws -> ResolvedStream {

@@ -1,6 +1,13 @@
 # CapyFlow 0.4.4 build 11 — album recording identity
 
-The 0.4.3 album matcher required the exact same MPRE browse ID, exact artist/title
+The album parser discarded absent text columns. Real album responses have an empty
+artist text object followed by a play-count column; dropping the empty column moved
+"178M plays" or "223M plays" into the artist field. This made legitimate Taylor Swift
+album tracks fail artist validation and made RADWIMPS lyrics query a play count as
+the artist. The parser now preserves column positions and inherits the album artist.
+Old saved play-count artists recover using the album header or canonical Songs data.
+
+The 0.4.3 album matcher also required the exact same MPRE browse ID, exact artist/title
 strings and a three-second duration difference. Real public catalog fixtures show
 Snow On The Beach on Midnights resolving in Songs to the same-length recording on
 Midnights (3am Edition); BLOOD. and DNA. similarly resolve to DAMN. COLLECTORS EDITION.
@@ -12,11 +19,12 @@ original fields and cached by row ID rather than playable recording ID. For the
 reported RADWIMPS examples, the live Your Name. album and Songs results share IDs:
 Nandemonaiya - movie ver. is n89SKAymNfA; Dream lantern is MtLHwqbE1eI. A successful
 Songs lyrics request therefore primed the old lyrics[id] file for later album use.
-Stale saved rows with missing artist metadata reproduce this behavior. We cannot
-identify the exact fields in the user's previous on-device index without its logs.
+Captured public album responses reproduce this missing-column/play-count bug.
 
 CanonicalTrackResolver now owns the persisted recording index, row aliases,
 in-flight matching and measured durations. Both Songs and Album use it. Matching
+uses trustworthy ATV audio IDs immediately without adding a catalog request;
+video rows and missing/legacy metadata are automatically enriched. Matching
 normalizes punctuation, featured credits and label decorations, preserves version
 words/language, checks known explicitness and duration, and ranks album agreement.
 Same playable IDs directly establish recording identity. Missing artists require

@@ -63,6 +63,18 @@ final class CanonicalTrackTests: XCTestCase {
         XCTAssertEqual(calls, 0)
     }
 
+    func testTrustworthyAudioAlbumKeepsTheImmediatePathWithoutSearchOrPriming() async throws {
+        let resolver = CanonicalTrackResolver(defaults: nil), search = RecordingSearch([])
+        let song = songTrack()
+        let canonical = try await resolver.resolve(song) { await search.search($0) }
+        XCTAssertEqual(canonical.playableID, song.id)
+        XCTAssertEqual(canonical.title, song.title)
+        XCTAssertEqual(canonical.artist, song.artist)
+        XCTAssertEqual(canonical.lyricsCacheKey, song.lyricsCacheKey)
+        let calls = await search.calls
+        XCTAssertEqual(calls, 0, "A trustworthy audio ID must not wait for another catalog request")
+    }
+
     func testMappingSurvivesRelaunchAndSavedAlbumPlaylistSelfHeals() async throws {
         let name = "CanonicalTrackTests-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!
@@ -120,7 +132,7 @@ final class CanonicalTrackTests: XCTestCase {
         for (id, title, duration) in [("n89SKAymNfA", "Nandemonaiya - movie ver.", 345.0), ("MtLHwqbE1eI", "Dream lantern", 132.0)] {
             // A stale saved album row can lack the artist/origin fields; playing
             // Songs used to prime lyrics[id] and mask the bad album metadata.
-            let stale = Track(id: id, title: title, artist: "Unknown artist", duration: duration)
+            let stale = Track(id: id, title: title, artist: "223M plays", duration: duration)
             var song = Track(id: id, title: title, artist: "RADWIMPS", duration: duration)
             song.albumID = "MPREb_omNHm3qEN1U"; song.albumTitle = "Your Name."
             song.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
@@ -130,6 +142,31 @@ final class CanonicalTrackTests: XCTestCase {
             XCTAssertEqual(fixed.artist, "RADWIMPS")
             XCTAssertEqual(LyricsService.lookupURL(for: fixed), LyricsService.lookupURL(for: song))
             XCTAssertEqual(fixed.lyricsCacheKey, song.lyricsCacheKey)
+        }
+    }
+
+    func testSavedAlbumPlayCountArtistRecoversFromAlbumHeaderWithoutSearch() async throws {
+        let header: [String: Any] = ["musicResponsiveHeaderRenderer": [
+            "title": ["runs": [["text": "Your Name."]]],
+            "straplineTextOne": ["runs": [["text": "RADWIMPS", "navigationEndpoint": ["browseEndpoint": ["browseId": "UCT418-ChE6rgGuQlqzFsKZA"]]]]],
+            "subtitle": ["runs": [["text": "Album"], ["text": " • "], ["text": "2016"]]]
+        ]]
+        let context = try Catalog.parseAlbumContext(header)
+        XCTAssertEqual(context.artist, "RADWIMPS")
+        XCTAssertEqual(context.title, "Your Name.")
+        var stale = Track(id: "MtLHwqbE1eI", title: "Dream lantern", artist: "74M plays", duration: 132)
+        stale.albumID = "MPREb_omNHm3qEN1U"
+        stale.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
+        let resolver = CanonicalTrackResolver(defaults: nil)
+        let fixed = try await resolver.resolve(stale, albumContext: { _ in context }) { _ in
+            XCTFail("A trustworthy audio ID with a repaired album artist needs no Songs search")
+            return []
+        }
+        XCTAssertEqual(fixed.artist, "RADWIMPS")
+        XCTAssertEqual(fixed.albumTitle, "Your Name.")
+        XCTAssertEqual(fixed.playableID, stale.id)
+        for bad in ["Unknown artist", "223M plays", "74M plays", "1.2B views", "953 plays"] {
+            XCTAssertTrue(AlbumAudioIdentity.isMissingArtist(bad), bad)
         }
     }
 
@@ -170,7 +207,8 @@ final class CanonicalTrackTests: XCTestCase {
             XCTAssertEqual(canonical.lyricsCacheKey, equivalent.lyricsCacheKey)
             XCTAssertEqual(canonical.mediaCacheKey(quality: .automatic), equivalent.mediaCacheKey(quality: .automatic))
             let calls = await probe.calls
-            XCTAssertEqual(calls, 1)
+            XCTAssertEqual(calls, row.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" ? 0 : 1,
+                           "Trustworthy album audio is immediate; videos are automatically matched")
         }
     }
 }

@@ -19,6 +19,12 @@ enum AlbumAudioIdentity {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    static func isMissingArtist(_ value: String) -> Bool {
+        ["", "unknown artist", "various artists"].contains(key(artist(value)))
+            || value.range(of: #"^\s*\d+([.,]\d+)?\s*[KMB]?\s*(plays|views)\s*$"#,
+                           options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
     static func compatible(_ track: Track, _ candidate: Track) -> Bool {
         guard candidate.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" else { return false }
         // The same media ID is direct evidence of the same recording, including
@@ -28,7 +34,7 @@ enum AlbumAudioIdentity {
               !key(title(track.title)).isEmpty,
               key(title(track.title)) == key(title(candidate.title)) else { return false }
         let artistKey = key(artist(track.artist))
-        let missingArtist = ["", "unknown artist", "various artists"].contains(artistKey)
+        let missingArtist = isMissingArtist(track.artist)
         if !missingArtist && artistKey != key(artist(candidate.artist)) { return false }
         // Version words remain in the title: Live, Remix, Acoustic, Cover,
         // Extended, Sped Up and Slowed must agree. Explicitness is separate.

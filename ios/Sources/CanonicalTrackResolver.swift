@@ -1,5 +1,10 @@
 import Foundation
 
+struct AlbumRecordingContext: Sendable {
+    let title: String
+    let artist: String
+}
+
 /// One persisted recording index for album rows, Songs results and saved tracks.
 /// The row ID remains stable; mediaID and all playback/lyrics metadata converge.
 actor CanonicalTrackResolver {
@@ -90,10 +95,20 @@ actor CanonicalTrackResolver {
         }
     }
 
-    func resolve(_ track: Track, search: @escaping @Sendable (String) async throws -> [Track]) async throws -> Track {
-        if let saved = cached(track) { return saved }
-        let missingArtist = ["", "unknown artist", "various artists"].contains(AlbumAudioIdentity.key(track.artist))
-        if (track.mediaID != nil || track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV") && track.albumID == nil && track.albumTitle == nil && !missingArtist {
+    func resolve(_ requestedTrack: Track,
+                 albumContext: (@Sendable (String) async throws -> AlbumRecordingContext)? = nil,
+                 search: @escaping @Sendable (String) async throws -> [Track]) async throws -> Track {
+        if let saved = cached(requestedTrack) { return saved }
+        var track = requestedTrack
+        if AlbumAudioIdentity.isMissingArtist(track.artist), let id = track.albumID,
+           let albumContext, let context = try? await albumContext(id) {
+            track.artist = context.artist
+            track.albumTitle = context.title
+        }
+        let missingArtist = AlbumAudioIdentity.isMissingArtist(track.artist)
+        if !missingArtist && (track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV"
+            || (track.mediaID != nil && track.albumID == nil && track.albumTitle == nil)),
+           !index.needsMetadata.contains(track.playableID) {
             var trusted = track
             trusted.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
             return store(track, recording: trusted)
@@ -104,14 +119,14 @@ actor CanonicalTrackResolver {
         let task = Task { () throws -> Track in
             let artist = AlbumAudioIdentity.artist(track.artist)
             let query = AlbumAudioIdentity.title(track.title) + " "
-                + (["", "unknown artist", "various artists"].contains(AlbumAudioIdentity.key(artist)) ? (track.albumTitle ?? "") : artist)
+                + (AlbumAudioIdentity.isMissingArtist(artist) ? (track.albumTitle ?? "") : artist)
             let first: [Track]
             do { first = try await search(query) }
             catch let error as URLError {
                 // Previously verified downloaded recordings must remain usable
                 // offline. Retry metadata enrichment next time; don't persist
                 // this as a fresh canonical result or cache a failed lookup.
-                if track.mediaID != nil { return track }
+                if track.mediaID != nil || track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" { return track }
                 if let id = self.index.aliases[track.id], let old = self.index.recordings[id] { return track.adoptingRecording(old) }
                 throw error
             }
