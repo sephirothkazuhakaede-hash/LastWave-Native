@@ -225,21 +225,19 @@ struct RootView: View {
                 .presentationCornerRadius(30)
                 .presentationBackground(.clear)
         }
-        .sheet(item: $drawerDestination) { destination in
-            switch destination {
-            case .profile:
-                NavigationStack {
-                    ProfilePageView()
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Done") { drawerDestination = nil }
-                            }
+        .sheet(isPresented: Binding(
+            get: { drawerDestination == .profile },
+            set: { if !$0 { drawerDestination = nil } }
+        )) {
+            NavigationStack {
+                ProfilePageView()
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { drawerDestination = nil }
                         }
-                }
-                    .presentationDetents([.large])
-            case .settings:
-                EmptyView()
+                    }
             }
+            .presentationDetents([.large])
         }
         .overlay {
             if drawerDestination == .settings {
