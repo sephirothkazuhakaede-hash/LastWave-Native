@@ -582,13 +582,21 @@ struct DownloadBatchSummary: Equatable {
             let headerDuration = http.value(forHTTPHeaderField: "X-CapyFlow-Duration").flatMap(Double.init)
             let localAssetDuration = try? await AVURLAsset(url: target).load(.duration)
             let localSeconds = localAssetDuration?.seconds
-            // Prefer a consensus over AVAsset alone. A malformed adaptive file
-            // can report several minutes of empty tail; the backend header and
-            // YouTube Music row duration let us reject that high outlier.
-            let exactDuration = [headerDuration, resolved.durationIsAuthoritative ? resolved.duration : nil, localSeconds]
-                .compactMap { $0 }.first { $0.isFinite && $0 > 0 }
+            // Downloaded files can carry the same empty adaptive/container tail as
+            // streaming media. The album/Songs row is our recording-level duration,
+            // so never let a backend header or AVAsset measurement lengthen it.
+            // Use a lower-median consensus for measurements, then clamp that result
+            // to the catalog duration before persisting the offline copy.
+            let measuredDuration = consensusDuration([
+                headerDuration,
+                resolved.durationIsAuthoritative ? resolved.duration : nil,
+                localSeconds
+            ])
+            let exactDuration = measuredDuration.map {
+                durationCappedByKnownTrack($0, knownDuration: track.duration)
+            } ?? track.duration
             let savedTrack: Track
-            if let exact = exactDuration {
+            if let exact = exactDuration, exact.isFinite, exact > 0 {
                 adoptAuthoritativeDuration(exact, for: track.id, source: .localFile)
                 savedTrack = downloadTrack.withDuration(exact)
             } else {
