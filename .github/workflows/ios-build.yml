@@ -2,7 +2,7 @@ name: Build unsigned IPA
 on:
   workflow_dispatch:
   push:
-    branches: [ios-port]
+    branches: [ios-port, 'experiment/ui-polish-v1']
     paths: ['ios/**', 'backend/**', 'firebase/**', 'firebase.json', '.github/workflows/ios-build.yml']
 permissions:
   contents: read
