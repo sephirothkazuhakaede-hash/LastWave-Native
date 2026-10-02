@@ -1001,10 +1001,16 @@ struct DownloadBatchSummary: Equatable {
         }
     }
 
-    /// Never disguise a mismatched recording by clamping its actual duration.
-    /// Album source identity is corrected before resolving or downloading it.
+    /// Album rows already carry the recording duration reported by YouTube Music.
+    /// Some adaptive audio streams expose a longer container timeline whose tail
+    /// contains no audible media. Keep the measured duration when it agrees with
+    /// the catalog, but never let that empty container tail extend playback.
     private func durationCappedByKnownTrack(_ measured: Double, knownDuration: Double?) -> Double {
-        measured.isFinite && measured > 0 ? measured : (knownDuration ?? 0)
+        guard measured.isFinite, measured > 0 else { return knownDuration ?? 0 }
+        guard let knownDuration, knownDuration.isFinite, knownDuration > 0 else { return measured }
+        let tolerance = max(4.0, knownDuration * 0.03)
+        if measured > knownDuration + tolerance { return knownDuration }
+        return measured
     }
 
     /// Selects the lower median so a single implausibly long container duration
