@@ -25,6 +25,7 @@ struct BackendProbeResult: Sendable {
 struct BackendConfiguration: Sendable, Equatable {
     static let enabledKey = "capyflow.backend.enabled"
     static let baseURLKey = "capyflow.backend.baseURL"
+    static let discoveryURL = URL(string: "https://raw.githubusercontent.com/sephirothkazuhakaede-hash/LastWave-Native/runtime/backend-discovery/backend.json")!
 
     let baseURL: URL
 
@@ -178,6 +179,7 @@ actor BackendClient {
     private var healthyBaseURL: URL?
     private var healthyUntil = Date.distantPast
     private var retryAfter = Date.distantPast
+    private var discoveryCheckedAt = Date.distantPast
 
     private init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -196,6 +198,7 @@ actor BackendClient {
         quality: AudioQuality,
         knownDuration: Double?
     ) async -> BackendResolvedStream? {
+        await refreshDiscoveredConfigurationIfNeeded()
         guard let configuration = BackendConfiguration.active else {
             await publish(.disabled)
             return nil
@@ -268,6 +271,37 @@ actor BackendClient {
             healthyUntil = .distantPast
             await publish(.fallback(Self.fallbackMessage(for: error)))
             throw error
+        }
+    }
+
+    private func refreshDiscoveredConfigurationIfNeeded() async {
+        let saved = BackendConfiguration.savedURLString.trimmingCharacters(in: .whitespacesAndNewlines)
+        let savedHost = URL(string: saved)?.host?.lowercased()
+        let shouldDiscover = saved.isEmpty || (BackendConfiguration.isEnabled && savedHost?.hasSuffix(".trycloudflare.com") == true)
+        guard shouldDiscover, Date().timeIntervalSince(discoveryCheckedAt) >= 60 else { return }
+        discoveryCheckedAt = Date()
+
+        do {
+            var request = URLRequest(url: BackendConfiguration.discoveryURL)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.timeoutInterval = 5
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                  let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let value = payload["url"] as? String,
+                  let url = try? BackendConfiguration.normalizedURL(from: value),
+                  url.host?.lowercased().hasSuffix(".trycloudflare.com") == true else { return }
+
+            if url.absoluteString != saved || !BackendConfiguration.isEnabled {
+                _ = try BackendConfiguration.save(urlString: url.absoluteString, enabled: true)
+                healthyBaseURL = nil
+                healthyUntil = .distantPast
+                retryAfter = .distantPast
+                await publish(.checking)
+            }
+        } catch {
+            // Best-effort discovery: keep the last working tunnel and direct fallback.
         }
     }
 

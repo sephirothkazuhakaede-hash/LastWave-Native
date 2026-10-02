@@ -124,6 +124,15 @@ actor CanonicalTrackResolver {
             track.artist = context.artist
             track.albumTitle = context.title
         }
+
+        // Album browse responses can already contain the exact YouTube Music
+        // audio recording. Do not throw that authoritative ATV identity away
+        // and then fail a second fuzzy Songs search for the same recording.
+        // OMV/UGC/unknown album rows still go through the strict matcher below.
+        if track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" {
+            return store(track, recording: track)
+        }
+
         let missingArtist = AlbumAudioIdentity.isMissingArtist(track.artist)
         if !missingArtist && track.mediaID != nil && track.albumID == nil && track.albumTitle == nil,
            !index.needsMetadata.contains(track.playableID) {
