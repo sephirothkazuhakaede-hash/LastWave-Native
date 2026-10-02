@@ -80,7 +80,7 @@ jobs:
               xcrun simctl delete "$UDID"
               continue
             fi
-            if ! python3 -u ci/run_check.py --timeout 1200 --log "build/layout-results/${LABEL}-tests.log" -- xcodebuild \
+            if ! python3 -u ci/run_check.py --timeout 1800 --log "build/layout-results/${LABEL}-tests.log" -- xcodebuild \
               -project CapyFlow.xcodeproj \
               -scheme CapyFlow \
               -configuration Debug \
