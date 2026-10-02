@@ -2013,12 +2013,17 @@ private struct QueueSheet: View {
                             .padding(12).waveSurface(radius: 22)
                             .listRowBackground(Color.clear).listRowSeparator(.hidden)
                         }
-                        ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
+                        // Keep row identity attached to the recording, not its list
+                        // position. Using the offset as identity makes SwiftUI reuse the
+                        // destination row while native reordering animates, briefly
+                        // compositing both songs in the same cell.
+                        ForEach(Array(player.queue.enumerated()), id: \.element.id) { index, track in
                             QueueTrackRow(
                                 track: track,
                                 position: index,
                                 remove: { player.removeFromQueue(at: index) }
                             )
+                            .id(track.id)
                             .listRowBackground(Color.clear).listRowSeparator(.hidden)
                         }
                         .onMove { source, destination in
