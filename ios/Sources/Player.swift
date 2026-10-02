@@ -131,8 +131,12 @@ struct DownloadBatchSummary: Equatable {
     }
 
     private func localCopy(for track: Track) -> Track? {
-        downloads.first { ($0.id == track.id || $0.playableID == track.playableID) && (track.mediaID == nil || $0.playableID == track.playableID) && $0.downloadQuality == audioQuality.backendValue
-            && FileManager.default.fileExists(atPath: localURL($0).path) }
+        downloads.first {
+            let sameRecording = $0.playableID == track.playableID
+            let sameVersion = track.isExplicit == nil || $0.isExplicit == nil || $0.isExplicit == track.isExplicit
+            return sameRecording && sameVersion && $0.downloadQuality == audioQuality.backendValue
+                && FileManager.default.fileExists(atPath: localURL($0).path)
+        }
     }
 
     init() {
