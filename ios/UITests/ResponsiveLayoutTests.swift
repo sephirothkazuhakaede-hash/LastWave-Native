@@ -97,9 +97,10 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertTrue(toggle.waitForExistence(timeout: 4))
         XCTAssertTrue(toggle.isHittable)
         let initialFrame = toggle.frame
-        let initialValue = toggle.value as? String
+        let initialValue = try XCTUnwrap(toggle.value as? String)
+        let changedValue = initialValue == "1" ? "0" : "1"
         toggle.tap()
-        XCTAssertNotEqual(toggle.value as? String, initialValue)
+        assertSwitch(toggle, hasValue: changedValue)
         assertVisibleControlsFitHorizontally(screen: "queue")
         attachScreenshot(named: "queue-top")
         let firstSong = app.staticTexts["River song 1"]
@@ -120,9 +121,16 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertTrue(toggle.isHittable, "Autoplay must remain available without scrolling back")
         XCTAssertEqual(toggle.frame.midY, initialFrame.midY, accuracy: 1.5)
         toggle.tap()
-        XCTAssertEqual(toggle.value as? String, initialValue)
+        assertSwitch(toggle, hasValue: initialValue)
+        app.staticTexts["Keep the music flowing"].tap()
+        assertSwitch(toggle, hasValue: changedValue)
         assertVisibleControlsFitHorizontally(screen: "queue scrolled")
         attachScreenshot(named: "queue-scrolled")
+    }
+
+    private func assertSwitch(_ control: XCUIElement, hasValue value: String) {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 4), .completed, "Autoplay switch did not change to \(value)")
     }
 
     private func launch(_ fixture: String) {

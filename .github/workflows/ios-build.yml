@@ -93,6 +93,14 @@ jobs:
               test-without-building; then
               LAYOUT_STATUS=1
             fi
+            if test -d "build/layout-results/${LABEL}.xcresult"; then
+              xcrun xcresulttool help export attachments > "build/layout-results/${LABEL}-attachment-help.log"
+              if ! xcrun xcresulttool export attachments \
+                --path "build/layout-results/${LABEL}.xcresult" \
+                --output-path "build/layout-results/${LABEL}-screenshots"; then
+                echo "Screenshot export unavailable; the full xcresult is retained."
+              fi
+            fi
             xcrun simctl shutdown "$UDID"
             xcrun simctl delete "$UDID"
             echo "=== Finished responsive checks: ${LABEL} ==="
