@@ -2017,10 +2017,12 @@ private struct QueueSheet: View {
                             QueueTrackRow(
                                 track: track,
                                 position: index,
-                                remove: { player.removeFromQueue(at: index) },
-                                moveFrom: { source in player.moveQueueItem(from: source, to: index) }
+                                remove: { player.removeFromQueue(at: index) }
                             )
                             .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                        }
+                        .onMove { source, destination in
+                            player.moveQueueItems(fromOffsets: source, toOffset: destination)
                         }
                     }
                     .listStyle(.plain).scrollContentBackground(.hidden)
@@ -2041,37 +2043,21 @@ private struct QueueTrackRow: View {
     let track: Track
     let position: Int
     let remove: () -> Void
-    let moveFrom: (Int) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
             TrackCard(track: track, titleIdentifier: "queue-title-\(position)")
                 .frame(maxWidth: .infinity)
 
+            // Native List reordering keeps the row inline/full-size and moves
+            // neighbouring rows out of the way instead of creating a drag preview.
             Image(systemName: "line.3.horizontal")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(CapyColor.secondaryText)
                 .frame(width: 38, height: 56)
-                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .accessibilityLabel("Drag to reorder")
-                .accessibilityIdentifier("queue-drag-handle-\(position)")
-                .draggable("queue-position:\(position)") {
-                    Image(systemName: "line.3.horizontal")
-                        .font(.title3.weight(.semibold))
-                        .padding(14)
-                        .background(CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                }
+                .accessibilityHidden(true)
         }
         .contentShape(Rectangle())
-        .dropDestination(for: String.self) { items, _ in
-            guard let payload = items.first,
-                  payload.hasPrefix("queue-position:"),
-                  let source = Int(payload.dropFirst("queue-position:".count)),
-                  source != position else { return false }
-            moveFrom(source)
-            CapyHaptics.selection()
-            return true
-        }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
                 remove()
