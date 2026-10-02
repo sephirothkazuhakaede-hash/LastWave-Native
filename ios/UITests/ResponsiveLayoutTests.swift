@@ -123,7 +123,8 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertTrue(remove.isHittable)
         XCTAssertEqual(remove.label, "Remove")
         remove.tap()
-        XCTAssertTrue(app.staticTexts["River song 1"].waitForNonExistence(timeout: 4))
+        let removedQueueTitle = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "queue-title-", "River song 1")).firstMatch
+        XCTAssertTrue(removedQueueTitle.waitForNonExistence(timeout: 4))
         XCTAssertEqual(app.staticTexts["queue-title-0"].label, "River song 2")
         XCTAssertEqual(app.staticTexts["queue-title-1"].label, "River song 3")
         let songs = app.collectionViews.firstMatch
