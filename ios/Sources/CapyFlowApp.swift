@@ -2018,7 +2018,7 @@ private struct QueueSheet: View {
                             .listRowBackground(Color.clear).listRowSeparator(.hidden)
                         }
                         ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
-                            QueueTrackRow(track: track,
+                            QueueTrackRow(track: track, position: index,
                                 canMoveUp: index > 0, canMoveDown: index < player.queue.count - 1,
                                 remove: { player.removeFromQueue(at: index) },
                                 moveUp: { player.moveQueueItem(from: index, to: index - 1) },
@@ -2042,6 +2042,7 @@ private struct QueueSheet: View {
 
 private struct QueueTrackRow: View {
     let track: Track
+    let position: Int
     let canMoveUp: Bool
     let canMoveDown: Bool
     let remove: () -> Void
@@ -2134,6 +2135,7 @@ private struct QueueTrackRow: View {
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain).accessibilityLabel(label)
+        .accessibilityIdentifier("queue-action-\(icon)-\(position)")
     }
 }
 
