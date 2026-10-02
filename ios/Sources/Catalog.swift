@@ -215,7 +215,7 @@ actor Catalog {
                             let browse = endpoint?["browseEndpoint"] as? [String: Any]
                             return (browse?["browseId"] as? String)?.hasPrefix("MPRE") == true
                         }?["text"] as? String
-                        track.isExplicit = Self.hasExplicitBadge(renderer) ? true : nil
+                        track.isExplicit = Self.hasExplicitBadge(renderer)
                         results.append(track)
                     }
                 }
@@ -309,7 +309,7 @@ actor Catalog {
                         track.albumID = album.id
                         track.albumTitle = album.title
                         track.trackNumber = renderedText(renderer["index"]).flatMap(Int.init)
-                        track.isExplicit = Self.hasExplicitBadge(renderer) ? true : nil
+                        track.isExplicit = Self.hasExplicitBadge(renderer)
                         track.musicVideoType = Self.primaryMusicVideoType(in: renderer)
                         tracks.append(track)
                     }
