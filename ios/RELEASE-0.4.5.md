@@ -26,13 +26,18 @@ after exhausting the query plan. Album video IDs are never used for that fallbac
 Strong matches finish on the first query. Subsequent plays, downloads, lyrics,
 playlist recovery and duration updates reuse the same persisted canonical identity.
 Normal Songs results use the same index, so neither entry point requires manual
-search priming. No MSI backend change, media transcoding, UI redesign or social
-permission change is included.
+search priming. No MSI backend change, media transcoding or social permission change is included.
+
+The queue now uses the existing artwork ambience and surface cards. A themed
+autoplay switch stays above the scrolling song list; it is no longer buried after
+the last track or duplicated in the player menu. Swipe removal and move controls
+remain available, and repeated tracks have independent row identities. A 30-song
+layout fixture checks that the switch stays tappable while scrolling on every size.
 
 Regression fixtures capture real Your Name., THE TORTURED POETS DEPARTMENT and
 OK Computer rows and Songs responses. They include Nandemonaiya movie edit,
 Sparkle movie version, Katawaredoki, Date 2, Fortnight, The Tortured Poets Department,
-Let Down and Electioneering. Additional tests cover empty/wrong first results,
+Let Down and Electioneering, plus all 16 TTPD album tracks tested cold independently. Additional tests cover empty/wrong first results,
 late metadata enrichment of the same media ID, all-query exhaustion and retry,
 punctuation, credits, ordinary Radiohead titles, explicitness, forbidden versions,
 and canonical stream/download/lyrics/quality cache convergence. Existing responsive

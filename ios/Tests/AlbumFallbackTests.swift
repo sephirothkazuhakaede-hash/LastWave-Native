@@ -92,6 +92,17 @@ final class AlbumFallbackTests: XCTestCase {
         XCTAssertEqual(queries.count, 2)
     }
 
+    func testIncompleteSongsMetadataCannotOverwriteKnownCanonicalArtist() async throws {
+        let resolver = CanonicalTrackResolver(defaults: nil), correct = audio()
+        _ = await resolver.registerSearch([correct])
+        let incomplete = audio(artist: "Unknown artist")
+        let result = await resolver.registerSearch([incomplete])
+        XCTAssertEqual(result[0].artist, "Taylor Swift")
+        let found = try await resolver.resolve(album()) { _ in XCTFail("The existing valid mapping must remain reusable"); return [] }
+        XCTAssertEqual(found.artist, "Taylor Swift")
+        XCTAssertEqual(LyricsService.lookupURL(for: found), LyricsService.lookupURL(for: correct))
+    }
+
     func testTransientQueryFailureDoesNotPreventTheNextQuery() async throws {
         let correct = audio(), search = FallbackSearch([[], [audio()]], timeoutFirst: true)
         let found = try await CanonicalTrackResolver(defaults: nil).resolve(album()) { try await search.search($0) }
@@ -183,4 +194,29 @@ final class AlbumFallbackTests: XCTestCase {
             _ = try await resolver.resolve(row) { _ in XCTFail("Second album play must reuse the canonical identity"); return [] }
         }
     }
+    func testEveryTTPDTrackResolvesWithoutManualSongsSearch() async throws {
+        let file = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "TTPDFullAlbum", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        let details = fixture["album"] as! [String: String]
+        let album = Album(id: details["id"]!, title: details["title"]!, artist: details["artist"]!, year: nil, artworkURL: nil)
+        let rows = try Catalog.parseAlbumTracks(fixture["albumRoot"]!, album: album)
+        let expected = fixture["expectedMediaIDs"] as! [String]
+        XCTAssertEqual(rows.count, 16)
+        XCTAssertEqual(expected.count, rows.count)
+        var byQuery: [String: [Track]] = [:]
+        for (query, root) in fixture["queries"] as! [String: Any] { byQuery[query] = try Catalog.parseSongTracks(root) }
+        let captured = byQuery
+        for (index, row) in rows.enumerated() {
+            let resolver = CanonicalTrackResolver(defaults: nil)
+            let found = try await resolver.resolve(row) { captured[$0] ?? [] }
+            XCTAssertEqual(found.playableID, expected[index], row.title)
+            XCTAssertEqual(found.id, row.id)
+            let songs = await resolver.registerSearch(captured[row.artist + " " + AlbumAudioIdentity.title(row.title)] ?? [])
+            let equivalent = try XCTUnwrap(songs.first { $0.playableID == found.playableID }, row.title)
+            XCTAssertEqual(found.lyricsCacheKey, equivalent.lyricsCacheKey)
+            XCTAssertEqual(found.duration, equivalent.duration)
+            XCTAssertEqual(found.mediaCacheKey(quality: .automatic), equivalent.mediaCacheKey(quality: .automatic))
+        }
+    }
+
 }

@@ -54,7 +54,7 @@ import GoogleSignIn
 
 #if DEBUG
 private enum LayoutFixture: String {
-    case root, player, playerLyrics = "player-lyrics", album, playlist, social, profile
+    case root, queue, player, playerLyrics = "player-lyrics", album, playlist, social, profile
 
     static var requested: LayoutFixture? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -82,6 +82,9 @@ private enum LayoutFixture: String {
         player.duration = tracks[0].duration ?? 0
         player.elapsed = 87
         player.queue = Array(tracks.dropFirst())
+        if requested == .queue {
+            player.queue = (1...30).map { Track(id: "queue-fixture-\($0)", title: "River song \($0)", artist: "CapyFlow Friends", duration: 189) }
+        }
         player.lyrics = [
             LyricLine(time: 0, text: "The river starts beneath the city lights"),
             LyricLine(time: 32, text: "We carry every little song together"),
@@ -119,6 +122,7 @@ private struct LayoutFixtureView: View {
 
     @ViewBuilder var body: some View {
         switch fixture {
+        case .queue: QueueSheet()
         case .root:
             RootView()
         case .player:
@@ -1843,7 +1847,6 @@ struct PlayerView: View {
                         AudioOutputPicker().frame(width: 44, height: 44)
                         Menu {
                             Button("Audio Info / Current Quality") { showAudioInfo = true }
-                            Toggle("Autoplay related songs", isOn: $player.autoplayEnabled)
                             Divider()
                             Button("Clear queue", role: .destructive) { player.queue.removeAll() }
                         } label: { Image(systemName: "ellipsis") }
@@ -1955,37 +1958,87 @@ struct PlayerView: View {
 
 private struct QueueSheet: View {
     @EnvironmentObject var player: WavePlayer
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
         NavigationStack {
-            List {
-                if let current = player.current {
-                    Section("Now playing") { TrackCard(track: current) }
-                }
-                Section("Next") {
-                    if player.autoplayLoading { HStack { ProgressView(); Text("Finding related songs…") } }
-                    else if player.queue.isEmpty { Text(player.autoplayEnabled ? "Related songs will play automatically." : "The queue is empty.").foregroundStyle(.secondary) }
-                    ForEach(Array(player.queue.enumerated()), id: \.element.id) { index, track in
-                        TrackCard(track: track)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button(role: .destructive) { player.removeFromQueue(at: index) } label: { Label("Remove", systemImage: "trash") }
-                                if index < player.queue.count - 1 {
-                                    Button { player.moveQueueItem(from: index, to: index + 1) } label: { Label("Move down", systemImage: "arrow.down") }.tint(.indigo)
-                                }
-                                if index > 0 {
-                                    Button { player.moveQueueItem(from: index, to: index - 1) } label: { Label("Move up", systemImage: "arrow.up") }.tint(Color.waveBlue)
+            ZStack {
+                CapyAmbientBackdrop(seed: player.current?.id ?? "queue", artworkURL: player.current?.artwork)
+                VStack(spacing: 0) {
+                    CapyGlassPanel(highlighted: player.autoplayEnabled, padding: 14) {
+                        Toggle(isOn: $player.autoplayEnabled) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "infinity")
+                                    .font(.title3.weight(.bold)).foregroundStyle(CapyColor.accent)
+                                    .frame(width: 42, height: 42)
+                                    .background(CapyColor.accent.opacity(0.12), in: Circle())
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Keep the music flowing").font(.capyCallout)
+                                    Text("Play related songs when your queue ends")
+                                        .font(.caption).foregroundStyle(CapyColor.secondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
+                        }
+                        .accessibilityLabel("Autoplay related songs")
+                        .accessibilityIdentifier("queue-autoplay")
                     }
-                }
-                Section {
-                    Toggle(isOn: $player.autoplayEnabled) { Label("Autoplay related songs", systemImage: "infinity") }
-                } footer: {
-                    Text("When your queue ends, CapyFlow finds more music based on the current artist.")
+                    .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
+                    List {
+                        if let current = player.current {
+                            Section {
+                                TrackCard(track: current)
+                                    .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                            } header: {
+                                Label("Now playing", systemImage: "waveform")
+                                    .font(.capyCallout).foregroundStyle(CapyColor.accent)
+                            }
+                        }
+                        Section {
+                            if player.autoplayLoading {
+                                HStack(spacing: 12) { ProgressView(); Text("Finding related songs…") }
+                                    .padding(12).listRowBackground(Color.clear).listRowSeparator(.hidden)
+                            } else if player.queue.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("You’re all caught up").font(.capyCallout)
+                                    Text(player.autoplayEnabled ? "Related songs will keep the music flowing." : "Add songs to choose what plays next.")
+                                        .font(.caption).foregroundStyle(CapyColor.secondaryText)
+                                }
+                                .padding(12).waveSurface(radius: 22)
+                                .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                            }
+                            ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
+                                TrackCard(track: track)
+                                    .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) { player.removeFromQueue(at: index) } label: { Label("Remove", systemImage: "trash") }
+                                        if index < player.queue.count - 1 {
+                                            Button { player.moveQueueItem(from: index, to: index + 1) } label: { Label("Move down", systemImage: "arrow.down") }.tint(.indigo)
+                                        }
+                                        if index > 0 {
+                                            Button { player.moveQueueItem(from: index, to: index - 1) } label: { Label("Move up", systemImage: "arrow.up") }.tint(CapyColor.accent)
+                                        }
+                                    }
+                            }
+                        } header: {
+                            HStack {
+                                Text("Up next").font(.capyCallout)
+                                Spacer()
+                                Text("\(player.queue.count) songs").font(.caption.weight(.semibold))
+                            }.foregroundStyle(CapyColor.secondaryText)
+                        }
+                    }
+                    .listStyle(.plain).scrollContentBackground(.hidden)
                 }
             }
-            .scrollContentBackground(.hidden).background(WaveBackdrop())
-            .navigationTitle("Queue")
+            .navigationTitle("Queue").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
         }
+        .tint(CapyColor.accent)
     }
 }
 

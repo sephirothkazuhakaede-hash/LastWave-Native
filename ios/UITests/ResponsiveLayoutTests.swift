@@ -91,6 +91,28 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(sharedFilter.frame.maxX, filters.frame.maxX + 1.5)
     }
 
+    func testQueueAutoplayStaysReachableWhileSongsScroll() throws {
+        launch("queue")
+        let toggle = app.switches["queue-autoplay"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 4))
+        XCTAssertTrue(toggle.isHittable)
+        let initialFrame = toggle.frame
+        let initialValue = toggle.value as? String
+        toggle.tap()
+        XCTAssertNotEqual(toggle.value as? String, initialValue)
+        assertVisibleControlsFitHorizontally(screen: "queue")
+        attachScreenshot(named: "queue-top")
+        let songs = app.collectionViews.firstMatch
+        XCTAssertTrue(songs.exists)
+        songs.swipeUp(); songs.swipeUp()
+        XCTAssertTrue(toggle.isHittable, "Autoplay must remain available without scrolling back")
+        XCTAssertEqual(toggle.frame.midY, initialFrame.midY, accuracy: 1.5)
+        toggle.tap()
+        XCTAssertEqual(toggle.value as? String, initialValue)
+        assertVisibleControlsFitHorizontally(screen: "queue scrolled")
+        attachScreenshot(named: "queue-scrolled")
+    }
+
     private func launch(_ fixture: String) {
         app = XCUIApplication()
         app.launchArguments = ["--layout-fixture", fixture]
@@ -139,6 +161,7 @@ final class ResponsiveLayoutTests: XCTestCase {
 
     private func fixtureMarker(for fixture: String) -> XCUIElement {
         switch fixture {
+        case "queue": return app.navigationBars["Queue"]
         case "player", "player-lyrics":
             return app.staticTexts["A Very Long Album Song Title That Must Never Push Controls Outside the Phone"]
         case "album":

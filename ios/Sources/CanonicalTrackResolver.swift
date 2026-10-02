@@ -24,6 +24,9 @@ actor CanonicalTrackResolver {
         if let data = defaults?.data(forKey: Self.storageKey),
            let saved = try? JSONDecoder().decode(Index.self, from: data) {
             index = saved
+            // Incomplete older Songs rows must refresh rather than permanently
+            // priming every album/lyrics lookup with an unknown artist.
+            index.needsMetadata.formUnion(index.recordings.filter { AlbumAudioIdentity.isMissingArtist($0.value.artist) }.map { $0.key })
         } else {
             index = Index()
             // Reuse successful 0.4.3 album->audio mappings; failed lookups were
@@ -65,12 +68,18 @@ actor CanonicalTrackResolver {
         let id = selected.playableID
         // Keep an actual measured duration over a later rounded catalog value.
         var song = selected
+        if AlbumAudioIdentity.isMissingArtist(song.artist) {
+            if let previous = index.recordings[id], !AlbumAudioIdentity.isMissingArtist(previous.artist) {
+                song.artist = previous.artist
+            } else if !AlbumAudioIdentity.isMissingArtist(track.artist) { song.artist = track.artist }
+        }
         if let duration = index.durations[id] {
             song = song.withDuration(duration)
             song.mediaInfo = index.recordings[id]?.mediaInfo
         }
         index.recordings[id] = song
-        index.needsMetadata.remove(id)
+        if AlbumAudioIdentity.isMissingArtist(song.artist) { index.needsMetadata.insert(id) }
+        else { index.needsMetadata.remove(id) }
         index.aliases[track.id] = id
         index.aliases[recording.id] = id
         persist()
