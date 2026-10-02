@@ -144,9 +144,14 @@ enum AlbumAudioIdentity {
         let album = title(track.albumTitle ?? "")
         let base = normalized.replacingOccurrences(of: #"\s*[-–—]\s*movie (ver\.?|version|edit\.?)\s*$"#, with: "", options: [.regularExpression, .caseInsensitive])
         let join: ([String]) -> String = { $0.filter { !$0.isEmpty }.joined(separator: " ") }
+        // Include the same title-only searches a user can make from the Songs tab.
+        // Album metadata can contain a soundtrack/credited artist that causes every
+        // artist-qualified query to miss the recording even though a plain Songs
+        // search returns the correct ATV item immediately.
         let alternatives = [join([performer, normalized]), join([original, performer]), join([performer, original]),
-                            join([normalized, performer]), join([performer, normalized, album]), join([normalized, album, performer]),
-                            join([performer, key(normalized), album]), join([performer, base, album])]
+                            join([normalized, performer]), normalized, original,
+                            join([performer, normalized, album]), join([normalized, album, performer]),
+                            join([performer, key(normalized), album]), join([performer, base, album]), base]
         var seen: Set<String> = []
         return alternatives.filter { query in
             !query.isEmpty && seen.insert(query.lowercased().replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)).inserted
