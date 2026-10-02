@@ -1967,31 +1967,25 @@ private struct QueueSheet: View {
             ZStack {
                 CapyAmbientBackdrop(seed: player.current?.id ?? "queue", artworkURL: player.current?.artwork)
                 VStack(spacing: 0) {
-                    CapyGlassPanel(highlighted: player.autoplayEnabled, padding: 14) {
-                        HStack(spacing: 12) {
-                            HStack(spacing: 12) {
-                                Image(systemName: "infinity")
-                                    .font(.title3.weight(.bold)).foregroundStyle(CapyColor.accent)
-                                    .frame(width: 42, height: 42)
-                                    .background(CapyColor.accent.opacity(0.12), in: Circle())
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Keep the music flowing").font(.capyCallout)
-                                    Text("Play related songs when your queue ends")
-                                        .font(.caption).foregroundStyle(CapyColor.secondaryText)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                            .onTapGesture { player.autoplayEnabled.toggle() }
-                            // Keep the actual switch's touch/accessibility bounds
-                            // separate from the wide decorative label.
-                            Toggle("Autoplay related songs", isOn: $player.autoplayEnabled)
-                                .labelsHidden().frame(minWidth: 51, minHeight: 44)
-                                .accessibilityIdentifier("queue-autoplay")
+                    Button {
+                        player.autoplayEnabled.toggle()
+                        CapyHaptics.selection()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "infinity").font(.callout.weight(.semibold))
+                            Text("Related songs").font(.capyCallout)
+                            Spacer()
+                            Text(player.autoplayEnabled ? "On" : "Off").font(.caption.weight(.semibold))
+                            Image(systemName: player.autoplayEnabled ? "checkmark.circle.fill" : "circle")
                         }
+                        .foregroundStyle(player.autoplayEnabled ? CapyColor.accent : CapyColor.secondaryText)
+                        .frame(minHeight: 44).contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Play related songs when the queue ends")
+                    .accessibilityValue(player.autoplayEnabled ? "On" : "Off")
+                    .accessibilityIdentifier("queue-autoplay")
+                    .padding(.horizontal, 16).padding(.vertical, 4)
                     List {
                         if let current = player.current {
                             Label("Now playing", systemImage: "waveform")

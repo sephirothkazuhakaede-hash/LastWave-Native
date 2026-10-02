@@ -93,12 +93,12 @@ final class ResponsiveLayoutTests: XCTestCase {
 
     func testQueueAutoplayStaysReachableWhileSongsScroll() throws {
         launch("queue")
-        let toggle = app.switches["queue-autoplay"]
+        let toggle = app.buttons["queue-autoplay"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 4))
         XCTAssertTrue(toggle.isHittable)
         let initialFrame = toggle.frame
         let initialValue = try XCTUnwrap(toggle.value as? String)
-        let changedValue = initialValue == "1" ? "0" : "1"
+        let changedValue = initialValue == "On" ? "Off" : "On"
         toggle.tap()
         assertSwitch(toggle, hasValue: changedValue)
         assertVisibleControlsFitHorizontally(screen: "queue")
@@ -106,10 +106,10 @@ final class ResponsiveLayoutTests: XCTestCase {
         let firstSong = app.staticTexts["queue-title-0"]
         XCTAssertEqual(firstSong.label, "River song 1")
         XCTAssertTrue(firstSong.isHittable)
-        firstSong.swipeLeft()
+        revealQueueActions(at: 0)
         let moveDown = app.buttons["queue-action-arrow.down-0"]
         XCTAssertTrue(moveDown.waitForExistence(timeout: 4))
-        XCTAssertTrue(moveDown.isHittable)
+        assertHittable(moveDown)
         XCTAssertEqual(moveDown.label, "Move down")
         attachScreenshot(named: "queue-swipe-actions")
         moveDown.tap()
@@ -117,10 +117,10 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertEqual(firstSong.label, "River song 2")
         XCTAssertEqual(movedSong.label, "River song 1")
         XCTAssertLessThan(firstSong.frame.midY, movedSong.frame.midY)
-        movedSong.swipeLeft()
+        revealQueueActions(at: 1)
         let remove = app.buttons["queue-action-trash-1"]
         XCTAssertTrue(remove.waitForExistence(timeout: 4))
-        XCTAssertTrue(remove.isHittable)
+        assertHittable(remove)
         XCTAssertEqual(remove.label, "Remove")
         remove.tap()
         let removedQueueTitle = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "queue-title-", "River song 1")).firstMatch
@@ -135,15 +135,31 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertEqual(toggle.frame.midY, initialFrame.midY, accuracy: 1.5)
         toggle.tap()
         assertSwitch(toggle, hasValue: initialValue)
-        app.staticTexts["Keep the music flowing"].tap()
+        app.staticTexts["Related songs"].tap()
         assertSwitch(toggle, hasValue: changedValue)
         assertVisibleControlsFitHorizontally(screen: "queue scrolled")
         attachScreenshot(named: "queue-scrolled")
     }
 
+    private func revealQueueActions(at position: Int) {
+        let row = app.collectionViews.cells.containing(.staticText, identifier: "queue-title-\(position)").element
+        XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertTrue(row.isHittable)
+        // A partial swipe across the row avoids the short title's small text bounds.
+        // Its distance stays below the full-swipe removal threshold.
+        let start = row.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5))
+        let end = row.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    private func assertHittable(_ control: XCUIElement) {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 4), .completed, "The revealed queue action must be tappable")
+    }
+
     private func assertSwitch(_ control: XCUIElement, hasValue value: String) {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: control)
-        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 4), .completed, "Autoplay switch did not change to \(value)")
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 4), .completed, "Related songs did not change to \(value)")
     }
 
     private func launch(_ fixture: String) {
@@ -235,10 +251,15 @@ final class ResponsiveLayoutTests: XCTestCase {
             XCTAssertLessThanOrEqual(filterViewport.maxX, bounds.maxX + tolerance)
         }
 
-        for element in candidates where element.exists && element.isHittable {
+        for element in candidates {
             var frame = element.frame
             guard !frame.isNull, !frame.isInfinite, frame.width > 0, frame.height > 0 else { continue }
             guard frame.maxY >= bounds.minY, frame.minY <= bounds.maxY else { continue }
+            // In-bounds frames already satisfy both assertions. Query expensive
+            // hit-testing only for possible overflow; the same visible outliers
+            // still go through every system-backdrop and scroll-viewport check.
+            if frame.minX >= bounds.minX - tolerance, frame.maxX <= bounds.maxX + tolerance { continue }
+            guard element.exists && element.isHittable else { continue }
             // UIKit's sheet dimming backdrop covers three screen widths and
             // heights. It is a system decoration, not the sheet's content.
             if element.elementType == .other && element.identifier.isEmpty && element.label.isEmpty,
