@@ -527,7 +527,12 @@ struct DownloadBatchSummary: Equatable {
             resolved.requestHeaders.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
             let transfer = DownloadCoordinator.shared
             let progressSource = sourceLabel
+            // URLSession can report progress dozens/hundreds of times per second.
+            // Coalesce those callbacks before touching @Published state so an
+            // album download cannot continuously invalidate the entire SwiftUI UI.
+            let progressGate = DownloadProgressGate(minimumInterval: 0.15, minimumDelta: 0.01)
             let transferResult = try await transfer.start(request) { [weak self] progress in
+                guard progressGate.shouldPublish(progress) else { return }
                 Task { @MainActor in
                     guard let self else { return }
                     self.downloadProgress[track.id] = progress
@@ -1053,6 +1058,33 @@ private extension UIImage {
             square.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
         }
         return rendered.jpegData(compressionQuality: 0.9)
+    }
+}
+
+private final class DownloadProgressGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let minimumInterval: TimeInterval
+    private let minimumDelta: Double
+    private var lastTime: TimeInterval = 0
+    private var lastProgress: Double = -1
+
+    init(minimumInterval: TimeInterval, minimumDelta: Double) {
+        self.minimumInterval = minimumInterval
+        self.minimumDelta = minimumDelta
+    }
+
+    func shouldPublish(_ progress: Double) -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        defer { lock.unlock() }
+        let completed = progress >= 1
+        guard completed || lastProgress < 0 ||
+                (now - lastTime >= minimumInterval && abs(progress - lastProgress) >= minimumDelta) else {
+            return false
+        }
+        lastTime = now
+        lastProgress = progress
+        return true
     }
 }
 
