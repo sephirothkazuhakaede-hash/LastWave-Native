@@ -391,7 +391,7 @@ private struct HomeDashboardView: View {
                 )
                 ScrollView {
                     CapyScreenContainer {
-                        LazyVStack(alignment: .leading, spacing: CapySpacing.section) {
+                        LazyVStack(alignment: .leading, spacing: 30) {
                             homeHeader
                             flowHero
                             if !player.recentTracks.isEmpty { recentlyPlayed }
@@ -414,7 +414,7 @@ private struct HomeDashboardView: View {
                 .accessibilityIdentifier("home-profile-menu")
             VStack(alignment: .leading, spacing: 3) {
                 Text(greeting).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
-                Text("CapyFlow").font(.capyHero)
+                Text("CapyFlow").font(.system(size: 30, weight: .bold, design: .rounded))
             }
             Spacer(minLength: 0)
         }
@@ -424,22 +424,21 @@ private struct HomeDashboardView: View {
         if let track = player.current {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 18) {
-                    Artwork(track: track, size: 132, radius: 24)
+                    Artwork(track: track, size: 164, radius: 18)
                     flowSummary(track)
                         .frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
                 }
                 VStack(alignment: .leading, spacing: 14) {
                     HStack {
                         Spacer(minLength: 0)
-                        Artwork(track: track, size: 132, radius: 24)
+                        Artwork(track: track, size: 164, radius: 18)
                         Spacer(minLength: 0)
                     }
                     flowSummary(track)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(18)
-            .waveSurface(radius: 28, highlighted: true)
+            .padding(.vertical, 8)
         } else {
             ZStack(alignment: .bottomLeading) {
                 CapyAmbientBackdrop(seed: "find-your-flow", intensity: 1.25)
@@ -480,7 +479,7 @@ private struct HomeDashboardView: View {
 
     private var recentlyPlayed: some View {
         VStack(alignment: .leading, spacing: 14) {
-            CapySectionHeader("Recently played", subtitle: "Pick up without searching again")
+            CapySectionHeader("Recently played")
             ScrollView(.horizontal) {
                 LazyHStack(spacing: 14) {
                     ForEach(player.recentTracks.prefix(12)) { track in
@@ -503,7 +502,7 @@ private struct HomeDashboardView: View {
 
     private var libraryShelf: some View {
         VStack(alignment: .leading, spacing: 14) {
-            CapySectionHeader("Made yours", subtitle: "Playlists and music saved on this iPhone") {
+            CapySectionHeader("Your library") {
                 Button("See all") { selection = .library; CapyHaptics.selection() }
                     .font(.capyCaption).foregroundStyle(CapyColor.accent)
             }
