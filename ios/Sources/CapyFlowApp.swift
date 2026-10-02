@@ -2014,12 +2014,13 @@ private struct QueueSheet: View {
                             .listRowBackground(Color.clear).listRowSeparator(.hidden)
                         }
                         ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
-                            QueueTrackRow(track: track, position: index,
-                                canMoveUp: index > 0, canMoveDown: index < player.queue.count - 1,
+                            QueueTrackRow(
+                                track: track,
+                                position: index,
                                 remove: { player.removeFromQueue(at: index) },
-                                moveUp: { player.moveQueueItem(from: index, to: index - 1) },
-                                moveDown: { player.moveQueueItem(from: index, to: index + 1) })
-                                .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                                moveFrom: { source in player.moveQueueItem(from: source, to: index) }
+                            )
+                            .listRowBackground(Color.clear).listRowSeparator(.hidden)
                         }
                     }
                     .listStyle(.plain).scrollContentBackground(.hidden)
@@ -2039,99 +2040,51 @@ private struct QueueSheet: View {
 private struct QueueTrackRow: View {
     let track: Track
     let position: Int
-    let canMoveUp: Bool
-    let canMoveDown: Bool
     let remove: () -> Void
-    let moveUp: () -> Void
-    let moveDown: () -> Void
-    @State private var revealed = false
-    @State private var rowWidth: CGFloat = 0
-    @GestureState private var translation: CGFloat = 0
-
-    private var actionWidth: CGFloat {
-        let count = 1 + (canMoveUp ? 1 : 0) + (canMoveDown ? 1 : 0)
-        return CGFloat(count) * 58 + CGFloat(count - 1) * 8 + 12
-    }
+    let moveFrom: (Int) -> Void
 
     var body: some View {
-        let offset = max(-actionWidth, min(0, (revealed ? -actionWidth : 0) + translation))
-        ZStack(alignment: .trailing) {
-            HStack(spacing: 8) {
-                if canMoveUp { action("Up", label: "Move up", icon: "arrow.up", perform: moveUp) }
-                if canMoveDown { action("Down", label: "Move down", icon: "arrow.down", perform: moveDown) }
-                action("Remove", label: "Remove", icon: "trash", destructive: true, perform: remove)
-            }
-            .padding(.leading, 12).frame(width: actionWidth)
-            .opacity(offset < 0 ? 1 : 0)
-            .allowsHitTesting(revealed).accessibilityHidden(!revealed)
+        HStack(spacing: 8) {
             TrackCard(track: track, titleIdentifier: "queue-title-\(position)")
-                .overlay {
-                    if revealed {
-                        Color.clear.contentShape(Rectangle()).onTapGesture { close() }
-                    }
-                }
-                .offset(x: offset)
-        }
-        .contentShape(Rectangle()).clipped()
-        .background {
-            GeometryReader { geometry in
-                Color.clear.onAppear { rowWidth = geometry.size.width }
-                    .onChange(of: geometry.size.width) { _, value in rowWidth = value }
-            }
-        }
-        // Run alongside the List's vertical pan; vertical drags never reveal
-        // actions. The song's existing play/menu buttons retain normal taps.
-        .simultaneousGesture(DragGesture(minimumDistance: 24)
-            .updating($translation) { value, state, _ in
-                if abs(value.translation.width) > abs(value.translation.height) * 1.3 {
-                    state = value.translation.width
-                }
-            }
-            .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) * 1.3 else { return }
-                if rowWidth > 0, value.translation.width < -rowWidth * 0.85 {
-                    perform(remove)
-                } else {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
-                        revealed = revealed ? value.predictedEndTranslation.width < 44 : value.predictedEndTranslation.width < -44
-                    }
-                }
-            })
-        .onChange(of: track.id) { _, _ in revealed = false }
-        .accessibilityActions {
-            Button("Remove") { perform(remove) }
-            if canMoveUp { Button("Move up") { perform(moveUp) } }
-            if canMoveDown { Button("Move down") { perform(moveDown) } }
-        }
-    }
+                .frame(maxWidth: .infinity)
 
-    private func close() {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) { revealed = false }
-    }
-
-    private func perform(_ operation: () -> Void) {
-        close()
-        operation()
-        CapyHaptics.selection()
-    }
-
-    private func action(_ title: String, label: String, icon: String, destructive: Bool = false, perform operation: @escaping () -> Void) -> some View {
-        Button(role: destructive ? .destructive : nil) { perform(operation) } label: {
-            VStack(spacing: 6) {
-                Image(systemName: icon).font(.title3.weight(.semibold))
-                Text(title).font(.caption2.weight(.bold)).lineLimit(1).minimumScaleFactor(0.8)
-            }
-            .foregroundStyle(destructive ? CapyColor.destructive : CapyColor.accent)
-            .frame(width: 58, height: 70)
-            .background(CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke((destructive ? CapyColor.destructive : CapyColor.accent).opacity(0.2), lineWidth: 1)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            Image(systemName: "line.3.horizontal")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(CapyColor.secondaryText)
+                .frame(width: 38, height: 56)
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .accessibilityLabel("Drag to reorder")
+                .accessibilityIdentifier("queue-drag-handle-\(position)")
+                .draggable("queue-position:\(position)") {
+                    Image(systemName: "line.3.horizontal")
+                        .font(.title3.weight(.semibold))
+                        .padding(14)
+                        .background(CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
         }
-        .buttonStyle(.plain).accessibilityLabel(label)
-        .accessibilityIdentifier("queue-action-\(icon)-\(position)")
+        .contentShape(Rectangle())
+        .dropDestination(for: String.self) { items, _ in
+            guard let payload = items.first,
+                  payload.hasPrefix("queue-position:"),
+                  let source = Int(payload.dropFirst("queue-position:".count)),
+                  source != position else { return false }
+            moveFrom(source)
+            CapyHaptics.selection()
+            return true
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                remove()
+                CapyHaptics.selection()
+            } label: {
+                Label("Remove", systemImage: "trash.fill")
+            }
+            .accessibilityIdentifier("queue-action-trash-\(position)")
+        }
+        .accessibilityAction(named: "Remove") {
+            remove()
+            CapyHaptics.selection()
+        }
     }
 }
 
