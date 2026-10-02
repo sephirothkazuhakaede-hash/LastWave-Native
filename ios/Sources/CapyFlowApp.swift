@@ -211,7 +211,7 @@ struct RootView: View {
                         .frame(width: min(350, geometry.size.width * 0.88))
                         .frame(maxHeight: .infinity)
                         .background(CapyColor.background)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .transition(.move(edge: .leading))
                         .shadow(color: .black.opacity(0.45), radius: 30, x: 12)
                     }
                 }
@@ -238,7 +238,14 @@ struct RootView: View {
                 }
                     .presentationDetents([.large])
             case .settings:
-                AccountSheet()
+                EmptyView()
+            }
+        }
+        .overlay {
+            if drawerDestination == .settings {
+                SettingsPageView(close: { closeDrawerDestination() })
+                    .transition(.move(edge: .trailing))
+                    .zIndex(35)
             }
         }
         .overlay(alignment: .top) {
@@ -263,7 +270,15 @@ struct RootView: View {
 
     private func openDrawerDestination(_ destination: ProfileDrawerDestination) {
         closeDrawer()
-        drawerDestination = destination
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
+            drawerDestination = destination
+        }
+    }
+
+    private func closeDrawerDestination() {
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
+            drawerDestination = nil
+        }
     }
 }
 
@@ -750,99 +765,148 @@ private enum SearchMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-private struct AccountSheet: View {
+private struct SettingsPageView: View {
     @EnvironmentObject var auth: AuthSession
     @EnvironmentObject var social: SocialStore
-    @Environment(\.dismiss) private var dismiss
+    let close: () -> Void
+    @State private var showAccount = false
+    @State private var confirmSignOut = false
+
     var body: some View {
         NavigationStack {
             ZStack {
                 WaveBackdrop()
-                ScrollView {
-                    CapyScreenContainer {
-                        VStack(spacing: 20) {
-                            Group {
-                                if let profile = social.profile {
-                                    SocialAvatar(profile: profile, size: 104)
-                                } else if let url = auth.user?.photoURL {
-                                    AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { ProgressView() }
-                                } else {
-                                    Image(systemName: "person.crop.circle.fill").resizable().scaledToFit().foregroundStyle(Color.waveBlue)
-                                }
-                            }
-                            .frame(width: 104, height: 104).clipShape(Circle())
-                            if let user = auth.user {
-                                VStack(spacing: 5) {
-                                    Text(social.profile?.displayName ?? user.displayName ?? "CapyFlow listener").font(.title2.bold())
-                                    if let profile = social.profile {
-                                        Text("@" + profile.username).font(.subheadline.weight(.semibold)).foregroundStyle(Color.waveBlue)
-                                        Text("\(social.followerCount) followers  •  \(social.followingCount) following")
-                                            .font(.caption).foregroundStyle(.secondary)
+                VStack(spacing: 0) {
+                    ScrollView {
+                        CapyScreenContainer {
+                            VStack(spacing: 12) {
+                                if auth.user != nil {
+                                    Button {
+                                        withAnimation(.easeInOut(duration: 0.2)) { showAccount.toggle() }
+                                    } label: {
+                                        VStack(spacing: 0) {
+                                            HStack(spacing: 14) {
+                                                Image(systemName: "person.crop.circle")
+                                                    .font(.title3).foregroundStyle(CapyColor.accent).frame(width: 30)
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text("Account").font(.capyCallout)
+                                                    Text("Username and email").font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                                                }
+                                                Spacer()
+                                                Image(systemName: showAccount ? "chevron.up" : "chevron.down")
+                                                    .foregroundStyle(CapyColor.tertiaryText)
+                                            }
+                                            .frame(minHeight: 58).contentShape(Rectangle())
+
+                                            if showAccount, let user = auth.user {
+                                                Divider().opacity(0.35)
+                                                VStack(alignment: .leading, spacing: 14) {
+                                                    accountField("Username", value: social.profile?.username ?? user.displayName ?? "Not set")
+                                                    accountField("Email", value: user.email ?? "Not available")
+                                                }
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .padding(.vertical, 14)
+                                            }
+                                        }
+                                        .padding(.horizontal, 16)
+                                        .waveSurface(radius: 18)
                                     }
-                                    Text(user.email ?? "Signed in with Google").foregroundStyle(.secondary)
+                                    .buttonStyle(.plain)
                                 }
+
                                 NavigationLink {
-                                    ProfilePageView()
+                                    AudioQualitySettingsView()
                                 } label: {
-                                    Label("Open and customize profile", systemImage: "person.crop.circle.fill")
-                                        .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
+                                    settingsRow("Audio Quality", icon: "waveform")
                                 }
-                                .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
-                                Button(role: .destructive) { auth.signOut() } label: {
-                                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
-                                        .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
-                                }.buttonStyle(.bordered)
-                            } else {
-                                VStack(spacing: 6) {
-                                    Text("Sign in to CapyFlow").font(.title2.bold())
-                                    Text("Use your Google account now; shared profiles and playlists can build on this account next.")
-                                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                                .buttonStyle(.plain)
+
+                                NavigationLink {
+                                    BackendSettingsView()
+                                } label: {
+                                    settingsRow("Streaming server", icon: "bolt.horizontal.circle.fill")
                                 }
-                                Button { Task { await auth.signInWithGoogle() } } label: {
-                                    Group { if auth.working { ProgressView() } else { Label("Continue with Google", systemImage: "person.badge.key.fill") } }
-                                        .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())
+                                .buttonStyle(.plain)
+
+                                if let error = auth.error {
+                                    Text(error).font(.footnote).foregroundStyle(.red)
+                                        .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
                                 }
-                                .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black).disabled(auth.working)
+                                if auth.user != nil, social.connectionState != .ready {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: social.connectionState.systemImage).foregroundStyle(CapyColor.warning)
+                                        Text(social.error ?? social.connectionState.detail).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                                        Spacer()
+                                        if social.connectionState.canRetry {
+                                            Button("Retry") { social.retryConnection() }.font(.capyCaption).foregroundStyle(CapyColor.accent)
+                                        }
+                                    }.padding(13).waveSurface(radius: 18)
+                                }
                             }
-                            NavigationLink {
-                                AudioQualitySettingsView()
-                            } label: {
-                                Label("Audio Quality", systemImage: "waveform")
-                                    .frame(maxWidth: .infinity, minHeight: 48).contentShape(Rectangle())
-                            }
-                            .buttonStyle(.bordered)
-                            NavigationLink {
-                                BackendSettingsView()
-                            } label: {
-                                Label("Streaming server", systemImage: "bolt.horizontal.circle.fill")
-                                    .frame(maxWidth: .infinity).frame(height: 48).contentShape(Rectangle())
-                            }
-                            .buttonStyle(.bordered)
-                            if let error = auth.error {
-                                Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
-                            }
-                            if auth.user != nil, social.connectionState != .ready {
-                                HStack(spacing: 10) {
-                                    Image(systemName: social.connectionState.systemImage).foregroundStyle(CapyColor.warning)
-                                    Text(social.error ?? social.connectionState.detail).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
-                                    Spacer()
-                                    if social.connectionState.canRetry {
-                                        Button("Retry") { social.retryConnection() }.font(.capyCaption).foregroundStyle(CapyColor.accent)
-                                    }
-                                }.padding(13).waveSurface(radius: 18)
-                            }
-                            Spacer(minLength: 12)
+                            .padding(.top, 12)
+                            .padding(.bottom, 18)
                         }
-                        .padding(.top, 24)
-                        .padding(.bottom, 30)
+                    }
+                    .scrollIndicators(.hidden)
+
+                    if auth.user != nil {
+                        Button(role: .destructive) { confirmSignOut = true } label: {
+                            HStack {
+                                Image(systemName: "rectangle.portrait.and.arrow.right")
+                                Text("Sign out").font(.headline)
+                                Spacer()
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 52)
+                            .padding(.horizontal, 18)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.red)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 10)
                     }
                 }
-                .scrollIndicators(.hidden)
             }
-            .navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: close) {
+                        Image(systemName: "chevron.left")
+                    }
+                    .accessibilityLabel("Back")
+                }
+            }
         }
-        .presentationDetents([.medium, .large])
+        .alert("Sign out of CapyFlow?", isPresented: $confirmSignOut) {
+            Button("Cancel", role: .cancel) {}
+            Button("Sign out", role: .destructive) {
+                auth.signOut()
+                close()
+            }
+        } message: {
+            Text("You'll need to sign in again to use your account.")
+        }
+    }
+
+    private func accountField(_ label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption).foregroundStyle(CapyColor.tertiaryText)
+            Text(value).font(.body).foregroundStyle(CapyColor.primaryText).textSelection(.enabled)
+        }
+    }
+
+    private func settingsRow(_ title: String, icon: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon).foregroundStyle(CapyColor.accent).frame(width: 30)
+            Text(title).font(.capyCallout)
+            Spacer()
+            Image(systemName: "chevron.right").foregroundStyle(CapyColor.tertiaryText)
+        }
+        .frame(maxWidth: .infinity, minHeight: 56)
+        .padding(.horizontal, 16)
+        .contentShape(Rectangle())
+        .waveSurface(radius: 18)
     }
 }
 
