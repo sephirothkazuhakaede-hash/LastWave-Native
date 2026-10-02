@@ -103,7 +103,8 @@ final class ResponsiveLayoutTests: XCTestCase {
         assertSwitch(toggle, hasValue: changedValue)
         assertVisibleControlsFitHorizontally(screen: "queue")
         attachScreenshot(named: "queue-top")
-        let firstSong = app.staticTexts["River song 1"]
+        let firstSong = app.staticTexts["queue-title-0"]
+        XCTAssertEqual(firstSong.label, "River song 1")
         XCTAssertTrue(firstSong.isHittable)
         firstSong.swipeLeft()
         let moveDown = app.buttons["queue-action-arrow.down-0"]
@@ -112,19 +113,23 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertEqual(moveDown.label, "Move down")
         attachScreenshot(named: "queue-swipe-actions")
         moveDown.tap()
-        XCTAssertLessThan(app.staticTexts["River song 2"].frame.midY, firstSong.frame.midY)
-        firstSong.swipeLeft()
+        let movedSong = app.staticTexts["queue-title-1"]
+        XCTAssertEqual(firstSong.label, "River song 2")
+        XCTAssertEqual(movedSong.label, "River song 1")
+        XCTAssertLessThan(firstSong.frame.midY, movedSong.frame.midY)
+        movedSong.swipeLeft()
         let remove = app.buttons["queue-action-trash-1"]
         XCTAssertTrue(remove.waitForExistence(timeout: 4))
         XCTAssertTrue(remove.isHittable)
         XCTAssertEqual(remove.label, "Remove")
         remove.tap()
-        XCTAssertTrue(firstSong.waitForNonExistence(timeout: 4))
-        XCTAssertTrue(app.staticTexts["River song 2"].exists)
+        XCTAssertTrue(app.staticTexts["River song 1"].waitForNonExistence(timeout: 4))
+        XCTAssertEqual(app.staticTexts["queue-title-0"].label, "River song 2")
+        XCTAssertEqual(app.staticTexts["queue-title-1"].label, "River song 3")
         let songs = app.collectionViews.firstMatch
         XCTAssertTrue(songs.exists)
         songs.swipeUp(); songs.swipeUp()
-        XCTAssertFalse(app.staticTexts["River song 2"].isHittable, "The song list must actually scroll while autoplay stays pinned")
+        XCTAssertFalse(app.staticTexts["queue-title-0"].isHittable, "The song list must actually scroll while autoplay stays pinned")
         XCTAssertTrue(toggle.isHittable, "Autoplay must remain available without scrolling back")
         XCTAssertEqual(toggle.frame.midY, initialFrame.midY, accuracy: 1.5)
         toggle.tap()

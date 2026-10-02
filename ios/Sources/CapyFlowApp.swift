@@ -1558,6 +1558,7 @@ private struct TrackCard: View {
     @EnvironmentObject var social: SocialStore
     let track: Track
     var canDelete = false
+    var titleIdentifier: String? = nil
     var body: some View {
         HStack(spacing: 14) {
             Button { Task { await player.play(track) } } label: {
@@ -1565,6 +1566,7 @@ private struct TrackCard: View {
                     Artwork(track: track)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(track.title).font(.headline.weight(.bold)).lineLimit(2)
+                            .accessibilityIdentifier(titleIdentifier ?? "track-title-\(track.id)")
                         HStack(spacing: 6) {
                             Text(track.artist).lineLimit(1)
                             if let duration = track.duration, duration > 0 {
@@ -2068,7 +2070,7 @@ private struct QueueTrackRow: View {
             .padding(.leading, 12).frame(width: actionWidth)
             .opacity(offset < 0 ? 1 : 0)
             .allowsHitTesting(revealed).accessibilityHidden(!revealed)
-            TrackCard(track: track)
+            TrackCard(track: track, titleIdentifier: "queue-title-\(position)")
                 .overlay {
                     if revealed {
                         Color.clear.contentShape(Rectangle()).onTapGesture { close() }
