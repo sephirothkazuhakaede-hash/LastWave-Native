@@ -44,8 +44,12 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
     /// Keep the originating row ID for UI/list edits, but every media consumer
     /// uses the canonical recording's ID and metadata.
     func adoptingRecording(_ song: Track) -> Track {
+        // Album/playlist rows describe the recording the user selected. Preserve
+        // that row's duration even when canonical resolution swaps the playable
+        // media ID; stream/container metadata must not lengthen the song later.
+        let preservedDuration = duration ?? song.duration
         var copy = Track(id: id, title: song.title, artist: song.artist,
-                         duration: song.duration ?? duration, artworkURL: song.artworkURL ?? artworkURL)
+                         duration: preservedDuration, artworkURL: song.artworkURL ?? artworkURL)
         copy.mediaID = song.playableID
         copy.musicVideoType = song.musicVideoType
         copy.albumID = albumID ?? song.albumID
