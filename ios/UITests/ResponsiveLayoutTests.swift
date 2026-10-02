@@ -251,15 +251,10 @@ final class ResponsiveLayoutTests: XCTestCase {
             XCTAssertLessThanOrEqual(filterViewport.maxX, bounds.maxX + tolerance)
         }
 
-        for element in candidates {
+        for element in candidates where element.exists && element.isHittable {
             var frame = element.frame
             guard !frame.isNull, !frame.isInfinite, frame.width > 0, frame.height > 0 else { continue }
             guard frame.maxY >= bounds.minY, frame.minY <= bounds.maxY else { continue }
-            // In-bounds frames already satisfy both assertions. Query expensive
-            // hit-testing only for possible overflow; the same visible outliers
-            // still go through every system-backdrop and scroll-viewport check.
-            if frame.minX >= bounds.minX - tolerance, frame.maxX <= bounds.maxX + tolerance { continue }
-            guard element.exists && element.isHittable else { continue }
             // UIKit's sheet dimming backdrop covers three screen widths and
             // heights. It is a system decoration, not the sheet's content.
             if element.elementType == .other && element.identifier.isEmpty && element.label.isEmpty,
