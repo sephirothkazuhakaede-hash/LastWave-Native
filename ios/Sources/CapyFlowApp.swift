@@ -1992,46 +1992,38 @@ private struct QueueSheet: View {
                     .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
                     List {
                         if let current = player.current {
-                            Section {
-                                TrackCard(track: current)
-                                    .listRowBackground(Color.clear).listRowSeparator(.hidden)
-                            } header: {
-                                Label("Now playing", systemImage: "waveform")
-                                    .font(.capyCallout).foregroundStyle(CapyColor.accent)
-                            }
-                        }
-                        Section {
-                            if player.autoplayLoading {
-                                HStack(spacing: 12) { ProgressView(); Text("Finding related songs…") }
-                                    .padding(12).listRowBackground(Color.clear).listRowSeparator(.hidden)
-                            } else if player.queue.isEmpty {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("You’re all caught up").font(.capyCallout)
-                                    Text(player.autoplayEnabled ? "Related songs will keep the music flowing." : "Add songs to choose what plays next.")
-                                        .font(.caption).foregroundStyle(CapyColor.secondaryText)
-                                }
-                                .padding(12).waveSurface(radius: 22)
+                            Label("Now playing", systemImage: "waveform")
+                                .font(.capyCallout).foregroundStyle(CapyColor.accent)
                                 .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                            TrackCard(track: current)
+                                .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                        }
+                        HStack {
+                            Text("Up next").font(.capyCallout)
+                            Spacer()
+                            Text("\(player.queue.count) songs").font(.caption.weight(.semibold))
+                        }
+                        .foregroundStyle(CapyColor.secondaryText)
+                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                        if player.autoplayLoading {
+                            HStack(spacing: 12) { ProgressView(); Text("Finding related songs…") }
+                                .padding(12).listRowBackground(Color.clear).listRowSeparator(.hidden)
+                        } else if player.queue.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("You’re all caught up").font(.capyCallout)
+                                Text(player.autoplayEnabled ? "Related songs will keep the music flowing." : "Add songs to choose what plays next.")
+                                    .font(.caption).foregroundStyle(CapyColor.secondaryText)
                             }
-                            ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
-                                TrackCard(track: track)
-                                    .listRowBackground(Color.clear).listRowSeparator(.hidden)
-                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                        Button(role: .destructive) { player.removeFromQueue(at: index) } label: { Label("Remove", systemImage: "trash") }.tint(CapyColor.destructive)
-                                        if index < player.queue.count - 1 {
-                                            Button { player.moveQueueItem(from: index, to: index + 1) } label: { Label("Move down", systemImage: "arrow.down") }.tint(CapyColor.backgroundRaised)
-                                        }
-                                        if index > 0 {
-                                            Button { player.moveQueueItem(from: index, to: index - 1) } label: { Label("Move up", systemImage: "arrow.up") }.tint(CapyColor.accentStrong)
-                                        }
-                                    }
-                            }
-                        } header: {
-                            HStack {
-                                Text("Up next").font(.capyCallout)
-                                Spacer()
-                                Text("\(player.queue.count) songs").font(.caption.weight(.semibold))
-                            }.foregroundStyle(CapyColor.secondaryText)
+                            .padding(12).waveSurface(radius: 22)
+                            .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                        }
+                        ForEach(Array(player.queue.enumerated()), id: \.offset) { index, track in
+                            QueueTrackRow(track: track,
+                                canMoveUp: index > 0, canMoveDown: index < player.queue.count - 1,
+                                remove: { player.removeFromQueue(at: index) },
+                                moveUp: { player.moveQueueItem(from: index, to: index - 1) },
+                                moveDown: { player.moveQueueItem(from: index, to: index + 1) })
+                                .listRowBackground(Color.clear).listRowSeparator(.hidden)
                         }
                     }
                     .listStyle(.plain).scrollContentBackground(.hidden)
@@ -2045,6 +2037,103 @@ private struct QueueSheet: View {
             }
         }
         .tint(CapyColor.accent)
+    }
+}
+
+private struct QueueTrackRow: View {
+    let track: Track
+    let canMoveUp: Bool
+    let canMoveDown: Bool
+    let remove: () -> Void
+    let moveUp: () -> Void
+    let moveDown: () -> Void
+    @State private var revealed = false
+    @State private var rowWidth: CGFloat = 0
+    @GestureState private var translation: CGFloat = 0
+
+    private var actionWidth: CGFloat {
+        let count = 1 + (canMoveUp ? 1 : 0) + (canMoveDown ? 1 : 0)
+        return CGFloat(count) * 58 + CGFloat(count - 1) * 8 + 12
+    }
+
+    var body: some View {
+        let offset = max(-actionWidth, min(0, (revealed ? -actionWidth : 0) + translation))
+        ZStack(alignment: .trailing) {
+            HStack(spacing: 8) {
+                if canMoveUp { action("Up", label: "Move up", icon: "arrow.up", perform: moveUp) }
+                if canMoveDown { action("Down", label: "Move down", icon: "arrow.down", perform: moveDown) }
+                action("Remove", label: "Remove", icon: "trash", destructive: true, perform: remove)
+            }
+            .padding(.leading, 12).frame(width: actionWidth)
+            .opacity(offset < 0 ? 1 : 0)
+            .allowsHitTesting(revealed).accessibilityHidden(!revealed)
+            TrackCard(track: track)
+                .overlay {
+                    if revealed {
+                        Color.clear.contentShape(Rectangle()).onTapGesture { close() }
+                    }
+                }
+                .offset(x: offset)
+        }
+        .contentShape(Rectangle()).clipped()
+        .background {
+            GeometryReader { geometry in
+                Color.clear.onAppear { rowWidth = geometry.size.width }
+                    .onChange(of: geometry.size.width) { _, value in rowWidth = value }
+            }
+        }
+        // Run alongside the List's vertical pan; vertical drags never reveal
+        // actions. The song's existing play/menu buttons retain normal taps.
+        .simultaneousGesture(DragGesture(minimumDistance: 24)
+            .updating($translation) { value, state, _ in
+                if abs(value.translation.width) > abs(value.translation.height) * 1.3 {
+                    state = value.translation.width
+                }
+            }
+            .onEnded { value in
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.3 else { return }
+                if rowWidth > 0, value.translation.width < -rowWidth * 0.85 {
+                    perform(remove)
+                } else {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
+                        revealed = revealed ? value.predictedEndTranslation.width < 44 : value.predictedEndTranslation.width < -44
+                    }
+                }
+            })
+        .onChange(of: track.id) { _, _ in revealed = false }
+        .accessibilityActions {
+            Button("Remove") { perform(remove) }
+            if canMoveUp { Button("Move up") { perform(moveUp) } }
+            if canMoveDown { Button("Move down") { perform(moveDown) } }
+        }
+    }
+
+    private func close() {
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) { revealed = false }
+    }
+
+    private func perform(_ operation: () -> Void) {
+        close()
+        operation()
+        CapyHaptics.selection()
+    }
+
+    private func action(_ title: String, label: String, icon: String, destructive: Bool = false, perform operation: @escaping () -> Void) -> some View {
+        Button(role: destructive ? .destructive : nil) { perform(operation) } label: {
+            VStack(spacing: 6) {
+                Image(systemName: icon).font(.title3.weight(.semibold))
+                Text(title).font(.caption2.weight(.bold)).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(destructive ? CapyColor.destructive : CapyColor.accent)
+            .frame(width: 58, height: 70)
+            .background(CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke((destructive ? CapyColor.destructive : CapyColor.accent).opacity(0.2), lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain).accessibilityLabel(label)
     }
 }
 
