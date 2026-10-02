@@ -63,6 +63,25 @@ actor CanonicalTrackResolver {
         return nil
     }
 
+    /// Reuse a concrete Songs recording for an album row only when title,
+    /// artist and explicit version identify one unique ATV recording.
+    private func knownSongsRecording(for track: Track) -> Track? {
+        let title = AlbumAudioIdentity.comparisonTitle(track.title)
+        guard !title.isEmpty else { return nil }
+        let requestedArtist = AlbumAudioIdentity.key(AlbumAudioIdentity.artist(track.artist))
+        let candidates = index.recordings.values.filter { song in
+            guard !index.needsMetadata.contains(song.playableID),
+                  song.musicVideoType == "MUSIC_VIDEO_TYPE_ATV",
+                  AlbumAudioIdentity.comparisonTitle(song.title) == title else { return false }
+            let songArtist = AlbumAudioIdentity.key(AlbumAudioIdentity.artist(song.artist))
+            guard requestedArtist.isEmpty || requestedArtist == songArtist else { return false }
+            if let explicit = track.isExplicit, let other = song.isExplicit, explicit != other { return false }
+            return true
+        }
+        guard Set(candidates.map(\.playableID)).count == 1, let song = candidates.first else { return nil }
+        return song
+    }
+
     private func store(_ track: Track, recording: Track) -> Track {
         // Another entry point may have resolved this recording while our
         // catalog request was in flight. Keep that winner for both aliases.
@@ -118,6 +137,10 @@ actor CanonicalTrackResolver {
             return store(requestedTrack, recording: requestedTrack)
         }
         if let saved = cached(requestedTrack) { return saved }
+        if (requestedTrack.albumID != nil || requestedTrack.albumTitle != nil),
+           let known = knownSongsRecording(for: requestedTrack) {
+            return store(requestedTrack, recording: known)
+        }
         var track = requestedTrack
         if AlbumAudioIdentity.isMissingArtist(track.artist), let id = track.albumID,
            let albumContext, let context = try? await albumContext(id) {

@@ -606,7 +606,7 @@ private struct SearchHomeView: View {
                         ForEach(results) { TrackCard(track: $0) }
                     }
                 }
-                .padding(.top, 10).padding(.bottom, 30)
+                .padding(.top, 10).padding(.bottom, 150)
             }
         }.scrollIndicators(.hidden)
         // NavigationStack owns an opaque hosting surface. Put the decorative
@@ -766,6 +766,7 @@ private enum SearchMode: String, CaseIterable, Identifiable {
 private struct SettingsPageView: View {
     @EnvironmentObject var auth: AuthSession
     @EnvironmentObject var social: SocialStore
+    @EnvironmentObject var player: WavePlayer
     let close: () -> Void
     @State private var showAccount = false
     @State private var confirmSignOut = false
@@ -825,6 +826,8 @@ private struct SettingsPageView: View {
                                     settingsRow("Streaming server", icon: "bolt.horizontal.circle.fill")
                                 }
                                 .buttonStyle(.plain)
+
+                                storageSection
 
                                 if let error = auth.error {
                                     Text(error).font(.footnote).foregroundStyle(.red)
@@ -905,6 +908,73 @@ private struct SettingsPageView: View {
         .padding(.horizontal, 16)
         .contentShape(Rectangle())
         .waveSurface(radius: 18)
+    }
+
+
+    private var storageSection: some View {
+        let usage = storageUsage
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: "internaldrive.fill").foregroundStyle(CapyColor.accent).frame(width: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Storage").font(.capyCallout)
+                    Text("\(player.downloads.count) downloaded \(player.downloads.count == 1 ? "song" : "songs")")
+                        .font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                }
+                Spacer()
+                Text(ByteCountFormatter.string(fromByteCount: usage.app, countStyle: .file))
+                    .font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+            }
+            GeometryReader { geometry in
+                let total = max(usage.capacity, 1)
+                HStack(spacing: 2) {
+                    Rectangle().fill(CapyColor.accent)
+                        .frame(width: geometry.size.width * CGFloat(Double(usage.downloads) / Double(total)))
+                    Rectangle().fill(CapyColor.warning.opacity(0.85))
+                        .frame(width: geometry.size.width * CGFloat(Double(usage.data) / Double(total)))
+                    Rectangle().fill(.white.opacity(0.12))
+                }.clipShape(Capsule())
+            }.frame(height: 9)
+            HStack(spacing: 18) {
+                storageLegend("Downloaded Audio", usage.downloads, CapyColor.accent)
+                storageLegend("Cache & Data", usage.data, CapyColor.warning)
+            }
+            if usage.capacity > 0 {
+                Text("\(ByteCountFormatter.string(fromByteCount: usage.free, countStyle: .file)) free on this iPhone")
+                    .font(.caption).foregroundStyle(CapyColor.tertiaryText)
+            }
+        }.padding(16).waveSurface(radius: 18)
+    }
+
+    private func storageLegend(_ title: String, _ bytes: Int64, _ color: Color) -> some View {
+        HStack(spacing: 7) {
+            Circle().fill(color).frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.caption)
+                Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+                    .font(.caption2).foregroundStyle(CapyColor.secondaryText)
+            }
+        }
+    }
+
+    private var storageUsage: (downloads: Int64, data: Int64, app: Int64, capacity: Int64, free: Int64) {
+        let fm = FileManager.default
+        func directorySize(_ url: URL) -> Int64 {
+            guard let files = fm.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]) else { return 0 }
+            var bytes: Int64 = 0
+            for case let file as URL in files {
+                if let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                   values.isRegularFile == true { bytes += Int64(values.fileSize ?? 0) }
+            }
+            return bytes
+        }
+        let documents = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let offline = documents.appendingPathComponent("Offline", isDirectory: true)
+        let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let downloaded = directorySize(offline)
+        let other = max(0, directorySize(documents) - downloaded) + directorySize(caches)
+        let volume = try? documents.resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey])
+        return (downloaded, other, downloaded + other, Int64(volume?.volumeTotalCapacity ?? 0), volume?.volumeAvailableCapacityForImportantUsage ?? 0)
     }
 }
 
