@@ -15,6 +15,14 @@ final class ResponsiveLayoutTests: XCTestCase {
             launch(fixture)
             assertVisibleControlsFitHorizontally(screen: fixture)
             assertSafeAreaPixelsHaveBackground(screen: fixture)
+            if fixture.hasPrefix("player") {
+                for identifier in ["now-playing-centered-title", "now-playing-centered-output"] {
+                    let label = app.staticTexts[identifier]
+                    XCTAssertTrue(label.exists)
+                    XCTAssertEqual(label.frame.midX, app.windows.firstMatch.frame.midX, accuracy: 1.5,
+                                   "Now Playing title/output must center on the physical screen")
+                }
+            }
             attachScreenshot(named: fixture)
             app.terminate()
         }

@@ -36,8 +36,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.seph.capyflow
         SWIFT_VERSION: '5.0'
         TARGETED_DEVICE_FAMILY: '1,2'
-        MARKETING_VERSION: 0.4.3
-        CURRENT_PROJECT_VERSION: 10
+        MARKETING_VERSION: 0.4.4
+        CURRENT_PROJECT_VERSION: 11
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_CFBundleDisplayName: CapyFlow
@@ -73,6 +73,9 @@ targets:
     platform: iOS
     sources:
       - path: Tests
+        excludes: [Fixtures]
+      - path: Tests/Fixtures
+        buildPhase: resources
     dependencies:
       - target: CapyFlow
     settings:

@@ -10,47 +10,94 @@ private struct LyricsRecord: Decodable {
     let instrumental: Bool
     let plainLyrics: String?
     let syncedLyrics: String?
+    let trackName: String?
+    let artistName: String?
+    let duration: Double?
 }
 
 actor LyricsService {
     private var cache: [String: [LyricLine]] = [:]
-    private let folder: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("OfflineLyrics", isDirectory: true)
+    private var pending: [String: Task<[LyricLine], Error>] = [:]
+    private let folder: URL
+    private let session: URLSession
 
-    func lyrics(for track: Track) async throws -> [LyricLine] {
-        if let cached = cache[track.id] { return cached }
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let file = folder.appendingPathComponent(track.id + ".json")
-        if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([LyricLine].self, from: data) {
-            cache[track.id] = saved; return saved
-        }
+    init(session: URLSession = .shared, folder: URL? = nil) {
+        self.session = session
+        self.folder = folder ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("OfflineLyrics", isDirectory: true)
+    }
+
+    static func lookupURL(for track: Track) -> URL {
         var components = URLComponents(string: "https://lrclib.net/api/search")!
         components.queryItems = [
-            URLQueryItem(name: "track_name", value: cleaned(track.title)),
-            URLQueryItem(name: "artist_name", value: cleaned(track.artist))
+            URLQueryItem(name: "track_name", value: AlbumAudioIdentity.title(track.title)),
+            URLQueryItem(name: "artist_name", value: AlbumAudioIdentity.artist(track.artist))
         ]
-        var request = URLRequest(url: components.url!)
+        return components.url!
+    }
+
+    func lyrics(for track: Track) async throws -> [LyricLine] {
+        let key = track.lyricsCacheKey
+        if let saved = cache[key] { return saved }
+        if let task = pending[key] { return try await task.value }
+        let task = Task { try await self.fetchLyrics(for: track) }
+        pending[key] = task
+        defer { pending.removeValue(forKey: key) }
+        return try await task.value
+    }
+
+    private func fetchLyrics(for track: Track) async throws -> [LyricLine] {
+        let key = track.lyricsCacheKey
+        if let cached = cache[key] { return cached }
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent(key + ".json")
+        if let data = try? Data(contentsOf: file), let saved = try? JSONDecoder().decode([LyricLine].self, from: data), !saved.isEmpty {
+            cache[key] = saved; return saved
+        }
+        // Songs-search caches from previous builds already use the recording
+        // ID. Reuse those files for album rows as well, then migrate the key.
+        let legacy = folder.appendingPathComponent(track.playableID + ".json")
+        if let data = try? Data(contentsOf: legacy), let saved = try? JSONDecoder().decode([LyricLine].self, from: data), !saved.isEmpty {
+            cache[key] = saved
+            try? data.write(to: file, options: .atomic)
+            return saved
+        }
+        var request = URLRequest(url: Self.lookupURL(for: track))
         request.timeoutInterval = 15
         request.setValue("CapyFlow-iOS/0.2 (https://github.com/sephirothkazuhakaede-hash/LastWave-Native)", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw WaveError.message("Lyrics service did not respond.") }
         if http.statusCode == 429 { throw WaveError.message("Lyrics are temporarily rate limited. Try again shortly.") }
         guard http.statusCode == 200 else { throw WaveError.message("Lyrics are not available for this song.") }
         let records = try JSONDecoder().decode([LyricsRecord].self, from: data)
-        guard let record = records.first(where: { $0.syncedLyrics?.isEmpty == false }) ?? records.first else {
+        let matching = records.filter { record in
+            if let title = record.trackName, AlbumAudioIdentity.key(AlbumAudioIdentity.title(title)) != AlbumAudioIdentity.key(AlbumAudioIdentity.title(track.title)) { return false }
+            if let artist = record.artistName, AlbumAudioIdentity.key(AlbumAudioIdentity.artist(artist)) != AlbumAudioIdentity.key(AlbumAudioIdentity.artist(track.artist)) { return false }
+            if let duration = track.duration, let actual = record.duration, abs(duration - actual) > max(5, min(12, duration * 0.04)) { return false }
+            return true
+        }.sorted { lhs, rhs in
+            func score(_ record: LyricsRecord) -> Double {
+                let distance = abs((record.duration ?? track.duration ?? 0) - (track.duration ?? record.duration ?? 0))
+                return (record.syncedLyrics?.isEmpty == false ? 20 : 0) - distance
+            }
+            return score(lhs) > score(rhs)
+        }
+        guard let record = matching.first(where: { $0.instrumental || $0.syncedLyrics?.isEmpty == false || $0.plainLyrics?.isEmpty == false }) else {
             throw WaveError.message("Lyrics are not available for this song.")
         }
         let lines: [LyricLine]
         if record.instrumental {
             lines = [LyricLine(time: nil, text: "Instrumental")]
         } else if let synced = record.syncedLyrics, !synced.isEmpty {
-            lines = parseLRC(synced)
+            let parsed = parseLRC(synced)
+            lines = parsed.isEmpty ? (record.plainLyrics ?? "").split(whereSeparator: \.isNewline).map { LyricLine(time: nil, text: String($0)) } : parsed
         } else if let plain = record.plainLyrics, !plain.isEmpty {
             lines = plain.split(whereSeparator: \.isNewline).map { LyricLine(time: nil, text: String($0)) }
         } else {
             throw WaveError.message("Lyrics are not available for this song.")
         }
-        cache[track.id] = lines
+        guard !lines.isEmpty else { throw WaveError.message("Lyrics are not available for this song.") }
+        cache[key] = lines
         if let data = try? JSONEncoder().encode(lines) { try? data.write(to: file, options: .atomic) }
         return lines
     }
@@ -64,12 +111,6 @@ actor LyricsService {
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { return [] }
         let records = try JSONDecoder().decode([LyricsSearchRecord].self, from: data)
         return Array(records.prefix(5)).map { ($0.trackName, $0.artistName) }
-    }
-
-    private func cleaned(_ value: String) -> String {
-        value.replacingOccurrences(of: #"\s*[\(\[].*?(official|video|audio|lyrics?|visuali[sz]er).*?[\)\]]"#,
-                                   with: "", options: [.regularExpression, .caseInsensitive])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func parseLRC(_ source: String) -> [LyricLine] {

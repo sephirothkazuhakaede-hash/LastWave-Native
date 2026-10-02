@@ -1826,17 +1826,20 @@ struct PlayerView: View {
                     intensity: 1.2
                 )
                 VStack(spacing: showLyrics ? 8 : 13) {
-                    HStack {
+                    CenteredPlayerHeader {
                         Button { dismiss() } label: { Image(systemName: "chevron.down") }
                             .buttonStyle(CapyIconButtonStyle())
                             .accessibilityLabel("Close Now Playing")
-                        Spacer()
                         VStack(spacing: 2) {
                             Text("NOW PLAYING").font(.caption2.weight(.black)).tracking(2)
+                                .lineLimit(1).minimumScaleFactor(0.7)
+                                .accessibilityIdentifier("now-playing-centered-title")
                             Text(player.audioOutputName).font(.caption2)
                                 .foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                                .accessibilityIdentifier("now-playing-centered-output")
                         }
-                        Spacer()
+                        .frame(maxWidth: .infinity)
+                        HStack {
                         AudioOutputPicker().frame(width: 44, height: 44)
                         Menu {
                             Button("Audio Info / Current Quality") { showAudioInfo = true }
@@ -1845,6 +1848,7 @@ struct PlayerView: View {
                             Button("Clear queue", role: .destructive) { player.queue.removeAll() }
                         } label: { Image(systemName: "ellipsis") }
                             .buttonStyle(CapyIconButtonStyle())
+                        }
                     }
                     if let track = player.current {
                         ZStack {

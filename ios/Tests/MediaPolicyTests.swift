@@ -42,7 +42,9 @@ final class MediaPolicyTests: XCTestCase {
         var song = Track(id: "audioRecording", title: "Lavender Haze", artist: "Taylor Swift", duration: 203)
         song.albumID = "MPRE_album"
         song.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
-        var wrongAlbum = song; wrongAlbum.albumID = "MPRE_other"
+        // A different browse ID alone is legitimate (regional/reissued albums).
+        // Reject a different recording by duration and version instead.
+        var wrongAlbum = song.withDuration(300); wrongAlbum.albumID = "MPRE_other"
         var wrongVersion = song
         wrongVersion = Track(id: "live", title: "Lavender Haze (Live)", artist: "Taylor Swift", duration: 203)
         wrongVersion.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"

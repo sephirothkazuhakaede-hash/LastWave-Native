@@ -909,6 +909,9 @@ private extension Track {
         albumID = data["albumID"] as? String
         mediaID = data["mediaID"] as? String
         musicVideoType = data["musicVideoType"] as? String
+        albumTitle = data["albumTitle"] as? String
+        trackNumber = data["trackNumber"] as? Int
+        isExplicit = data["isExplicit"] as? Bool
     }
 
     var firestoreData: [String: Any] {
@@ -918,6 +921,9 @@ private extension Track {
         if let albumID { data["albumID"] = albumID }
         if let mediaID { data["mediaID"] = mediaID }
         if let musicVideoType { data["musicVideoType"] = musicVideoType }
+        if let albumTitle { data["albumTitle"] = albumTitle }
+        if let trackNumber { data["trackNumber"] = trackNumber }
+        if let isExplicit { data["isExplicit"] = isExplicit }
         return data
     }
 }

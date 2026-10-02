@@ -131,7 +131,7 @@ struct DownloadBatchSummary: Equatable {
     }
 
     private func localCopy(for track: Track) -> Track? {
-        downloads.first { $0.id == track.id && (track.mediaID == nil || $0.playableID == track.playableID) && $0.downloadQuality == audioQuality.backendValue
+        downloads.first { ($0.id == track.id || $0.playableID == track.playableID) && (track.mediaID == nil || $0.playableID == track.playableID) && $0.downloadQuality == audioQuality.backendValue
             && FileManager.default.fileExists(atPath: localURL($0).path) }
     }
 
@@ -264,7 +264,8 @@ struct DownloadBatchSummary: Equatable {
         do { track = try await catalog.normalizedTrack(requestedTrack) }
         catch { if token == generation { loading = false; self.error = error.localizedDescription }; return }
         guard token == generation else { return }
-        if track.playableID != requestedTrack.id {
+        healSavedIdentity(track)
+        if track.playableID != requestedTrack.playableID {
             lastPersistedDuration.removeValue(forKey: track.id)
             lastPersistedDurationAuthority.removeValue(forKey: track.id)
         }
@@ -293,7 +294,6 @@ struct DownloadBatchSummary: Equatable {
             rememberRecentlyPlayed(track)
             lyrics = []; nowPlayingArtwork = nil
             publishNowPlaying()
-            Task { await loadLyrics(for: track, token: token) }
             Task { await loadArtwork(for: track, token: token) }
         }
         do {
@@ -325,6 +325,10 @@ struct DownloadBatchSummary: Equatable {
                 usedBackend = resolved.usesBackend
             }
             guard token == generation else { return }
+            if !recovering {
+                let lyricTrack = current ?? track
+                Task { await loadLyrics(for: lyricTrack, token: token) }
+            }
             try AudioRoutePolicy.configure(AVAudioSession.sharedInstance())
             try AVAudioSession.sharedInstance().setActive(true)
             audioOutputName = Self.outputName()
@@ -461,6 +465,7 @@ struct DownloadBatchSummary: Equatable {
         let track: Track
         do { track = try await catalog.normalizedTrack(requestedTrack) }
         catch { if reportError { self.error = error.localizedDescription }; return false }
+        healSavedIdentity(track)
         if isDownloaded(track) {
             downloadStates[track.id] = TrackDownloadState(
                 stage: .downloaded, progress: 1, source: "Offline copy", attempt: attemptNumber,
@@ -664,6 +669,7 @@ struct DownloadBatchSummary: Equatable {
         var tracks = playlists[index].tracks; tracks.append(canonicalized(track))
         playlists[index] = ImportedPlaylist(id: playlists[index].id, name: playlists[index].name, tracks: tracks)
         savePlaylists()
+        scheduleIdentityRepair([track])
     }
     func saveAlbum(_ album: Album, tracks: [Track]) {
         guard !tracks.isEmpty else { return }
@@ -671,6 +677,7 @@ struct DownloadBatchSummary: Equatable {
         playlists.removeAll { $0.id == id }
         playlists.insert(ImportedPlaylist(id: id, name: album.title, tracks: tracks.map(canonicalized)), at: 0)
         savePlaylists()
+        scheduleIdentityRepair(tracks)
     }
     func playlistArtworkURL(for playlistID: String) -> URL? {
         let url = playlistArtworkFolder.appendingPathComponent(safePlaylistID(playlistID) + ".jpg")
@@ -942,6 +949,46 @@ struct DownloadBatchSummary: Equatable {
             return track
         }
         return track.withDuration(durationCappedByKnownTrack(corrected, knownDuration: track.duration))
+    }
+
+    /// Repair persisted album rows after the shared resolver learns their
+    /// recording. Existing files retain their identity unless it already agrees.
+    private func healSavedIdentity(_ canonical: Track) {
+        func repaired(_ track: Track) -> Track {
+            track.id == canonical.id || track.playableID == canonical.playableID
+                ? track.adoptingRecording(canonical) : track
+        }
+        let repairedQueue = queue.map(repaired)
+        if queue != repairedQueue { queue = repairedQueue }
+        playbackHistory = playbackHistory.map(repaired)
+        let repairedRecent = recentTracks.map(repaired)
+        if recentTracks != repairedRecent {
+            recentTracks = repairedRecent
+            if let data = try? JSONEncoder().encode(recentTracks) { UserDefaults.standard.set(data, forKey: "recentTracks") }
+        }
+        var changedPlaylists = false
+        let repairedPlaylists = playlists.map { playlist -> ImportedPlaylist in
+            let tracks = playlist.tracks.map(repaired)
+            if tracks != playlist.tracks { changedPlaylists = true }
+            return ImportedPlaylist(id: playlist.id, name: playlist.name, tracks: tracks)
+        }
+        if changedPlaylists { playlists = repairedPlaylists; savePlaylists() }
+        let repairedDownloads = downloads.map { $0.playableID == canonical.playableID ? repaired($0) : $0 }
+        if downloads != repairedDownloads {
+            downloads = repairedDownloads
+            if let data = try? JSONEncoder().encode(downloads) { try? data.write(to: index, options: .atomic) }
+        }
+    }
+
+    private func scheduleIdentityRepair(_ tracks: [Track]) {
+        Task { [weak self] in
+            guard let self else { return }
+            for track in tracks {
+                if let canonical = try? await self.catalog.normalizedTrack(track) {
+                    self.healSavedIdentity(canonical)
+                }
+            }
+        }
     }
 
     private func persistAuthoritativeDurations() {
