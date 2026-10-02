@@ -890,7 +890,7 @@ private struct SettingsPageView: View {
     private func accountField(_ label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label).font(.caption).foregroundStyle(CapyColor.tertiaryText)
-            Text(value).font(.body).foregroundStyle(CapyColor.primaryText).textSelection(.enabled)
+            Text(value).font(.body).foregroundStyle(.primary).textSelection(.enabled)
         }
     }
 
