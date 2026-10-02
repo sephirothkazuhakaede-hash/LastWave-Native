@@ -66,13 +66,13 @@ actor CanonicalTrackResolver {
     /// Reuse a concrete Songs recording for an album row only when title,
     /// artist and explicit version identify one unique ATV recording.
     private func knownSongsRecording(for track: Track) -> Track? {
-        let title = AlbumAudioIdentity.comparisonTitle(track.title)
+        let title = AlbumAudioIdentity.key(AlbumAudioIdentity.title(track.title))
         guard !title.isEmpty else { return nil }
         let requestedArtist = AlbumAudioIdentity.key(AlbumAudioIdentity.artist(track.artist))
         let candidates = index.recordings.values.filter { song in
             guard !index.needsMetadata.contains(song.playableID),
                   song.musicVideoType == "MUSIC_VIDEO_TYPE_ATV",
-                  AlbumAudioIdentity.comparisonTitle(song.title) == title else { return false }
+                  AlbumAudioIdentity.key(AlbumAudioIdentity.title(song.title)) == title else { return false }
             let songArtist = AlbumAudioIdentity.key(AlbumAudioIdentity.artist(song.artist))
             guard requestedArtist.isEmpty || requestedArtist == songArtist else { return false }
             if let explicit = track.isExplicit, let other = song.isExplicit, explicit != other { return false }
