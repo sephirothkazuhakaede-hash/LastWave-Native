@@ -102,6 +102,18 @@ final class ResponsiveLayoutTests: XCTestCase {
         XCTAssertNotEqual(toggle.value as? String, initialValue)
         assertVisibleControlsFitHorizontally(screen: "queue")
         attachScreenshot(named: "queue-top")
+        let firstSong = app.staticTexts["River song 1"]
+        XCTAssertTrue(firstSong.isHittable)
+        firstSong.swipeLeft()
+        XCTAssertTrue(app.buttons["Move down"].waitForExistence(timeout: 4))
+        attachScreenshot(named: "queue-swipe-actions")
+        app.buttons["Move down"].tap()
+        XCTAssertLessThan(app.staticTexts["River song 2"].frame.midY, firstSong.frame.midY)
+        firstSong.swipeLeft()
+        XCTAssertTrue(app.buttons["Remove"].waitForExistence(timeout: 4))
+        app.buttons["Remove"].tap()
+        XCTAssertTrue(firstSong.waitForNonExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["River song 2"].exists)
         let songs = app.collectionViews.firstMatch
         XCTAssertTrue(songs.exists)
         songs.swipeUp(); songs.swipeUp()

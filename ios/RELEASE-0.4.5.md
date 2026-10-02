@@ -31,7 +31,9 @@ search priming. No MSI backend change, media transcoding or social permission ch
 The queue now uses the existing artwork ambience and surface cards. A themed
 autoplay switch stays above the scrolling song list; it is no longer buried after
 the last track or duplicated in the player menu. Swipe removal and move controls
-remain available, and repeated tracks have independent row identities. A 30-song
+remain available with CapyFlow surface/accent/destructive colors, and repeated
+tracks have independent row identities. The queue regression also verifies swipe
+reordering and removal. A 30-song
 layout fixture checks that the switch stays tappable while scrolling on every size.
 
 Regression fixtures capture real Your Name., THE TORTURED POETS DEPARTMENT and

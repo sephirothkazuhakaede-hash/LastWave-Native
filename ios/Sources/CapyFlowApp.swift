@@ -2011,12 +2011,12 @@ private struct QueueSheet: View {
                                 TrackCard(track: track)
                                     .listRowBackground(Color.clear).listRowSeparator(.hidden)
                                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                        Button(role: .destructive) { player.removeFromQueue(at: index) } label: { Label("Remove", systemImage: "trash") }
+                                        Button(role: .destructive) { player.removeFromQueue(at: index) } label: { Label("Remove", systemImage: "trash") }.tint(CapyColor.destructive)
                                         if index < player.queue.count - 1 {
-                                            Button { player.moveQueueItem(from: index, to: index + 1) } label: { Label("Move down", systemImage: "arrow.down") }.tint(.indigo)
+                                            Button { player.moveQueueItem(from: index, to: index + 1) } label: { Label("Move down", systemImage: "arrow.down") }.tint(CapyColor.backgroundRaised)
                                         }
                                         if index > 0 {
-                                            Button { player.moveQueueItem(from: index, to: index - 1) } label: { Label("Move up", systemImage: "arrow.up") }.tint(CapyColor.accent)
+                                            Button { player.moveQueueItem(from: index, to: index - 1) } label: { Label("Move up", systemImage: "arrow.up") }.tint(CapyColor.accentStrong)
                                         }
                                     }
                             }
