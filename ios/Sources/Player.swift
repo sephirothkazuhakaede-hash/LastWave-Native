@@ -443,6 +443,12 @@ struct DownloadBatchSummary: Equatable {
         let track = queue.remove(at: source)
         queue.insert(track, at: destination)
     }
+
+    func moveQueueItems(fromOffsets source: IndexSet, toOffset destination: Int) {
+        // Match SwiftUI List.onMove semantics so the visible row order and the
+        // playback queue are changed by the same native inline reorder gesture.
+        queue.move(fromOffsets: source, toOffset: destination)
+    }
     func prewarm(_ tracks: [Track]) {
         let candidates = Array(tracks.prefix(3))
         let quality = audioQuality
