@@ -82,6 +82,30 @@ actor CanonicalTrackResolver {
         return song
     }
 
+    /// Last-resort bridge between an Album browse row and the Songs catalogue.
+    /// This deliberately ignores album ID and duration because those are the two
+    /// fields that can differ across YouTube Music surfaces. It still requires
+    /// one unique ATV recording with the same normalized title/artist/version.
+    private func uniqueSongsFallback(for track: Track, candidates: [Track]) -> Track? {
+        let wantedTitle = AlbumAudioIdentity.key(AlbumAudioIdentity.title(track.title))
+        let wantedArtist = AlbumAudioIdentity.key(AlbumAudioIdentity.artist(track.artist))
+        let wantedVersions = AlbumAudioIdentity.versionMarkers(track.title)
+        guard !wantedTitle.isEmpty else { return nil }
+
+        let matches = candidates.filter { song in
+            guard song.musicVideoType == "MUSIC_VIDEO_TYPE_ATV",
+                  AlbumAudioIdentity.key(AlbumAudioIdentity.title(song.title)) == wantedTitle else { return false }
+            let artist = AlbumAudioIdentity.key(AlbumAudioIdentity.artist(song.artist))
+            guard AlbumAudioIdentity.isMissingArtist(track.artist) || artist == wantedArtist else { return false }
+            guard AlbumAudioIdentity.versionMarkers(song.title) == wantedVersions else { return false }
+            if let explicit = track.isExplicit, let other = song.isExplicit, explicit != other { return false }
+            return true
+        }
+        let ids = Set(matches.map(\.playableID))
+        guard ids.count == 1, let match = matches.first else { return nil }
+        return match
+    }
+
     private func store(_ track: Track, recording: Track) -> Track {
         // Another entry point may have resolved this recording while our
         // catalog request was in flight. Keep that winner for both aliases.
@@ -209,16 +233,22 @@ actor CanonicalTrackResolver {
                     #endif
                 }
             }
-            guard let song = AlbumAudioIdentity.bestMatch(for: track, candidates: candidates) else {
-                // Exhaust the Songs fallbacks first. A primary album endpoint
-                // explicitly marked as audio is still a valid final identity;
-                // never use an album music-video ID as this fallback.
-                if track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV", !missingArtist {
-                    return self.store(track, recording: track)
-                }
-                throw WaveError.message("Couldn’t find the correct recording after trying several Songs searches. Please try again later.")
+            if let song = AlbumAudioIdentity.bestMatch(for: track, candidates: candidates) {
+                return self.store(track, recording: song)
             }
-            return self.store(track, recording: song)
+            // YouTube Music's Album browse and Songs search can describe the
+            // same recording with different album/duration metadata. Mirror the
+            // successful Songs-tab path internally, but only when it yields one
+            // unambiguous ATV recording with the same visible song identity.
+            if let song = self.uniqueSongsFallback(for: track, candidates: candidates) {
+                return self.store(track, recording: song)
+            }
+            // A primary album endpoint explicitly marked as audio is still a
+            // valid final identity; never use an album music-video ID here.
+            if track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV", !missingArtist {
+                return self.store(track, recording: track)
+            }
+            throw WaveError.message("Couldn’t find the correct recording after trying several Songs searches. Please try again later.")
         }
         pending[track.id] = task
         defer { pending.removeValue(forKey: track.id) }
