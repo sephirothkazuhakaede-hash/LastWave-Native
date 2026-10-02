@@ -17,7 +17,7 @@ actor CanonicalTrackResolver {
     private var index: Index
     private let defaults: UserDefaults?
     private var pending: [String: Task<Track, Error>] = [:]
-    private static let storageKey = "capyflow.canonicalRecordings.v2"
+    private static let storageKey = "capyflow.canonicalRecordings.v3"
 
     init(defaults: UserDefaults? = .standard) {
         self.defaults = defaults
@@ -47,10 +47,14 @@ actor CanonicalTrackResolver {
     }
 
     private func cached(_ track: Track) -> Track? {
-        if let id = index.aliases[track.id], !index.needsMetadata.contains(id), let song = index.recordings[id] {
+        if let id = index.aliases[track.id], !index.needsMetadata.contains(id), let song = index.recordings[id],
+           AlbumAudioIdentity.compatible(track, song) {
             return track.adoptingRecording(song)
         }
-        if !index.needsMetadata.contains(track.playableID), let song = index.recordings[track.playableID] { return track.adoptingRecording(song) }
+        if !index.needsMetadata.contains(track.playableID), let song = index.recordings[track.playableID],
+           AlbumAudioIdentity.compatible(track, song) {
+            return track.adoptingRecording(song)
+        }
         if let song = AlbumAudioIdentity.bestMatch(for: track, candidates: index.recordings.keys.sorted().filter { !index.needsMetadata.contains($0) }.compactMap { index.recordings[$0] }) {
             index.aliases[track.id] = song.playableID
             persist()
@@ -62,10 +66,11 @@ actor CanonicalTrackResolver {
     private func store(_ track: Track, recording: Track) -> Track {
         // Another entry point may have resolved this recording while our
         // catalog request was in flight. Keep that winner for both aliases.
-        let existing = index.recordings[recording.playableID] == nil
-            ? AlbumAudioIdentity.bestMatch(for: recording, candidates: index.recordings.keys.sorted().filter { !index.needsMetadata.contains($0) }.compactMap { index.recordings[$0] }) : nil
-        let selected = existing ?? recording
-        let id = selected.playableID
+        // A Songs result's playable ID is authoritative. Do not collapse two
+        // distinct YouTube Music recordings (notably clean/explicit editions)
+        // merely because their title/artist/duration metadata matches.
+        let selected = recording
+        let id = recording.playableID
         // Keep an actual measured duration over a later rounded catalog value.
         var song = selected
         if AlbumAudioIdentity.isMissingArtist(song.artist) {
@@ -92,21 +97,26 @@ actor CanonicalTrackResolver {
 
     func registerSearch(_ tracks: [Track]) -> [Track] {
         tracks.map { track in
-            if let reused = cached(track) {
-                // A search result for the selected media ID improves metadata
-                // inherited from a legacy mapping without changing identity.
-                if reused.playableID == track.playableID && track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" {
-                    return store(track, recording: track)
-                }
-                return reused
+            // Keep every Songs result as its own recording. This is important
+            // when YouTube Music returns clean and explicit editions with the
+            // same visible title/artist/duration but different playable IDs.
+            if track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" {
+                return store(track, recording: track)
             }
-            return track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" ? store(track, recording: track) : track
+            return track
         }
     }
 
     func resolve(_ requestedTrack: Track,
                  albumContext: (@Sendable (String) async throws -> AlbumRecordingContext)? = nil,
                  search: @escaping @Sendable (String) async throws -> [Track]) async throws -> Track {
+        // Direct Songs results are already a concrete recording. Register them
+        // before consulting aliases so a successful Songs play can heal a later
+        // album lookup instead of inheriting an older album alias.
+        if requestedTrack.albumID == nil, requestedTrack.albumTitle == nil,
+           requestedTrack.musicVideoType == "MUSIC_VIDEO_TYPE_ATV" {
+            return store(requestedTrack, recording: requestedTrack)
+        }
         if let saved = cached(requestedTrack) { return saved }
         var track = requestedTrack
         if AlbumAudioIdentity.isMissingArtist(track.artist), let id = track.albumID,
