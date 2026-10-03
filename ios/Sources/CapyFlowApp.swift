@@ -1933,6 +1933,11 @@ private struct ErrorPill: View {
             Spacer()
             Button(action: dismiss) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
         }.padding(16).waveGlass(radius: 20)
+            .contextMenu {
+                Button("Copy error details", systemImage: "doc.on.doc") {
+                    UIPasteboard.general.string = message
+                }
+            }
     }
 }
 

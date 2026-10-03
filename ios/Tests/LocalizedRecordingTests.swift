@@ -80,4 +80,14 @@ final class LocalizedRecordingTests: XCTestCase {
         song.title = "Blue Sky - 青空"
         XCTAssertNotNil(AlbumAudioIdentity.score(row, song))
     }
+    func testReleaseDiagnosticContainsActualValues() throws {
+        let (row, songs) = try fixture()
+        let report = CanonicalTrackResolver.failureReport(for: row, candidates: songs, failedSearches: 2)
+        XCTAssertTrue(report.contains("Xs0Lxif1u9E"))
+        XCTAssertTrue(report.contains("9LW9DpmhrPE"))
+        XCTAssertTrue(report.contains("artistID=UCT418-ChE6rgGuQlqzFsKZA"))
+        XCTAssertTrue(report.contains("searchFailures=2"))
+        XCTAssertFalse(report.contains(#"\(track"#), "Diagnostic interpolation must execute")
+    }
+
 }

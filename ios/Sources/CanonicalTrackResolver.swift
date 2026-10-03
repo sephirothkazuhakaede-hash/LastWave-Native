@@ -146,6 +146,7 @@ actor CanonicalTrackResolver {
         let task = Task { () throws -> Track in
             let queries = AlbumAudioIdentity.searchQueries(for: track)
             var candidates: [Track] = []
+            var failedSearches = 0
             for (attempt, query) in queries.enumerated() {
                 try Task.checkCancellation()
                 do {
@@ -179,6 +180,7 @@ actor CanonicalTrackResolver {
                     if let id = self.index.aliases[track.id], let old = self.index.recordings[id] { return track.adoptingRecording(old) }
                     throw error
                 } catch {
+                    failedSearches += 1
                     // Empty Songs responses and transient failures must not
                     // prevent the remaining query forms from being tried.
                     #if DEBUG
@@ -194,11 +196,29 @@ actor CanonicalTrackResolver {
             if track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV", !missingArtist {
                 return self.store(track, recording: track)
             }
-            throw WaveError.message("Couldn’t find the correct recording after trying several Songs searches. Please try again later.")
+            let report = Self.failureReport(for: track, candidates: candidates, failedSearches: failedSearches)
+            throw WaveError.message(report)
         }
         pending[track.id] = task
         defer { pending.removeValue(forKey: track.id) }
         return try await task.value
+    }
+
+    /// Keep release diagnostics short enough to capture from the error banner.
+    /// Include identity evidence rather than credentials or full API responses.
+    static func failureReport(for track: Track, candidates: [Track], failedSearches: Int) -> String {
+        func summary(_ song: Track) -> String {
+            "\(song.title) | \(song.artist) | id=\(song.playableID) artistID=\(song.artistID ?? "nil") type=\(song.musicVideoType ?? "nil") seconds=\(song.duration.map { String(Int($0.rounded())) } ?? "nil") explicit=\(song.isExplicit.map { String($0) } ?? "nil")"
+        }
+        let artistCandidates = candidates.filter { song in
+            song.artistID == track.artistID && song.artistID != nil
+                || AlbumAudioIdentity.key(AlbumAudioIdentity.artist(song.artist)) == AlbumAudioIdentity.key(AlbumAudioIdentity.artist(track.artist))
+        }
+        let sample = (artistCandidates.isEmpty ? candidates : artistCandidates).prefix(3).map { song in
+            let score = AlbumAudioIdentity.score(track, song).map { String(Int($0)) } ?? "REJECT"
+            return "Songs: \(summary(song)) score=\(score) bilingual=\(AlbumAudioIdentity.localizedTitleMatches(track, song))"
+        }.joined(separator: "\n")
+        return "Album resolve AR2: \(summary(track))\nAlbum=\(track.albumID ?? "nil") / \(track.albumTitle ?? "nil")\nCandidates=\(candidates.count) searchFailures=\(failedSearches)\n\(sample.isEmpty ? "No Songs candidates returned" : sample)"
     }
 
     func recordDuration(_ duration: Double, track: Track, mediaInfo: AudioMediaInfo?) {
