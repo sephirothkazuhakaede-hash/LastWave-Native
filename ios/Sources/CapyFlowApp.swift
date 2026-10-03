@@ -211,10 +211,11 @@ struct RootView: View {
     @State private var showProfileDrawer = false
     @State private var drawerPerson: SocialProfile?
     @State private var drawerDestination: ProfileDrawerDestination?
+    @State private var dockFrame: CGRect = .zero
     var body: some View {
         ZStack {
             WaveBackdrop()
-            HomeDashboardView(selection: $tab) { openDrawer() }
+            HomeDashboardView(selection: $tab, dockFrame: dockFrame) { openDrawer() }
                 .opacity(tab == .home ? 1 : 0)
                 .allowsHitTesting(tab == .home)
                 .accessibilityHidden(tab != .home)
@@ -230,7 +231,13 @@ struct RootView: View {
         .safeAreaInset(edge: .bottom, spacing: 5) {
             CapyDock(selection: $tab) { showPlayer = true }
                 .padding(.horizontal, 12)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(key: DockFramePreference.self, value: geometry.frame(in: .global))
+                    }
+                }
         }
+        .onPreferenceChange(DockFramePreference.self) { dockFrame = $0 }
         // Attach the window backdrop outside the dock's safe-area inset so
         // the inset cannot reduce its drawing bounds to the content region.
         .background { WaveBackdrop() }
@@ -305,7 +312,14 @@ struct RootView: View {
             }
         }
         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: player.error)
-        .task(id: auth.user?.uid) { social.bind(to: auth.user) }
+        .task(id: auth.user?.uid) {
+#if DEBUG
+            // Keep the deterministic social fixture; no real Firebase account
+            // is involved in a layout-only launch.
+            if LayoutFixture.requested != nil { return }
+#endif
+            social.bind(to: auth.user)
+        }
     }
 
     private func openDrawer() {
@@ -448,11 +462,40 @@ private struct ProfileDrawerView: View {
     }
 }
 
+private struct DockFramePreference: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
+private struct HomeViewportPreference: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
+private struct AppInfoFooter: View {
+    private var version: String { (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "—" }
+    private var build: String { (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "—" }
+    var body: some View {
+        VStack(spacing: 4) {
+            Text("CapyFlow").font(.capyCallout).foregroundStyle(CapyColor.accent)
+            Text("Version \(version) · Build \(build)").font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                .accessibilityIdentifier("app-info-version")
+            Text("by Seph").font(.capyCaption).foregroundStyle(CapyColor.tertiaryText)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("CapyFlow. Version \(version), Build \(build). by Seph")
+        .accessibilityIdentifier("app-info-footer")
+    }
+}
+
 private struct HomeDashboardView: View {
     @EnvironmentObject private var player: WavePlayer
     @EnvironmentObject private var auth: AuthSession
     @EnvironmentObject private var social: SocialStore
     @Binding var selection: WaveTab
+    let dockFrame: CGRect
+    @State private var viewportFrame: CGRect = .zero
     let openProfileDrawer: () -> Void
 
     var body: some View {
@@ -465,21 +508,48 @@ private struct HomeDashboardView: View {
                 )
                 ScrollView {
                     CapyScreenContainer {
-                        LazyVStack(alignment: .leading, spacing: 30) {
+                        VStack(alignment: .leading, spacing: 30) {
                             homeHeader
                             flowHero
                             if !player.recentTracks.isEmpty { recentlyPlayed }
                             libraryShelf
-                            if auth.user != nil { friendsShelf }
+                            if showsFriends { friendsShelf }
+                            AppInfoFooter()
                         }
                         .padding(.top, 8)
-                        .padding(.bottom, 30)
+                        // Nested navigation can consume the parent's dock safe area.
+                        // Keep the final cards scrollable above the actual dock.
+                        .padding(.bottom, bottomClearance + 24)
                     }
                 }
-                .scrollIndicators(.hidden)
+                .scrollIndicators(.hidden).accessibilityIdentifier("home-scroll")
+                .background {
+                    GeometryReader { geometry in
+                        let frame = geometry.frame(in: .global)
+                        Color.clear.preference(key: HomeViewportPreference.self, value: CGRect(
+                            x: frame.minX, y: frame.minY, width: frame.width,
+                            height: frame.height + geometry.safeAreaInsets.bottom
+                        ))
+                    }
+                }
+                .onPreferenceChange(HomeViewportPreference.self) { viewportFrame = $0 }
             }
             .toolbar(.hidden, for: .navigationBar)
         }
+    }
+
+    private var bottomClearance: CGFloat {
+        guard !dockFrame.isEmpty, !viewportFrame.isEmpty else { return 158 }
+        // Include whatever part of this navigation viewport actually extends
+        // behind the dock, including the device's bottom safe area.
+        return max(0, viewportFrame.maxY - dockFrame.minY)
+    }
+
+    private var showsFriends: Bool {
+#if DEBUG
+        if LayoutFixture.requested != nil { return social.profile != nil }
+#endif
+        return auth.user != nil
     }
 
     private var homeHeader: some View {
@@ -612,7 +682,7 @@ private struct HomeDashboardView: View {
             }
             .padding(16).contentShape(Rectangle()).waveSurface(radius: 22)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plain).accessibilityIdentifier("home-friends-shared")
     }
 
     private func quickTile(icon: String, value: String, label: String) -> some View {
@@ -940,6 +1010,7 @@ private struct SettingsPageView: View {
                         .padding(.horizontal, 16)
                         .padding(.bottom, 10)
                     }
+                    AppInfoFooter()
                 }
             }
             .navigationTitle("Settings")
@@ -2151,6 +2222,7 @@ private struct CapyDock: View {
             }.frame(height: 58)
         }
         .waveGlass(radius: 27, highlighted: player.current != nil)
+        .accessibilityElement(children: .contain).accessibilityIdentifier("capy-dock")
     }
 
     private var progress: CGFloat {

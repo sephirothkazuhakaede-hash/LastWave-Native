@@ -41,4 +41,11 @@ final class StableUpdateTests: XCTestCase {
         }
     }
 
+    func testFirstStableReleaseUpdatesInstalledMessagingBuild() throws {
+        let installed = try XCTUnwrap(AppReleaseVersion(version: "0.4.9", build: 16))
+        XCTAssertTrue(try manifest(version: "0.4.10", build: 17).isNewer(than: installed))
+        XCTAssertFalse(try manifest(version: "0.4.9", build: 16).isNewer(than: installed))
+        XCTAssertFalse(try manifest(version: "0.4.10", build: 17, channel: "experimental").isNewer(than: installed))
+    }
+
 }

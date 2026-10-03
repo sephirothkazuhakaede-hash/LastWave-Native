@@ -53,7 +53,7 @@ jobs:
       - name: Test recording identity and download management
         run: |
           DEVICE_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for devices in d["devices"].values() for x in devices if x["name"].startswith("iPhone")))')
-          xcodebuild -project CapyFlow.xcodeproj -scheme CapyFlow -configuration Debug -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath identity-tests -only-testing:CapyFlowTests/MessagingTests -only-testing:CapyFlowTests/PlaylistCloudSyncTests -only-testing:CapyFlowTests/FriendActivityTests -only-testing:CapyFlowTests/SocialConnectionTests -only-testing:CapyFlowTests/StableUpdateTests -only-testing:CapyFlowTests/CanonicalLyricsTests -only-testing:CapyFlowTests/LocalizedRecordingTests -only-testing:CapyFlowTests/OfflineDownloadRemovalTests -only-testing:CapyFlowUITests/DownloadManagementUITests CODE_SIGNING_ALLOWED=NO test
+          xcodebuild -project CapyFlow.xcodeproj -scheme CapyFlow -configuration Debug -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath identity-tests -only-testing:CapyFlowTests/MessagingTests -only-testing:CapyFlowTests/PlaylistCloudSyncTests -only-testing:CapyFlowTests/FriendActivityTests -only-testing:CapyFlowTests/SocialConnectionTests -only-testing:CapyFlowTests/StableUpdateTests -only-testing:CapyFlowTests/CanonicalLyricsTests -only-testing:CapyFlowTests/LocalizedRecordingTests -only-testing:CapyFlowTests/OfflineDownloadRemovalTests -only-testing:CapyFlowUITests/DownloadManagementUITests -only-testing:CapyFlowUITests/HomeDockUITests CODE_SIGNING_ALLOWED=NO test
       - run: xcodebuild -project CapyFlow.xcodeproj -scheme CapyFlow -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
       - name: Verify compiled app icon
         run: |
@@ -63,17 +63,44 @@ jobs:
         run: |
           APP_PLIST=build/Build/Products/Release-iphoneos/CapyFlow.app/Info.plist
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PLIST")" = "CapyFlow"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")" = "0.4.9"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")" = "16"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")" = "0.4.10"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")" = "17"
       - name: Package unsigned IPA
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/CapyFlow.app Payload/
-          zip -r CapyFlow-0.4.9-unsigned.ipa Payload
-          unzip -t CapyFlow-0.4.9-unsigned.ipa
+          zip -r CapyFlow-0.4.10-unsigned.ipa Payload
+          unzip -t CapyFlow-0.4.10-unsigned.ipa
       - uses: actions/upload-artifact@v4
         with:
-          name: CapyFlow-0.4.9-unsigned-IPA
-          path: ios/CapyFlow-0.4.9-unsigned.ipa
+          name: CapyFlow-0.4.10-unsigned-IPA
+          path: ios/CapyFlow-0.4.10-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
+  publish-stable:
+    # Only an explicitly requested stable publication can notify stable users.
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[publish-stable-0.4.10]')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: CapyFlow-0.4.10-unsigned-IPA
+          path: dist
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare stable manifest and verify package
+        run: |
+          unzip -t dist/CapyFlow-0.4.10-unsigned.ipa
+          node backend/scripts/stable-manifest.mjs --stable --version 0.4.10 --build 17 --notes-file ios/RELEASE-0.4.10.md --install-url https://github.com/sephirothkazuhakaede-hash/LastWave-Native/releases/tag/capyflow-v0.4.10 --output dist/capyflow-stable.json
+      - name: Publish complete stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          gh release create capyflow-v0.4.10 dist/CapyFlow-0.4.10-unsigned.ipa dist/capyflow-stable.json --target "$RELEASE_COMMIT" --title "CapyFlow 0.4.10" --notes-file ios/RELEASE-0.4.10.md --draft
+          gh release edit capyflow-v0.4.10 --draft=false --latest
