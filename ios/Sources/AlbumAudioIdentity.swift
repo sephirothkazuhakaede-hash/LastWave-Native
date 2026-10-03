@@ -26,10 +26,20 @@ enum AlbumAudioIdentity {
     }
 
     private static func comparisonTitle(_ value: String) -> String {
-        key(title(value)).replacingOccurrences(of: #"\bmovie ver\b"#, with: "movie version", options: .regularExpression)
-            .replacingOccurrences(of: #"\bmovie edited version\b"#, with: "movie edit", options: .regularExpression)
+        let normalized = key(title(value)).replacingOccurrences(of: #"\\bmovie ver\\b"#, with: "movie version", options: .regularExpression)
+            .replacingOccurrences(of: #"\\bmovie edited version\\b"#, with: "movie edit", options: .regularExpression)
+        // YouTube Music can prefix a native-script title to the same recording.
+        // After `key` normalization, "すずめ - Suzume" becomes "suzume suzume".
+        // Collapse only an exact repeated half; subtitles and versions stay distinct.
+        let words = normalized.split(separator: " ").map(String.init)
+        if words.count >= 2, words.count.isMultiple(of: 2) {
+            let half = words.count / 2
+            if Array(words[..<half]) == Array(words[half...]) {
+                return words[..<half].joined(separator: " ")
+            }
+        }
+        return normalized
     }
-
     /// Read annotations, not ordinary words in titles such as Live Forever.
     static func versionMarkers(_ value: String) -> Set<String> {
         let pattern = #"[\(\[]([^\)\]]+)[\)\]]|\s[-–—]\s(.+)$|\b(live|cover|karaoke|instrumental|remix|slowed|sped up|nightcore|extended|acoustic)(\s+(version|ver\.?|edit))?$"#
