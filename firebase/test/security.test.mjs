@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { before, after, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc, getDoc, writeBatch, serverTimestamp, Bytes, Timestamp } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, getDoc, getDocs, collection, query, limit, where, documentId, writeBatch, serverTimestamp, Bytes, Timestamp } from 'firebase/firestore';
 
 let env;
 before(async () => {
@@ -120,4 +120,32 @@ test('activity is opt-in and owner-only; privacy OFF removes presence atomically
   const removed = await assertSucceeds(getDoc(doc(bob, 'listeningActivity', 'alice')));
   if (removed.exists()) throw new Error('Privacy OFF must remove presence');
   await assertFails(setDoc(doc(alice, 'listeningActivity', 'alice'), presence));
+});
+
+test('activity preference bootstrap OFF works and followed-person query is allowed', async () => {
+  const alice = account('alice'), bob = account('bob');
+  const batch = writeBatch(alice);
+  batch.set(doc(alice, 'activitySettings', 'alice'), { sharing: false, updatedAt: serverTimestamp() });
+  batch.delete(doc(alice, 'listeningActivity', 'alice'));
+  await assertSucceeds(batch.commit());
+  await assertSucceeds(getDoc(doc(alice, 'activitySettings', 'alice')));
+  await assertSucceeds(getDocs(query(collection(bob, 'listeningActivity'), where(documentId(), 'in', ['alice']), limit(20))));
+  await assertFails(getDocs(collection(bob, 'listeningActivity')));
+});
+
+test('personal playlist backup survives a new account session and is private', async () => {
+  const alice = account('alice');
+  const path = ['users', 'alice', 'library', 'playlist_hash'];
+  const payload = Bytes.fromUint8Array(new TextEncoder().encode(JSON.stringify({ id: 'playlist-1', name: 'My music', tracks: [{ id: 'abcdefghijk', title: 'Song', artist: 'Artist' }] })));
+  await assertSucceeds(setDoc(doc(alice, ...path), { playlistID: 'playlist-1', deleted: false, payload, updatedAt: serverTimestamp() }));
+  const reinstalled = account('alice');
+  const restored = await assertSucceeds(getDoc(doc(reinstalled, ...path)));
+  if (restored.data().payload.toBase64() !== payload.toBase64()) throw new Error('Playlist payload lost');
+  await assertSucceeds(getDocs(collection(reinstalled, 'users', 'alice', 'library')));
+  await assertFails(getDoc(doc(account('bob'), ...path)));
+  await assertFails(setDoc(doc(account('bob'), ...path), { playlistID: 'playlist-1', deleted: true, updatedAt: serverTimestamp() }));
+  await assertFails(setDoc(doc(alice, ...path), { playlistID: 'playlist-1', deleted: false, payload: Bytes.fromUint8Array(new Uint8Array(750001)), updatedAt: serverTimestamp() }));
+  await assertSucceeds(setDoc(doc(alice, ...path), { playlistID: 'playlist-1', deleted: true, updatedAt: serverTimestamp() }));
+  const deleted = await assertSucceeds(getDoc(doc(reinstalled, ...path)));
+  if (!deleted.data().deleted) throw new Error('Deletion did not synchronize');
 });

@@ -81,13 +81,14 @@ struct FriendListeningActivity: Identifiable {
             .addSnapshotListener(includeMetadataChanges: true) { [weak self] snapshot, failure in
                 Task { @MainActor in
                     guard let self, self.uid == userID else { return }
-                    if let failure { self.error = failure.localizedDescription; self.preferenceLoading = false; return }
+                    if let failure { self.error = Self.syncError(failure, prefix: "Listening activity preference could not sync"); self.preferenceLoading = false; return }
                     guard !self.privacyWritePending else { return }
                     if UserDefaults.standard.bool(forKey: "capyflow.activity.pendingOff." + userID) {
                         self.sharing = false; self.preferenceLoading = false
                         return
                     }
                     if let enabled = snapshot?.data()?["sharing"] as? Bool {
+                        if snapshot?.metadata.isFromCache == false { self.error = nil }
                         // An explicit local OFF survives an offline restart.
                         self.sharing = enabled && !(snapshot?.metadata.isFromCache == true && !saved)
                         self.preferenceLoading = false
@@ -125,8 +126,21 @@ struct FriendListeningActivity: Identifiable {
             guard self.uid == uid, epoch == generation else { return }
             privacyWritePending = false; preferenceLoading = false
             if enabled { sharing = false } // Never publish after a failed opt-in.
-            self.error = "Listening activity preference could not sync: " + error.localizedDescription
+            self.error = Self.syncError(error, prefix: "Listening activity preference could not sync")
         }
+    }
+
+    func retryPreferenceSync() async {
+        guard let uid else { return }
+        if UserDefaults.standard.bool(forKey: "capyflow.activity.pendingOff." + uid) {
+            await setSharing(false)
+            return
+        }
+        // Read the cloud preference again rather than replacing it with the
+        // default OFF value after a failed/denied initial read.
+        preferenceListener?.remove(); preferenceListener = nil
+        self.uid = nil
+        bind(userID: uid)
     }
 
     private func schedulePublish() {
@@ -154,7 +168,7 @@ struct FriendListeningActivity: Identifiable {
                 try await self.db.collection("listeningActivity").document(uid).setData(data)
             } catch {
                 guard self.uid == uid, self.epoch == generation else { return }
-                self.error = "Listening activity could not sync: " + error.localizedDescription
+                self.error = Self.syncError(error, prefix: "Listening activity could not sync")
             }
         }
     }
@@ -171,7 +185,7 @@ struct FriendListeningActivity: Identifiable {
                 .addSnapshotListener { [weak self] snapshot, failure in
                     Task { @MainActor in
                         guard let self, self.uid == owner, self.feedIDs == ids else { return }
-                        if let failure { self.error = "Friend Activity could not load: " + failure.localizedDescription; return }
+                        if let failure { self.error = Self.syncError(failure, prefix: "Friend Activity could not load"); return }
                         guard let snapshot else { return }
                         for id in batch { self.activities.removeValue(forKey: id) }
                         for doc in snapshot.documents {
@@ -180,5 +194,12 @@ struct FriendListeningActivity: Identifiable {
                     }
                 })
         }
+    }
+    private static func syncError(_ error: Error, prefix: String) -> String {
+        let code = error as NSError
+        if code.domain == FirestoreErrorDomain && code.code == FirestoreErrorCode.permissionDenied.rawValue {
+            return prefix + ": Firebase denied access. The CapyFlow owner must publish the current Firestore rules; Retry cannot repair missing server permissions."
+        }
+        return prefix + ": " + error.localizedDescription
     }
 }

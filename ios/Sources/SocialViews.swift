@@ -802,7 +802,7 @@ struct FriendActivitySettingsView: View {
                         if activity.preferenceLoading { ProgressView("Loading privacy preference…") }
                         if let error = activity.error {
                             Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning)
-                            Button("Retry preference sync") { Task { await activity.setSharing(activity.sharing) } }
+                            Button("Retry preference sync") { Task { await activity.retryPreferenceSync() } }
                                 .buttonStyle(CapySecondaryButtonStyle())
                         }
                     }.padding(16).waveSurface(radius: 20).padding(.top, 16)

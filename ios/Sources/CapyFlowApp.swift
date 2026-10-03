@@ -10,6 +10,7 @@ import GoogleSignIn
     @StateObject private var auth: AuthSession
     @StateObject private var activity: ListeningActivityStore
     @StateObject private var updates: StableUpdateStore
+    @StateObject private var playlistSync: PlaylistCloudSync
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var social: SocialStore
     init() {
@@ -24,6 +25,9 @@ import GoogleSignIn
         let social = SocialStore()
         let activity = ListeningActivityStore()
         activity.observe(player)
+        let playlistSync = PlaylistCloudSync()
+        playlistSync.observe(player)
+        _playlistSync = StateObject(wrappedValue: playlistSync)
         _activity = StateObject(wrappedValue: activity)
         _updates = StateObject(wrappedValue: StableUpdateStore())
 #if DEBUG
@@ -44,9 +48,11 @@ import GoogleSignIn
                 .environmentObject(social)
                 .environmentObject(activity)
                 .environmentObject(updates)
+                .environmentObject(playlistSync)
                 .preferredColorScheme(.dark)
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
                 .task(id: auth.user?.uid) { activity.bind(userID: auth.user?.uid); activity.watchFriends(social.following) }
+                .task(id: auth.user?.uid) { if enablesAutomaticUpdates { playlistSync.bind(userID: auth.user?.uid) } }
                 .onReceive(social.$following.debounce(for: .milliseconds(300), scheduler: RunLoop.main)) { activity.watchFriends($0) }
                 .task { if enablesAutomaticUpdates { await updates.check() } }
                 .onChange(of: scenePhase) { _, phase in
@@ -1271,6 +1277,7 @@ private enum LibrarySort: String, CaseIterable, Identifiable {
 }
 
 private struct PlaylistLibraryView: View {
+    @EnvironmentObject private var playlistSync: PlaylistCloudSync
     @EnvironmentObject var player: WavePlayer
     @EnvironmentObject var social: SocialStore
     @State private var showCreator = false
@@ -1317,6 +1324,14 @@ private struct PlaylistLibraryView: View {
                         .frame(width: geometry.size.width, height: 40)
                         .accessibilityIdentifier("library-filter-scroll")
                     }.frame(height: 40)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(playlistSync.status).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                        if let error = playlistSync.error {
+                            Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning)
+                            Button("Retry playlist backup") { playlistSync.retry() }.font(.capyCaption)
+                        }
+                    }
 
                     if filter == .downloads {
                         downloadsSection

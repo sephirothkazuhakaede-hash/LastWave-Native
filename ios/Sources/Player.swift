@@ -83,6 +83,8 @@ struct DownloadBatchSummary: Equatable {
     @Published var downloadBatchSummary: DownloadBatchSummary?
     @Published var downloadDiagnostics: [String: String] = [:]
     @Published var playlists: [ImportedPlaylist] = []
+    // Library persistence hook; cloud sync never controls playback or downloads.
+    var playlistLibraryDidChange: (() -> Void)?
     @Published private(set) var recentTracks: [Track] = []
     @Published var downloadingPlaylists: Set<String> = []
     @Published var playlistDownloadProgress: [String: String] = [:]
@@ -653,7 +655,7 @@ struct DownloadBatchSummary: Equatable {
                 tracks: imported.tracks.map(canonicalized)
             )
             playlists.removeAll { $0.id == playlist.id }; playlists.append(playlist)
-            if let data = try? JSONEncoder().encode(playlists) { UserDefaults.standard.set(data, forKey: "importedPlaylists") }
+            savePlaylists()
         } catch { self.error = error.localizedDescription }
     }
     @discardableResult func createPlaylist(named name: String, artworkData: Data? = nil) throws -> String {
@@ -712,12 +714,25 @@ struct DownloadBatchSummary: Equatable {
         try FileManager.default.createDirectory(at: playlistArtworkFolder, withIntermediateDirectories: true)
         try jpeg.write(to: playlistArtworkFolder.appendingPathComponent(safePlaylistID(playlistID) + ".jpg"), options: .atomic)
         objectWillChange.send()
+        playlistLibraryDidChange?()
     }
     private func safePlaylistID(_ id: String) -> String {
         id.replacingOccurrences(of: "[^A-Za-z0-9_-]", with: "_", options: .regularExpression)
     }
     private func savePlaylists() {
         if let data = try? JSONEncoder().encode(playlists) { UserDefaults.standard.set(data, forKey: "importedPlaylists") }
+        playlistLibraryDidChange?()
+    }
+    func restoreAccountPlaylists(_ saved: [ImportedPlaylist]) {
+        playlists = saved
+        if let data = try? JSONEncoder().encode(saved) { UserDefaults.standard.set(data, forKey: "importedPlaylists") }
+    }
+    func restoreAccountPlaylistArtwork(_ data: Data?, for id: String) {
+        let url = playlistArtworkFolder.appendingPathComponent(safePlaylistID(id) + ".jpg")
+        if let data {
+            try? FileManager.default.createDirectory(at: playlistArtworkFolder, withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        } else { try? FileManager.default.removeItem(at: url) }
     }
     func downloadPlaylist(_ playlist: ImportedPlaylist) async {
         guard !downloadingPlaylists.contains(playlist.id) else { return }
