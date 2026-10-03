@@ -52,7 +52,7 @@ import GoogleSignIn
                 .environmentObject(updates)
                 .environmentObject(playlistSync)
                 .environmentObject(messaging)
-                .messageBanners()
+                .messageBanners(messaging)
                 .preferredColorScheme(.dark)
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
                 .task(id: auth.user?.uid) { activity.bind(userID: auth.user?.uid); activity.watchFriends(social.following) }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MessagesInboxView: View {
-    @EnvironmentObject private var messaging: MessagingStore
+    @ObservedObject var messaging: MessagingStore
     @EnvironmentObject private var social: SocialStore
     var body: some View {
         ZStack {
@@ -208,11 +208,13 @@ private struct MessageBannerModifier: ViewModifier {
                 NavigationStack {
                     DirectChatView(person: person)
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { selectedPerson = nil } } }
-                }.presentationDetents([.large])
+                }
+                .environmentObject(messaging)
+                .presentationDetents([.large])
             }
     }
 }
 
 extension View {
-    func messageBanners() -> some View { modifier(MessageBannerModifier()) }
+    func messageBanners(_ messaging: MessagingStore) -> some View { modifier(MessageBannerModifier(messaging: messaging)) }
 }
