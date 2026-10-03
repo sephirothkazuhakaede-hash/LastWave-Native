@@ -182,7 +182,16 @@ actor Catalog {
             throw WaveError.message("YouTube Music did not accept the search request.")
         }
         let root = try JSONSerialization.jsonObject(with: data)
-        return try Self.parseSongTracks(root)
+        // This request is explicitly filtered to YouTube Music's Songs surface.
+        // Some otherwise valid song rows omit musicVideoType entirely. Treat
+        // only those missing annotations as authoritative audio here; explicit
+        // OMV/UGC classifications remain untouched.
+        return try Self.parseSongTracks(root).map { song in
+            guard song.musicVideoType == nil else { return song }
+            var audio = song
+            audio.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
+            return audio
+        }
     }
 
     static func parseSongTracks(_ root: Any) throws -> [Track] {
