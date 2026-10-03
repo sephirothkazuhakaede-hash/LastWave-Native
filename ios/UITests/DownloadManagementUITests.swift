@@ -18,13 +18,13 @@ final class DownloadManagementUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 4), .completed)
         let menu = app.buttons["playlist-management-menu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 4))
-        menu.tap(); app.buttons["Delete playlist"].tap()
+        menu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap(); app.buttons["Delete playlist"].tap()
         let alert = app.alerts["Delete playlist?"]
         XCTAssertTrue(alert.waitForExistence(timeout: 4))
         XCTAssertTrue(alert.staticTexts["The playlist will be removed. Downloaded songs will stay on this iPhone."].exists)
         alert.buttons["Cancel"].tap()
         XCTAssertTrue(menu.exists, "Cancel must keep the playlist")
-        menu.tap(); app.buttons["Delete playlist"].tap()
+        menu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap(); app.buttons["Delete playlist"].tap()
         XCTAssertTrue(alert.waitForExistence(timeout: 4))
         alert.buttons["Delete playlist"].tap()
         let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: menu)
