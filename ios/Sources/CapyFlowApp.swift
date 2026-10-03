@@ -1497,23 +1497,6 @@ private struct NewPlaylistSheet: View {
     }
 }
 
-private struct PlaylistLibraryRow: View {
-    @EnvironmentObject var player: WavePlayer
-    let playlist: ImportedPlaylist
-    var body: some View {
-        HStack(spacing: 14) {
-            PlaylistCover(playlist: playlist, size: 72, radius: 14)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(playlist.name).font(.title3.bold()).lineLimit(1)
-                Text("\(playlist.tracks.count) songs").font(.subheadline).foregroundStyle(.secondary)
-            }
-            Spacer()
-            if player.isPlaylistDownloaded(playlist) { Image(systemName: "arrow.down.circle.fill").foregroundStyle(Color.waveBlue) }
-            Image(systemName: "chevron.right").foregroundStyle(.secondary)
-        }.padding(12).contentShape(Rectangle()).waveSurface(radius: 24)
-    }
-}
-
 private struct PlaylistCover: View {
     @EnvironmentObject var player: WavePlayer
     let playlist: ImportedPlaylist
