@@ -249,7 +249,12 @@ actor CanonicalTrackResolver {
             if track.musicVideoType == "MUSIC_VIDEO_TYPE_ATV", !missingArtist {
                 return self.store(track, recording: track)
             }
-            throw WaveError.message("Couldn’t find the correct recording after trying several Songs searches. Please try again later.")
+            let row = "Album: \\(track.title) — \\(track.artist) | id=\\(track.id) | type=\\(track.musicVideoType ?? "nil") | duration=\\(track.duration.map { String(Int($0.rounded())) } ?? "nil") | explicit=\\(track.isExplicit.map(String.init) ?? "nil")"
+            let sample = candidates.prefix(6).map { song in
+                let score = AlbumAudioIdentity.score(track, song).map { String(Int($0.rounded())) } ?? "REJECT"
+                return "\\(song.title) — \\(song.artist) | id=\\(song.playableID) | type=\\(song.musicVideoType ?? "nil") | duration=\\(song.duration.map { String(Int($0.rounded())) } ?? "nil") | explicit=\\(song.isExplicit.map(String.init) ?? "nil") | score=\\(score)"
+            }.joined(separator: "\\n")
+            throw WaveError.message("Recording debug\\n\\(row)\\nSongs candidates (\\(candidates.count)):\\n\\(sample.isEmpty ? "NONE" : sample)")
         }
         pending[track.id] = task
         defer { pending.removeValue(forKey: track.id) }
