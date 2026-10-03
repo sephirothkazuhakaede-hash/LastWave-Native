@@ -11,6 +11,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
     var mediaInfo: AudioMediaInfo? = nil
     var albumID: String? = nil
     var musicVideoType: String? = nil
+    var artistID: String? = nil
     var mediaID: String? = nil
     var albumTitle: String? = nil
     var trackNumber: Int? = nil
@@ -34,6 +35,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
         copy.mediaInfo = mediaInfo
         copy.albumID = albumID
         copy.musicVideoType = musicVideoType
+        copy.artistID = artistID
         copy.mediaID = mediaID
         copy.albumTitle = albumTitle
         copy.trackNumber = trackNumber
@@ -52,6 +54,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
                          duration: preservedDuration, artworkURL: song.artworkURL ?? artworkURL)
         copy.mediaID = song.playableID
         copy.musicVideoType = song.musicVideoType
+        copy.artistID = song.artistID ?? artistID
         copy.albumID = albumID ?? song.albumID
         copy.albumTitle = albumTitle ?? song.albumTitle
         copy.trackNumber = trackNumber ?? song.trackNumber
@@ -209,7 +212,7 @@ actor Catalog {
                     let watch = navigation?["watchEndpoint"] as? [String: Any]
                     let playlist = renderer["playlistItemData"] as? [String: Any]
                     if let id = (playlist?["videoId"] ?? watch?["videoId"]) as? String,
-                       let title = titleRuns.first?["text"] as? String,
+                       case let title = titleRuns.compactMap({ $0["text"] as? String }).joined(), !title.isEmpty,
                        !results.contains(where: { $0.id == id }) {
                         let artist = Self.artistName(in: columns.dropFirst().flatMap(runs))
                             ?? runs(columns[1]).first?["text"] as? String ?? "Unknown artist"
@@ -218,6 +221,10 @@ actor Catalog {
                         let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
                         var track = Track(id: id, title: title, artist: artist, duration: duration, artworkURL: artwork.flatMap(URL.init(string:)))
                         track.musicVideoType = Self.primaryMusicVideoType(in: renderer)
+                        track.artistID = Self.artistIdentity(in: columns.dropFirst().flatMap { column -> [[String: Any]] in
+                            let flex = column["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any]
+                            return (flex?["text"] as? [String: Any])?["runs"] as? [[String: Any]] ?? []
+                        })
                         track.albumID = columns.dropFirst().flatMap(runs).compactMap { run in
                             let endpoint = run["navigationEndpoint"] as? [String: Any]
                             let browse = endpoint?["browseEndpoint"] as? [String: Any]
@@ -324,6 +331,10 @@ actor Catalog {
                         track.trackNumber = renderedText(renderer["index"]).flatMap(Int.init)
                         track.isExplicit = Self.hasExplicitBadge(renderer)
                         track.musicVideoType = Self.primaryMusicVideoType(in: renderer)
+                        track.artistID = Self.artistIdentity(in: columns.dropFirst().flatMap { column -> [[String: Any]] in
+                            let flex = column["musicResponsiveListItemFlexColumnRenderer"] as? [String: Any]
+                            return (flex?["text"] as? [String: Any])?["runs"] as? [[String: Any]] ?? []
+                        })
                         tracks.append(track)
                     }
                 }
@@ -508,6 +519,14 @@ actor Catalog {
 
     private static func hasExplicitBadge(_ renderer: [String: Any]) -> Bool {
         stringValue("iconType", in: renderer["badges"] ?? []) == "MUSIC_EXPLICIT_BADGE"
+    }
+
+    private static func artistIdentity(in runs: [[String: Any]]) -> String? {
+        runs.compactMap { run -> String? in
+            let endpoint = run["navigationEndpoint"] as? [String: Any]
+            let browse = endpoint?["browseEndpoint"] as? [String: Any]
+            return browse?["browseId"] as? String
+        }.first { $0.hasPrefix("UC") }
     }
 
     private static func artistName(in runs: [[String: Any]]) -> String? {

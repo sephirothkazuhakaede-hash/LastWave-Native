@@ -78,6 +78,38 @@ enum AlbumAudioIdentity {
         return 1 - Double(previous[right.count]) / Double(max(left.count, right.count))
     }
 
+    /// A bilingual display title is not a different recording. Only reconcile
+    /// complete, dash-separated Latin/non-Latin aliases with independent identity
+    /// evidence. Never strip arbitrary prefixes, subtitles or version suffixes.
+    static func localizedTitleMatches(_ track: Track, _ candidate: Track) -> Bool {
+        guard candidate.musicVideoType == "MUSIC_VIDEO_TYPE_ATV",
+              let artistID = track.artistID, artistID == candidate.artistID,
+              let explicit = track.isExplicit, candidate.isExplicit == explicit,
+              let duration = track.duration, let other = candidate.duration,
+              duration.isFinite, other.isFinite, duration > 0, other > 0,
+              abs(duration - other) <= max(5, min(12, duration * 0.04)),
+              versionMarkers(track.title).union(versionMarkers(track.albumTitle ?? ""))
+                == versionMarkers(candidate.title).union(versionMarkers(candidate.albumTitle ?? "")) else { return false }
+        func aliases(_ value: String) -> Set<String> {
+            let normalized = title(value)
+            let parts = normalized.components(separatedBy: CharacterSet(charactersIn: "-–—"))
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard parts.count == 2, parts.allSatisfy({ !$0.isEmpty }) else { return [] }
+            func latin(_ part: String) -> Bool {
+                part.range(of: #"\p{Latin}"#, options: .regularExpression) != nil
+            }
+            func otherScript(_ part: String) -> Bool {
+                part.unicodeScalars.contains { CharacterSet.letters.contains($0) }
+                    && !latin(part)
+            }
+            guard (latin(parts[0]) && otherScript(parts[1]))
+                || (otherScript(parts[0]) && latin(parts[1])) else { return [] }
+            return Set(parts.map(key))
+        }
+        return aliases(candidate.title).contains(key(title(track.title)))
+            || aliases(track.title).contains(key(title(candidate.title)))
+    }
+
     /// One eligibility/ranking policy for cold searches and cached recordings.
     static func score(_ track: Track, _ candidate: Track) -> Double? {
         let audio = candidate.musicVideoType == "MUSIC_VIDEO_TYPE_ATV"
@@ -108,6 +140,7 @@ enum AlbumAudioIdentity {
             durationScore = 30 - min(15, delta / limit * 15)
         }
         var similarity = titleSimilarity(track.title, candidate.title)
+        if similarity < 0.92 && localizedTitleMatches(track, candidate) { similarity = 1 }
         if requestedVersions != candidateVersions {
             // A Songs title can omit a movie annotation. Exact album/duration
             // corroboration is required; movie edit and movie version stay distinct.
@@ -133,7 +166,11 @@ enum AlbumAudioIdentity {
     static func compatible(_ track: Track, _ candidate: Track) -> Bool { score(track, candidate) != nil }
 
     static func bestMatch(for track: Track, candidates: [Track]) -> Track? {
-        candidates.enumerated().compactMap { offset, candidate -> (Track, Double)? in
+        // A bilingual alias must identify one recording, never choose arbitrarily
+        // between multiple localized editions with equally plausible metadata.
+        let localizedIDs = Set(candidates.filter { localizedTitleMatches(track, $0) && score(track, $0) != nil }.map(\.playableID))
+        return candidates.enumerated().compactMap { offset, candidate -> (Track, Double)? in
+            if localizedIDs.count > 1 && localizedTitleMatches(track, candidate) { return nil }
             score(track, candidate).map { (candidate, $0 - Double(offset) * 0.001) }
         }.max { $0.1 < $1.1 }?.0
     }

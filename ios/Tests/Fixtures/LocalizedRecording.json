@@ -1,0 +1,459 @@
+{
+  "albumRoot": [
+    {
+      "musicResponsiveListItemRenderer": {
+        "flexColumns": [
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "Suzume (feat. Toaka)",
+                    "navigationEndpoint": {
+                      "watchEndpoint": {
+                        "videoId": "Xs0Lxif1u9E",
+                        "playlistId": "OLAK5uy_nqZPMPjvFhDPRxh4OGtgynWXqcW9GrtNI",
+                        "watchEndpointMusicSupportedConfigs": {
+                          "watchEndpointMusicConfig": {
+                            "musicVideoType": "MUSIC_VIDEO_TYPE_OMV"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          },
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "RADWIMPS",
+                    "navigationEndpoint": {
+                      "browseEndpoint": {
+                        "browseId": "UCT418-ChE6rgGuQlqzFsKZA",
+                        "browseEndpointContextSupportedConfigs": {
+                          "browseEndpointContextMusicConfig": {
+                            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          },
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "340M plays"
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          }
+        ],
+        "fixedColumns": [
+          {
+            "musicResponsiveListItemFixedColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "3:59"
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH",
+              "size": "MUSIC_RESPONSIVE_LIST_ITEM_FIXED_COLUMN_SIZE_SMALL"
+            }
+          }
+        ],
+        "playlistItemData": {
+          "playlistSetVideoId": "5997F5C22578AC98",
+          "videoId": "Xs0Lxif1u9E"
+        },
+        "index": {
+          "runs": [
+            {
+              "text": "27"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "songsRoot": [
+    {
+      "musicResponsiveListItemRenderer": {
+        "flexColumns": [
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "すずめ - Suzume (feat. Toaka)",
+                    "navigationEndpoint": {
+                      "watchEndpoint": {
+                        "videoId": "9LW9DpmhrPE",
+                        "watchEndpointMusicSupportedConfigs": {
+                          "watchEndpointMusicConfig": {
+                            "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          },
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "RADWIMPS",
+                    "navigationEndpoint": {
+                      "browseEndpoint": {
+                        "browseId": "UCT418-ChE6rgGuQlqzFsKZA",
+                        "browseEndpointContextSupportedConfigs": {
+                          "browseEndpointContextMusicConfig": {
+                            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "text": " • "
+                  },
+                  {
+                    "text": "Suzume",
+                    "navigationEndpoint": {
+                      "browseEndpoint": {
+                        "browseId": "MPREb_aQQBkvNCwNy",
+                        "browseEndpointContextSupportedConfigs": {
+                          "browseEndpointContextMusicConfig": {
+                            "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "text": " • "
+                  },
+                  {
+                    "text": "3:57"
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          },
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "340M plays"
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          }
+        ],
+        "playlistItemData": {
+          "videoId": "9LW9DpmhrPE"
+        }
+      }
+    },
+    {
+      "musicResponsiveListItemRenderer": {
+        "flexColumns": [
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "SUZUME",
+                    "navigationEndpoint": {
+                      "watchEndpoint": {
+                        "videoId": "Fq94y0JslGE",
+                        "watchEndpointMusicSupportedConfigs": {
+                          "watchEndpointMusicConfig": {
+                            "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          },
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "So Hee Song",
+                    "navigationEndpoint": {
+                      "browseEndpoint": {
+                        "browseId": "UC4nj2Xlp-6k6FQJ07YfkoXQ",
+                        "browseEndpointContextSupportedConfigs": {
+                          "browseEndpointContextMusicConfig": {
+                            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "text": " • "
+                  },
+                  {
+                    "text": "SUZUME",
+                    "navigationEndpoint": {
+                      "browseEndpoint": {
+                        "browseId": "MPREb_BYbPri3VQY5",
+                        "browseEndpointContextSupportedConfigs": {
+                          "browseEndpointContextMusicConfig": {
+                            "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "text": " • "
+                  },
+                  {
+                    "text": "3:53"
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          },
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "5.4M plays"
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          }
+        ],
+        "playlistItemData": {
+          "videoId": "Fq94y0JslGE"
+        }
+      }
+    },
+    {
+      "musicResponsiveListItemRenderer": {
+        "flexColumns": [
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "Suzume",
+                    "navigationEndpoint": {
+                      "watchEndpoint": {
+                        "videoId": "_GGrVLstYbc",
+                        "watchEndpointMusicSupportedConfigs": {
+                          "watchEndpointMusicConfig": {
+                            "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          },
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "Shania Yan",
+                    "navigationEndpoint": {
+                      "browseEndpoint": {
+                        "browseId": "UCJk24TP_Ql18lAeZz8aEjsw",
+                        "browseEndpointContextSupportedConfigs": {
+                          "browseEndpointContextMusicConfig": {
+                            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "text": " • "
+                  },
+                  {
+                    "text": "EP11",
+                    "navigationEndpoint": {
+                      "browseEndpoint": {
+                        "browseId": "MPREb_5OlU8uaVRhN",
+                        "browseEndpointContextSupportedConfigs": {
+                          "browseEndpointContextMusicConfig": {
+                            "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "text": " • "
+                  },
+                  {
+                    "text": "3:34"
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          },
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "7.6M plays"
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          }
+        ],
+        "playlistItemData": {
+          "videoId": "_GGrVLstYbc"
+        }
+      }
+    },
+    {
+      "musicResponsiveListItemRenderer": {
+        "flexColumns": [
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "すずめ - English Version （「 すずめの戸締まり 」より） - Suzume - English Version (From \"Suzume\")",
+                    "navigationEndpoint": {
+                      "watchEndpoint": {
+                        "videoId": "fJA7BWnmfww",
+                        "watchEndpointMusicSupportedConfigs": {
+                          "watchEndpointMusicConfig": {
+                            "musicVideoType": "MUSIC_VIDEO_TYPE_ATV"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          },
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "Torby Brand",
+                    "navigationEndpoint": {
+                      "browseEndpoint": {
+                        "browseId": "UCFNOTvKYGu153dPHQM1Aqyw",
+                        "browseEndpointContextSupportedConfigs": {
+                          "browseEndpointContextMusicConfig": {
+                            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "text": " & "
+                  },
+                  {
+                    "text": "Mewsic",
+                    "navigationEndpoint": {
+                      "browseEndpoint": {
+                        "browseId": "UCdL2qKbSQsEAKymE25GJu1w",
+                        "browseEndpointContextSupportedConfigs": {
+                          "browseEndpointContextMusicConfig": {
+                            "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "text": " • "
+                  },
+                  {
+                    "text": "Suzume",
+                    "navigationEndpoint": {
+                      "browseEndpoint": {
+                        "browseId": "MPREb_XMk7Yu64ExU",
+                        "browseEndpointContextSupportedConfigs": {
+                          "browseEndpointContextMusicConfig": {
+                            "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "text": " • "
+                  },
+                  {
+                    "text": "3:48"
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          },
+          {
+            "musicResponsiveListItemFlexColumnRenderer": {
+              "text": {
+                "runs": [
+                  {
+                    "text": "83K plays"
+                  }
+                ]
+              },
+              "displayPriority": "MUSIC_RESPONSIVE_LIST_ITEM_COLUMN_DISPLAY_PRIORITY_HIGH"
+            }
+          }
+        ],
+        "playlistItemData": {
+          "videoId": "fJA7BWnmfww"
+        }
+      }
+    }
+  ]
+}
