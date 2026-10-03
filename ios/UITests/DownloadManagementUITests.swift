@@ -14,6 +14,8 @@ final class DownloadManagementUITests: XCTestCase {
         }
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'MSI' OR label CONTAINS[c] 'cache hit'")).firstMatch.exists)
         app.tapCoordinateOutsideMenu()
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["Play now"])
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 4), .completed)
         let menu = app.buttons["playlist-management-menu"]
         XCTAssertTrue(menu.waitForExistence(timeout: 4))
         menu.tap(); app.buttons["Delete playlist"].tap()
@@ -32,6 +34,6 @@ final class DownloadManagementUITests: XCTestCase {
 
 private extension XCUIApplication {
     func tapCoordinateOutsideMenu() {
-        coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.12)).tap()
+        coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.20)).tap()
     }
 }
