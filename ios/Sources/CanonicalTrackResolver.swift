@@ -88,15 +88,16 @@ actor CanonicalTrackResolver {
     /// one unique ATV recording with the same normalized title/artist/version.
     private func uniqueSongsFallback(for track: Track, candidates: [Track]) -> Track? {
         let wantedTitle = AlbumAudioIdentity.key(AlbumAudioIdentity.title(track.title))
-        let wantedArtist = AlbumAudioIdentity.key(AlbumAudioIdentity.artist(track.artist))
         let wantedVersions = AlbumAudioIdentity.versionMarkers(track.title)
         guard !wantedTitle.isEmpty else { return nil }
 
         let matches = candidates.filter { song in
             guard song.musicVideoType == "MUSIC_VIDEO_TYPE_ATV",
                   AlbumAudioIdentity.key(AlbumAudioIdentity.title(song.title)) == wantedTitle else { return false }
-            let artist = AlbumAudioIdentity.key(AlbumAudioIdentity.artist(song.artist))
-            guard AlbumAudioIdentity.isMissingArtist(track.artist) || artist == wantedArtist else { return false }
+            // Album browse rows can credit an artist differently from the Songs
+            // surface (featured/various/soundtrack credits). At this final
+            // fallback the title-only Songs query has already run, so require
+            // one unique playable ID rather than rejecting it on artist text.
             guard AlbumAudioIdentity.versionMarkers(song.title) == wantedVersions else { return false }
             if let explicit = track.isExplicit, let other = song.isExplicit, explicit != other { return false }
             return true
