@@ -44,7 +44,6 @@ import GoogleSignIn
     var body: some Scene {
         WindowGroup {
             appContent
-                .messageBanners()
                 .background { WaveBackdrop() }
                 .environmentObject(player)
                 .environmentObject(auth)
@@ -53,6 +52,7 @@ import GoogleSignIn
                 .environmentObject(updates)
                 .environmentObject(playlistSync)
                 .environmentObject(messaging)
+                .messageBanners()
                 .preferredColorScheme(.dark)
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
                 .task(id: auth.user?.uid) { activity.bind(userID: auth.user?.uid); activity.watchFriends(social.following) }
@@ -64,7 +64,7 @@ import GoogleSignIn
                     if phase == .active && enablesAutomaticUpdates { Task { await updates.check() } }
                 }
                 .sheet(item: $updates.presented) { manifest in
-                    StableUpdateSheet(manifest: manifest).environmentObject(updates).messageBanners()
+                    StableUpdateSheet(manifest: manifest).environmentObject(updates)
                 }
         }
     }
