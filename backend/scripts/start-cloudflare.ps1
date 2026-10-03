@@ -21,7 +21,7 @@ function Publish-TunnelUrl([string]$Url) {
     $path = 'backend.json'
     $payload = @{ url = $Url; updatedAt = [DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
-    $sha = (& $gh.Source api "repos/$repo/contents/$path" -f "ref=$branch" --jq '.sha').Trim()
+    $sha = (& $gh.Source api -X GET "repos/$repo/contents/$path" -f "ref=$branch" --jq '.sha').Trim()
     if ($LASTEXITCODE -ne 0 -or -not $sha) {
         Write-Warning "Could not read the discovery file from GitHub."
         return
