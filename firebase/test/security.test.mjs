@@ -159,3 +159,37 @@ test('shared playlist owner can delete after removing all collaborators', async 
   await assertSucceeds(updateDoc(doc(alice, 'playlists', 'orphaned'), { memberIDs: ['alice'] }));
   await assertSucceeds(deleteDoc(doc(alice, 'playlists', 'orphaned')));
 });
+
+async function message(uid, threadID, messageID, { first = false, text = 'Hello' } = {}) {
+  const db = account(uid), batch = writeBatch(db);
+  batch.set(doc(db, 'conversations', threadID, 'messages', messageID), { senderID: uid, text, createdAt: serverTimestamp() });
+  if (first) batch.set(doc(db, 'conversations', threadID), { memberIDs: ['alice', 'bob'], lastMessageID: messageID, lastSenderID: uid,
+    lastText: text, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), readMessageIDs: { alice: uid === 'alice' ? messageID : '', bob: uid === 'bob' ? messageID : '' } });
+  else batch.update(doc(db, 'conversations', threadID), { lastMessageID: messageID, lastSenderID: uid, lastText: text,
+    updatedAt: serverTimestamp(), ['readMessageIDs.' + uid]: messageID });
+  return batch.commit();
+}
+
+test('direct chats are participant-private, atomic and require following to start', async () => {
+  const alice = account('alice'), bob = account('bob'), stranger = account('mallory');
+  await assertSucceeds(getDoc(doc(alice, 'conversations', 'alice_bob')));
+  await assertFails(getDoc(doc(stranger, 'conversations', 'alice_bob')));
+  await assertFails(message('alice', 'alice_bob', 'first', { first: true }));
+  await setDoc(doc(alice, 'follows', 'alice_bob'), { followerID: 'alice', followingID: 'bob' });
+  await assertSucceeds(message('alice', 'alice_bob', 'first', { first: true }));
+  await assertSucceeds(getDoc(doc(bob, 'conversations', 'alice_bob', 'messages', 'first')));
+  await assertFails(getDoc(doc(stranger, 'conversations', 'alice_bob', 'messages', 'first')));
+  await assertFails(getDocs(collection(stranger, 'conversations')));
+  await assertSucceeds(getDocs(query(collection(bob, 'conversations'), where('memberIDs', 'array-contains', 'bob'), limit(50))));
+  await assertSucceeds(getDocs(query(collection(bob, 'conversations', 'alice_bob', 'messages'), limit(50))));
+  await assertFails(getDocs(collection(bob, 'conversations', 'alice_bob', 'messages')));
+  await assertFails(updateDoc(doc(bob, 'conversations', 'alice_bob'), { memberIDs: ['bob', 'mallory'] }));
+  await assertFails(updateDoc(doc(bob, 'conversations', 'alice_bob'), { 'readMessageIDs.alice': 'attacker' }));
+  await assertSucceeds(updateDoc(doc(bob, 'conversations', 'alice_bob'), { 'readMessageIDs.bob': 'first' }));
+  await assertFails(setDoc(doc(bob, 'conversations', 'alice_bob', 'messages', 'uncommitted'), { senderID: 'bob', text: 'Fake', createdAt: serverTimestamp() }));
+  await assertFails(message('bob', 'alice_bob', 'huge', { text: 'x'.repeat(4001) }));
+  await assertFails(message('bob', 'alice_bob', 'empty', { text: '' }));
+  await assertSucceeds(message('bob', 'alice_bob', 'reply'));
+  await assertFails(updateDoc(doc(bob, 'conversations', 'alice_bob', 'messages', 'reply'), { text: 'Changed' }));
+  await assertFails(deleteDoc(doc(bob, 'conversations', 'alice_bob', 'messages', 'reply')));
+});

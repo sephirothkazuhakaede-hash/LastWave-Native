@@ -216,6 +216,8 @@ struct ProfilePageView: View {
                                 }
                             }
                             FriendActivityShelf().padding(16).waveSurface(radius: 22)
+                            NavigationLink { MessagesInboxView() } label: { Label("Messages", systemImage: "bubble.left.and.bubble.right") }
+                                .buttonStyle(CapySecondaryButtonStyle())
                             NavigationLink { FriendActivitySettingsView() } label: { Label("Friend Activity privacy", systemImage: "hand.raised") }
                                 .buttonStyle(CapySecondaryButtonStyle())
                             Button { showEditor = true; CapyHaptics.selection() } label: {
@@ -707,7 +709,13 @@ struct SocialPersonProfileView: View {
                         Text(person.displayName).font(.capyTitle).multilineTextAlignment(.center)
                         Text("@" + person.username).foregroundStyle(CapyColor.accent)
                         if !person.bio.isEmpty { Text(person.bio).foregroundStyle(CapyColor.secondaryText) }
-                        if person.id != social.currentUserID { FollowControl(person: person) }
+                        if person.id != social.currentUserID {
+                            FollowControl(person: person)
+                            if social.currentUserID != nil {
+                                NavigationLink { DirectChatView(person: person) } label: { Label("Message", systemImage: "bubble.left") }
+                                    .buttonStyle(CapyPrimaryButtonStyle())
+                            }
+                        }
                         HStack {
                             NavigationLink("Followers") { RelationshipListView(ownerID: person.id, kind: .followers) }
                             NavigationLink("Following") { RelationshipListView(ownerID: person.id, kind: .following) }

@@ -11,6 +11,7 @@ import GoogleSignIn
     @StateObject private var activity: ListeningActivityStore
     @StateObject private var updates: StableUpdateStore
     @StateObject private var playlistSync: PlaylistCloudSync
+    @StateObject private var messaging: MessagingStore
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var social: SocialStore
     init() {
@@ -28,6 +29,7 @@ import GoogleSignIn
         let playlistSync = PlaylistCloudSync()
         playlistSync.observe(player)
         _playlistSync = StateObject(wrappedValue: playlistSync)
+        _messaging = StateObject(wrappedValue: MessagingStore())
         _activity = StateObject(wrappedValue: activity)
         _updates = StateObject(wrappedValue: StableUpdateStore())
 #if DEBUG
@@ -42,6 +44,7 @@ import GoogleSignIn
     var body: some Scene {
         WindowGroup {
             appContent
+                .messageBanners()
                 .background { WaveBackdrop() }
                 .environmentObject(player)
                 .environmentObject(auth)
@@ -49,17 +52,19 @@ import GoogleSignIn
                 .environmentObject(activity)
                 .environmentObject(updates)
                 .environmentObject(playlistSync)
+                .environmentObject(messaging)
                 .preferredColorScheme(.dark)
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
                 .task(id: auth.user?.uid) { activity.bind(userID: auth.user?.uid); activity.watchFriends(social.following) }
                 .task(id: auth.user?.uid) { if enablesAutomaticUpdates { playlistSync.bind(userID: auth.user?.uid) } }
+                .task(id: auth.user?.uid) { messaging.bind(userID: auth.user?.uid) }
                 .onReceive(social.$following.debounce(for: .milliseconds(300), scheduler: RunLoop.main)) { activity.watchFriends($0) }
                 .task { if enablesAutomaticUpdates { await updates.check() } }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active && enablesAutomaticUpdates { Task { await updates.check() } }
                 }
                 .sheet(item: $updates.presented) { manifest in
-                    StableUpdateSheet(manifest: manifest).environmentObject(updates)
+                    StableUpdateSheet(manifest: manifest).environmentObject(updates).messageBanners()
                 }
         }
     }
@@ -187,7 +192,7 @@ private enum WaveTab: String, CaseIterable {
 }
 
 private enum ProfileDrawerDestination: String, Identifiable {
-    case profile, settings, activity, updates
+    case profile, settings, activity, updates, messages
     var id: String { rawValue }
 }
 
@@ -243,6 +248,7 @@ struct RootView: View {
                             openSettings: { openDrawerDestination(.settings) },
                             openActivity: { openDrawerDestination(.activity) },
                             openUpdates: { openDrawerDestination(.updates) },
+                            openMessages: { openDrawerDestination(.messages) },
                             openPerson: { person in drawerPerson = person; openDrawerDestination(.profile) }
                         )
                         .frame(width: min(350, geometry.size.width * 0.88))
@@ -257,19 +263,21 @@ struct RootView: View {
         }
         .sheet(isPresented: $showPlayer) {
             PlayerView()
+                .messageBanners()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
                 .presentationCornerRadius(30)
                 .presentationBackground(.clear)
         }
         .sheet(isPresented: Binding(
-            get: { drawerDestination == .profile || drawerDestination == .activity || drawerDestination == .updates },
+            get: { drawerDestination == .profile || drawerDestination == .activity || drawerDestination == .updates || drawerDestination == .messages },
             set: { if !$0 { drawerDestination = nil } }
         )) {
             NavigationStack {
                 Group {
                     if drawerDestination == .activity { FriendActivitySettingsView() }
                     else if drawerDestination == .updates { StableUpdatesView() }
+                    else if drawerDestination == .messages { MessagesInboxView() }
                     else if let drawerPerson { SocialPersonProfileView(person: drawerPerson) }
                     else { ProfilePageView() }
                 }
@@ -279,6 +287,7 @@ struct RootView: View {
                         }
                     }
             }
+            .messageBanners()
             .presentationDetents([.large])
         }
         .overlay {
@@ -353,6 +362,7 @@ private struct CapyProfileButton: View {
 }
 
 private struct ProfileDrawerView: View {
+    @EnvironmentObject private var messaging: MessagingStore
     @EnvironmentObject private var auth: AuthSession
     @EnvironmentObject private var social: SocialStore
     let close: () -> Void
@@ -360,6 +370,7 @@ private struct ProfileDrawerView: View {
     let openSettings: () -> Void
     let openActivity: () -> Void
     let openUpdates: () -> Void
+    let openMessages: () -> Void
     let openPerson: (SocialProfile) -> Void
 
     var body: some View {
@@ -403,6 +414,7 @@ private struct ProfileDrawerView: View {
 
             VStack(spacing: 8) {
                 drawerButton("Profile & friends", icon: "person.2.fill", action: openProfile)
+                drawerButton(messaging.unreadCount == 0 ? "Messages" : "Messages (\(messaging.unreadCount) unread)", icon: "bubble.left.and.bubble.right.fill", action: openMessages)
                 drawerButton("Settings", icon: "gearshape.fill", action: openSettings)
                 drawerButton("Friend Activity privacy", icon: "hand.raised", action: openActivity)
                 drawerButton("Updates", icon: "arrow.down.circle", action: openUpdates)

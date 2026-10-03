@@ -174,6 +174,57 @@ service cloud.firestore {
       allow delete: if signedIn() && resource.data.ownerID == request.auth.uid;
     }
 
+    match /conversations/{threadID} {
+      function participant(data) { return signedIn() && request.auth.uid in data.memberIDs; }
+      function validThread(data) {
+        return data.keys().hasOnly(['memberIDs', 'createdAt', 'updatedAt', 'lastMessageID', 'lastText', 'lastSenderID', 'readMessageIDs']) &&
+          data.memberIDs is list && data.memberIDs.size() == 2 && data.memberIDs[0] is string && data.memberIDs[1] is string &&
+          data.memberIDs[0] != data.memberIDs[1] && threadID == data.memberIDs[0] + '_' + data.memberIDs[1] &&
+          data.lastMessageID is string && data.lastMessageID.size() <= 128 &&
+          data.lastText is string && data.lastText.size() > 0 && data.lastText.size() <= 4000 &&
+          data.lastSenderID in data.memberIDs && data.readMessageIDs is map &&
+          data.readMessageIDs.keys().hasOnly(data.memberIDs) && data.readMessageIDs.keys().hasAll(data.memberIDs);
+      }
+      function committedMessage(data) {
+        let message = getAfter(/databases/$(database)/documents/conversations/$(threadID)/messages/$(data.lastMessageID)).data;
+        return message.senderID == request.auth.uid && message.text == data.lastText && message.createdAt == request.time &&
+          data.lastSenderID == request.auth.uid && data.updatedAt == request.time;
+      }
+      allow get: if signedIn() &&
+        (exists(/databases/$(database)/documents/conversations/$(threadID)) ?
+          participant(resource.data) : request.auth.uid in threadID.split('_'));
+      allow list: if participant(resource.data) && request.query.limit <= 500;
+      allow create: if participant(request.resource.data) && validThread(request.resource.data) &&
+        request.resource.data.createdAt == request.time && committedMessage(request.resource.data) &&
+        request.resource.data.readMessageIDs[request.auth.uid] == request.resource.data.lastMessageID &&
+        request.resource.data.readMessageIDs[request.resource.data.memberIDs[0] == request.auth.uid ? request.resource.data.memberIDs[1] : request.resource.data.memberIDs[0]] == '' &&
+        exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + (request.resource.data.memberIDs[0] == request.auth.uid ? request.resource.data.memberIDs[1] : request.resource.data.memberIDs[0])));
+      allow update: if participant(resource.data) && validThread(request.resource.data) &&
+        request.resource.data.memberIDs == resource.data.memberIDs && request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.readMessageIDs.diff(resource.data.readMessageIDs).affectedKeys().hasOnly([request.auth.uid]) &&
+        request.resource.data.readMessageIDs[request.auth.uid] == request.resource.data.lastMessageID &&
+        (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readMessageIDs']) ||
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastMessageID', 'lastText', 'lastSenderID', 'updatedAt', 'readMessageIDs']) &&
+            request.resource.data.lastMessageID != resource.data.lastMessageID && committedMessage(request.resource.data))
+        );
+      allow delete: if false;
+
+      match /messages/{messageID} {
+        function thread() { return get(/databases/$(database)/documents/conversations/$(threadID)).data; }
+        allow get: if participant(thread());
+        allow list: if participant(thread()) && request.query.limit <= 50;
+        allow create: if signedIn() &&
+          request.auth.uid in getAfter(/databases/$(database)/documents/conversations/$(threadID)).data.memberIDs &&
+          getAfter(/databases/$(database)/documents/conversations/$(threadID)).data.lastMessageID == messageID &&
+          getAfter(/databases/$(database)/documents/conversations/$(threadID)).data.updatedAt == request.time &&
+          request.resource.data.keys().hasOnly(['senderID', 'text', 'createdAt']) &&
+          request.resource.data.senderID == request.auth.uid && request.resource.data.text is string &&
+          request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 4000 && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
