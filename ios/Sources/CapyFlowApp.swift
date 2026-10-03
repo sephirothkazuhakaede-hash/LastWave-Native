@@ -1811,7 +1811,7 @@ private struct TrackActionSheet: View {
         ScrollView {
             VStack(spacing: 0) {
                 HStack(spacing: 14) {
-                    Artwork(track: track, size: 64, radius: 10)
+                    Artwork(track: track)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(track.title).font(.headline.weight(.semibold)).lineLimit(2)
                         Text(track.artist).font(.subheadline).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
@@ -1849,8 +1849,13 @@ private struct TrackActionSheet: View {
         }
     }
 
+    @ViewBuilder
     private func action(_ title: String, icon: String, role: ButtonRole? = nil, perform: @escaping () -> Void) -> some View {
-        Button(role: role, action: perform) { actionLabel(title, icon: icon) }.buttonStyle(.plain)
+        if role == .destructive {
+            Button(role: .destructive, action: perform) { actionLabel(title, icon: icon) }.buttonStyle(.plain)
+        } else {
+            Button(action: perform) { actionLabel(title, icon: icon) }.buttonStyle(.plain)
+        }
     }
     private func actionLabel(_ title: String, icon: String, trailing: String? = nil) -> some View {
         HStack(spacing: 16) {
