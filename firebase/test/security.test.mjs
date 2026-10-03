@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { before, after, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc, getDoc, getDocs, collection, query, limit, where, documentId, writeBatch, serverTimestamp, Bytes, Timestamp } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, collection, query, limit, where, documentId, writeBatch, serverTimestamp, Bytes, Timestamp } from 'firebase/firestore';
 
 let env;
 before(async () => {
@@ -148,4 +148,14 @@ test('personal playlist backup survives a new account session and is private', a
   await assertSucceeds(setDoc(doc(alice, ...path), { playlistID: 'playlist-1', deleted: true, updatedAt: serverTimestamp() }));
   const deleted = await assertSucceeds(getDoc(doc(reinstalled, ...path)));
   if (!deleted.data().deleted) throw new Error('Deletion did not synchronize');
+});
+
+
+test('shared playlist owner can delete after removing all collaborators', async () => {
+  const alice = account('alice'), bob = account('bob');
+  await assertSucceeds(setDoc(doc(alice, 'playlists', 'orphaned'), { ownerID: 'alice', memberIDs: ['alice'], name: 'Old album', tracks: [] }));
+  await assertSucceeds(updateDoc(doc(alice, 'playlists', 'orphaned'), { memberIDs: ['alice', 'bob'] }));
+  await assertFails(deleteDoc(doc(bob, 'playlists', 'orphaned')));
+  await assertSucceeds(updateDoc(doc(alice, 'playlists', 'orphaned'), { memberIDs: ['alice'] }));
+  await assertSucceeds(deleteDoc(doc(alice, 'playlists', 'orphaned')));
 });

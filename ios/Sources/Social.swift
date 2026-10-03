@@ -503,6 +503,16 @@ enum SocialConnectionState: Equatable {
         catch { handleSocialError(error) }
     }
 
+    func deleteSharedPlaylist(_ playlist: SharedPlaylist) async {
+        guard playlist.ownerID == userID else {
+            error = "Only the owner can delete a shared playlist."; return
+        }
+        do {
+            try await db.collection("playlists").document(playlist.id).delete()
+            sharedPlaylists.removeAll { $0.id == playlist.id }
+        } catch { handleSocialError(error) }
+    }
+
     func removeMember(_ uid: String, from playlist: SharedPlaylist) async {
         guard uid != playlist.ownerID, playlist.ownerID == userID || uid == userID else {
             error = "Only the owner can remove another collaborator."; return

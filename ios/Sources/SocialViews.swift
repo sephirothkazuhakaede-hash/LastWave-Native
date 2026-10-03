@@ -409,11 +409,13 @@ struct CollaborateSheet: View {
         NavigationStack {
             ZStack {
                 WaveBackdrop()
+                ScrollView {
                 VStack(spacing: 18) {
                     Image(systemName: "person.2.badge.plus").font(.system(size: 46)).foregroundStyle(Color.waveBlue)
-                    Text("Share “\(playlist.name)”").font(.title2.bold()).multilineTextAlignment(.center)
+                    Text("Share “\(playlist.name)”").font(.title2.bold()).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                     Text("Publish the playlist to your CapyFlow account, then add a friend by username. Changes appear on both phones.")
                         .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                     TextField("Friend's @username", text: $username)
                         .textInputAutocapitalization(.never).autocorrectionDisabled().padding(16).waveGlass(radius: 20)
                     Button {
@@ -446,8 +448,8 @@ struct CollaborateSheet: View {
                         }
                     }
                     if let error = social.error { Text(error).font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center) }
-                    Spacer()
                 }.padding(24)
+                }
             }
             .navigationTitle("Collaborate").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -457,6 +459,7 @@ struct CollaborateSheet: View {
 }
 
 struct SharedPlaylistDetailView: View {
+    @State private var deletePresented = false
     @EnvironmentObject private var player: WavePlayer
     @EnvironmentObject private var social: SocialStore
     let playlistID: String
@@ -514,6 +517,7 @@ struct SharedPlaylistDetailView: View {
                         if playlist.ownerID == social.currentUserID {
                             Button("Rename playlist") { playlistName = playlist.name; renamePresented = true }
                             Button("Manage collaborators") { managePresented = true }
+                            Button("Delete shared playlist", role: .destructive) { deletePresented = true }
                         } else if let uid = social.currentUserID {
                             Button("Leave playlist", role: .destructive) {
                                 Task { await social.removeMember(uid, from: playlist) }
@@ -523,6 +527,10 @@ struct SharedPlaylistDetailView: View {
                 }
             }
         }
+        .alert("Delete shared playlist?", isPresented: $deletePresented) {
+            Button("Delete", role: .destructive) { if let playlist { Task { await social.deleteSharedPlaylist(playlist) } } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Remove this shared playlist for everyone. Local playlists and downloaded songs will stay.") }
         .alert("Rename playlist", isPresented: $renamePresented) {
             TextField("Playlist name", text: $playlistName)
             Button("Cancel", role: .cancel) {}
@@ -546,6 +554,8 @@ struct SharedPlaylistDetailView: View {
 }
 
 struct SharedPlaylistRow: View {
+    @EnvironmentObject private var social: SocialStore
+    @State private var deletePresented = false
     let playlist: SharedPlaylist
     var body: some View {
         HStack(spacing: 13) {
@@ -557,6 +567,15 @@ struct SharedPlaylistRow: View {
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             Image(systemName: "chevron.right").foregroundStyle(.secondary)
         }.padding(11).waveSurface(radius: 22)
+        .contextMenu {
+            if playlist.ownerID == social.currentUserID {
+                Button("Delete shared playlist", role: .destructive) { deletePresented = true }
+            }
+        }
+        .alert("Delete shared playlist?", isPresented: $deletePresented) {
+            Button("Delete", role: .destructive) { Task { await social.deleteSharedPlaylist(playlist) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Remove this shared playlist for everyone. Local playlists and downloaded songs will stay.") }
     }
 }
 
