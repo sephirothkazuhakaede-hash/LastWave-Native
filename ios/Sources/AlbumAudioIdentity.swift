@@ -148,8 +148,13 @@ enum AlbumAudioIdentity {
         // Album metadata can contain a soundtrack/credited artist that causes every
         // artist-qualified query to miss the recording even though a plain Songs
         // search returns the correct ATV item immediately.
-        let alternatives = [join([performer, normalized]), join([original, performer]), join([performer, original]),
-                            join([normalized, performer]), normalized, original,
+        // Search the visible album title first, then progressively add
+        // artist/album context. This mirrors the Songs tab for releases where
+        // YouTube Music localizes the album row (for example "Suzume") but the
+        // canonical Songs recording includes a native-script prefix.
+        let alternatives = [normalized, original,
+                            join([performer, normalized]), join([original, performer]), join([performer, original]),
+                            join([normalized, performer]),
                             join([performer, normalized, album]), join([normalized, album, performer]),
                             join([performer, key(normalized), album]), join([performer, base, album]), base]
         var seen: Set<String> = []
