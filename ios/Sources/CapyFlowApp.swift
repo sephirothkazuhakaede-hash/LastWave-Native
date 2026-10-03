@@ -479,7 +479,10 @@ private struct HomeDashboardView: View {
             Text(player.playing ? "IN YOUR FLOW" : "READY WHEN YOU ARE")
                 .font(.caption2.weight(.black)).tracking(1.8).foregroundStyle(CapyColor.accent)
             Text(track.title).font(.capyTitle).lineLimit(2)
-            Text(track.artist).font(.capyBody).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+            HStack(spacing: 5) {
+                                    if track.isExplicit == true { ExplicitBadge() }
+                                    Text(track.artist).font(.capyBody).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                                }
             Button { player.toggle(); CapyHaptics.impact(.medium) } label: {
                 Label(player.playing ? "Pause" : "Keep listening", systemImage: player.playing ? "pause.fill" : "play.fill")
                     .lineLimit(1)
@@ -500,7 +503,10 @@ private struct HomeDashboardView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 Artwork(track: track, size: 142, radius: 20)
                                 Text(track.title).font(.capyCallout).lineLimit(1)
-                                Text(track.artist).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                                HStack(spacing: 5) {
+                                    if track.isExplicit == true { ExplicitBadge() }
+                                    Text(track.artist).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                                }
                             }
                             .frame(width: 142, alignment: .leading)
                             .contentShape(Rectangle())
@@ -1684,6 +1690,18 @@ private struct TrackCollectionView: View {
     }
 }
 
+private struct ExplicitBadge: View {
+    var body: some View {
+        Text("E")
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundStyle(Color.black.opacity(0.85))
+            .padding(.horizontal, 4).padding(.vertical, 2)
+            .background(CapyColor.secondaryText.opacity(0.85), in: RoundedRectangle(cornerRadius: 2))
+            .fixedSize()
+            .accessibilityLabel("Explicit")
+    }
+}
+
 private struct TrackCard: View {
     @EnvironmentObject var player: WavePlayer
     @EnvironmentObject var social: SocialStore
@@ -1699,6 +1717,7 @@ private struct TrackCard: View {
                         Text(track.title).font(.headline.weight(.bold)).lineLimit(2)
                             .accessibilityIdentifier(titleIdentifier ?? "track-title-\(track.id)")
                         HStack(spacing: 6) {
+                            if track.isExplicit == true { ExplicitBadge() }
                             Text(track.artist).lineLimit(1)
                             if let duration = track.duration, duration > 0 {
                                 Text("•"); Text(shortTime(duration)).monospacedDigit()
@@ -1861,7 +1880,10 @@ private struct CapyDock: View {
                             Artwork(track: track, size: 48, radius: 13)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(track.title).font(.capyCallout).lineLimit(1)
-                                Text(track.artist).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                                HStack(spacing: 5) {
+                                    if track.isExplicit == true { ExplicitBadge() }
+                                    Text(track.artist).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                                }
                             }
                         }
                         .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
@@ -2003,7 +2025,10 @@ struct PlayerView: View {
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(player.current?.title ?? "CapyFlow").font(.system(size: showLyrics ? 24 : 29, weight: .black, design: .rounded)).lineLimit(2)
-                        Text(player.current?.artist ?? "").font(.capyBody).foregroundStyle(CapyColor.accent).lineLimit(1)
+                        HStack(spacing: 6) {
+                            if player.current?.isExplicit == true { ExplicitBadge() }
+                            Text(player.current?.artist ?? "").font(.capyBody).foregroundStyle(CapyColor.accent).lineLimit(1)
+                        }
                     }
                     .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     VStack(spacing: 1) {

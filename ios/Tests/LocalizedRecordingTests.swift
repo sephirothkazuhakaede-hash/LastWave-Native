@@ -90,4 +90,76 @@ final class LocalizedRecordingTests: XCTestCase {
         XCTAssertFalse(report.contains(#"\(track"#), "Diagnostic interpolation must execute")
     }
 
+    func testActualAR2MissingMetadataResolvesColdAndSongsFirst() async throws {
+        var row = Track(id: "Xs0Lxif1u9E", title: "Suzume (feat. Toaka)", artist: "RADWIMPS")
+        row.albumID = "MPREb_7fR7KsQj2hx"; row.albumTitle = "Suzume (Motion Picture Soundtrack)"
+        row.musicVideoType = "MUSIC_VIDEO_TYPE_OMV"; row.isExplicit = false
+        var song = Track(id: "9LW9DpmhrPE", title: "すずめ - Suzume (feat. Toaka)", artist: "RADWIMPS", duration: 237)
+        song.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"; song.isExplicit = false
+        XCTAssertNil(row.artistID); XCTAssertNil(row.duration); XCTAssertNil(song.artistID)
+        XCTAssertTrue(AlbumAudioIdentity.localizedTitleMatches(row, song))
+        let cold = CanonicalTrackResolver(defaults: nil)
+        let result = try await cold.resolve(row) { _ in [song] }
+        XCTAssertEqual(result.playableID, song.id)
+        XCTAssertEqual(result.duration, 237)
+        let primed = CanonicalTrackResolver(defaults: nil)
+        _ = await primed.registerSearch([song])
+        let saved = try await primed.resolve(row) { _ in XCTFail("Songs-first must reuse the authoritative recording"); return [] }
+        XCTAssertEqual(saved.playableID, song.id)
+        XCTAssertEqual(saved.lyricsCacheKey, song.lyricsCacheKey)
+        XCTAssertEqual(saved.mediaCacheKey(quality: .automatic), song.mediaCacheKey(quality: .automatic))
+        var cover = song; cover.artist = "RADWIMPS Tribute"
+        XCTAssertNil(AlbumAudioIdentity.score(row, cover))
+        var differentFeature = song; differentFeature.title = "すずめ - Suzume (feat. Another Singer)"
+        XCTAssertNil(AlbumAudioIdentity.score(row, differentFeature))
+        var explicit = song; explicit.isExplicit = true
+        XCTAssertNil(AlbumAudioIdentity.score(row, explicit))
+        var remix = song; remix.title += " (Remix)"
+        XCTAssertNil(AlbumAudioIdentity.score(row, remix))
+        var ambiguous = Track(id: "another-edition", title: song.title, artist: song.artist, duration: 237)
+        ambiguous.musicVideoType = song.musicVideoType; ambiguous.isExplicit = false
+        XCTAssertNil(AlbumAudioIdentity.bestMatch(for: row, candidates: [song, ambiguous]))
+    }
+
+    func testAlbumDurationInFlexibleMobileColumn() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LocalizedRecording", withExtension: "json"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let rows = try XCTUnwrap(root["albumRoot"] as? [[String: Any]])
+        var renderer = try XCTUnwrap(rows.first?["musicResponsiveListItemRenderer"] as? [String: Any])
+        renderer.removeValue(forKey: "fixedColumns")
+        var columns = try XCTUnwrap(renderer["flexColumns"] as? [[String: Any]])
+        columns.append(["musicResponsiveListItemFlexColumnRenderer": ["text": ["runs": [["text": "3:59"]]]]])
+        renderer["flexColumns"] = columns
+        let album = Album(id: "MPREb_7fR7KsQj2hx", title: "Suzume (Motion Picture Soundtrack)", artist: "RADWIMPS", year: nil, artworkURL: nil)
+        let parsed = try Catalog.parseAlbumTracks(["musicResponsiveListItemRenderer": renderer], album: album)
+        XCTAssertEqual(parsed.first?.duration, 239)
+    }
+
+    func testExplicitMetadataOnAlbumAndSongsRows() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LocalizedRecording", withExtension: "json"))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let rows = try XCTUnwrap(root["albumRoot"] as? [[String: Any]])
+        var renderer = try XCTUnwrap(rows.first?["musicResponsiveListItemRenderer"] as? [String: Any])
+        renderer["badges"] = [
+            ["musicInlineBadgeRenderer": ["icon": ["iconType": "OTHER_BADGE"]]],
+            ["musicInlineBadgeRenderer": ["icon": ["iconType": "MUSIC_EXPLICIT_BADGE"]]]
+        ]
+        let album = Album(id: "fixture-album", title: "Fixture", artist: "RADWIMPS", year: nil, artworkURL: nil)
+        let explicit = try XCTUnwrap(Catalog.parseAlbumTracks(["musicResponsiveListItemRenderer": renderer], album: album).first)
+        XCTAssertEqual(explicit.isExplicit, true)
+        XCTAssertEqual(try Catalog.parseSongTracks(["musicResponsiveListItemRenderer": renderer]).first?.isExplicit, true)
+        let saved = try JSONDecoder().decode(Track.self, from: JSONEncoder().encode(explicit))
+        XCTAssertEqual(saved.isExplicit, true)
+        renderer.removeValue(forKey: "badges")
+        XCTAssertEqual(try Catalog.parseAlbumTracks(["musicResponsiveListItemRenderer": renderer], album: album).first?.isExplicit, false)
+    }
+
+    func testOrdinaryRepeatedTitleIsNotCollapsedIntoAnotherSong() {
+        var row = Track(id: "row", title: "Go Go", artist: "Example Artist", duration: 180)
+        row.isExplicit = false
+        var candidate = Track(id: "audio", title: "Go", artist: row.artist, duration: 180)
+        candidate.isExplicit = false; candidate.musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
+        XCTAssertNil(AlbumAudioIdentity.score(row, candidate))
+    }
+
 }

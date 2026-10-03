@@ -314,7 +314,7 @@ actor Catalog {
                     let duration = fixedColumns.compactMap { column -> Double? in
                         let fixed = column["musicResponsiveListItemFixedColumnRenderer"] as? [String: Any]
                         return renderedText(fixed?["text"]).flatMap(MediaDuration.parse)
-                    }.first
+                    }.first ?? values.dropFirst().compactMap(MediaDuration.parse).first
                     let thumbnail = ((renderer["thumbnail"] as? [String: Any])?["musicThumbnailRenderer"] as? [String: Any])?["thumbnail"] as? [String: Any]
                     let artwork = (thumbnail?["thumbnails"] as? [[String: Any]])?.last?["url"] as? String
                     if let title = values.first {
@@ -518,7 +518,15 @@ actor Catalog {
     }
 
     private static func hasExplicitBadge(_ renderer: [String: Any]) -> Bool {
-        stringValue("iconType", in: renderer["badges"] ?? []) == "MUSIC_EXPLICIT_BADGE"
+        func containsExplicit(_ node: Any) -> Bool {
+            if let object = node as? [String: Any] {
+                if object["iconType"] as? String == "MUSIC_EXPLICIT_BADGE" { return true }
+                return object.values.contains(where: containsExplicit)
+            }
+            if let array = node as? [Any] { return array.contains(where: containsExplicit) }
+            return false
+        }
+        return containsExplicit(renderer["badges"] ?? [])
     }
 
     private static func artistIdentity(in runs: [[String: Any]]) -> String? {

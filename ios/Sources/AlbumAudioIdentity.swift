@@ -26,13 +26,16 @@ enum AlbumAudioIdentity {
     }
 
     private static func comparisonTitle(_ value: String) -> String {
-        let normalized = key(title(value)).replacingOccurrences(of: #"\\bmovie ver\\b"#, with: "movie version", options: .regularExpression)
-            .replacingOccurrences(of: #"\\bmovie edited version\\b"#, with: "movie edit", options: .regularExpression)
+        let normalized = key(title(value)).replacingOccurrences(of: #"\bmovie ver\b"#, with: "movie version", options: .regularExpression)
+            .replacingOccurrences(of: #"\bmovie edited version\b"#, with: "movie edit", options: .regularExpression)
         // YouTube Music can prefix a native-script title to the same recording.
-        // After `key` normalization, "すずめ - Suzume" becomes "suzume suzume".
+        // Some localized normalization yields an exact repeated transliteration.
         // Collapse only an exact repeated half; subtitles and versions stay distinct.
         let words = normalized.split(separator: " ").map(String.init)
-        if words.count >= 2, words.count.isMultiple(of: 2) {
+        let bilingual = value.range(of: #"\p{Latin}"#, options: .regularExpression) != nil
+            && value.range(of: #"(?!\p{Latin})\p{L}"#, options: .regularExpression) != nil
+            && value.range(of: #"\s[-–—]\s"#, options: .regularExpression) != nil
+        if bilingual, words.count >= 2, words.count.isMultiple(of: 2) {
             let half = words.count / 2
             if Array(words[..<half]) == Array(words[half...]) {
                 return words[..<half].joined(separator: " ")
@@ -93,13 +96,28 @@ enum AlbumAudioIdentity {
     /// evidence. Never strip arbitrary prefixes, subtitles or version suffixes.
     static func localizedTitleMatches(_ track: Track, _ candidate: Track) -> Bool {
         guard candidate.musicVideoType == "MUSIC_VIDEO_TYPE_ATV",
-              let artistID = track.artistID, artistID == candidate.artistID,
+              !isMissingArtist(track.artist), !isMissingArtist(candidate.artist),
+              key(artist(track.artist)) == key(artist(candidate.artist)),
               let explicit = track.isExplicit, candidate.isExplicit == explicit,
-              let duration = track.duration, let other = candidate.duration,
-              duration.isFinite, other.isFinite, duration > 0, other > 0,
-              abs(duration - other) <= max(5, min(12, duration * 0.04)),
+              let other = candidate.duration, other.isFinite, other > 0,
               versionMarkers(track.title).union(versionMarkers(track.albumTitle ?? ""))
                 == versionMarkers(candidate.title).union(versionMarkers(candidate.albumTitle ?? "")) else { return false }
+        func featuredCredit(_ value: String) -> String? {
+            guard let regex = try? NSRegularExpression(pattern: #"\b(?:feat\.?|featuring|ft\.?)\s+([^\)\]]+)"#, options: .caseInsensitive),
+                  let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
+                  let range = Range(match.range(at: 1), in: value) else { return nil }
+            return key(String(value[range]))
+        }
+        if let featured = featuredCredit(track.title), let otherFeatured = featuredCredit(candidate.title), featured != otherFeatured { return false }
+        // Mobile catalog rows may omit artist endpoints and the duration column.
+        // Absence is not a contradiction: exact artist credits, complete title
+        // aliases, known edition and one unique ATV ID still identify the song.
+        // When independent evidence is present, it must agree.
+        if let artistID = track.artistID, let otherID = candidate.artistID, artistID != otherID { return false }
+        if let duration = track.duration {
+            guard duration.isFinite, duration > 0,
+                  abs(duration - other) <= max(5, min(12, duration * 0.04)) else { return false }
+        }
         func aliases(_ value: String) -> Set<String> {
             let normalized = title(value)
             let parts = normalized.components(separatedBy: CharacterSet(charactersIn: "-–—"))
