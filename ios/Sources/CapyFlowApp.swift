@@ -1278,14 +1278,16 @@ private struct PlaylistLibraryView: View {
                         }
                     } else {
                         CapySectionHeader(filter == .albums ? "Saved albums" : "Your collection", subtitle: "\(visiblePlaylists.count) saved")
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140, maximum: 230), spacing: 14)], spacing: 18) {
+                        LazyVStack(spacing: 4) {
                             ForEach(visiblePlaylists) { playlist in
-                                NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: { PlaylistGridCard(playlist: playlist) }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button { playlistToRename = playlist } label: { Label("Rename", systemImage: "pencil") }
-                                        Button(role: .destructive) { playlistToDelete = playlist; showDelete = true } label: { Label("Delete playlist", systemImage: "trash") }
-                                    }
+                                NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: {
+                                    PlaylistLibraryRow(playlist: playlist)
+                                }
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    Button { playlistToRename = playlist } label: { Label("Rename", systemImage: "pencil") }
+                                    Button(role: .destructive) { playlistToDelete = playlist; showDelete = true } label: { Label("Delete playlist", systemImage: "trash") }
+                                }
                             }
                         }
                         if filter == .all {
@@ -1378,6 +1380,31 @@ private struct PlaylistLibraryView: View {
 
     private var emptyTitle: String { filter == .albums ? "No saved albums" : "Make your first playlist" }
     private var emptyMessage: String { filter == .albums ? "Open an album from Search and save it to your library." : "Create one, choose its artwork, then add songs from Search." }
+}
+
+private struct PlaylistLibraryRow: View {
+    @EnvironmentObject private var player: WavePlayer
+    let playlist: ImportedPlaylist
+    var body: some View {
+        HStack(spacing: 14) {
+            PlaylistCover(playlist: playlist, size: 66, radius: 10)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(playlist.name).font(.body.weight(.semibold)).foregroundStyle(.white).lineLimit(1)
+                HStack(spacing: 5) {
+                    if player.isPlaylistDownloaded(playlist) {
+                        Image(systemName: "arrow.down.circle.fill").foregroundStyle(CapyColor.accent)
+                    }
+                    Text(playlist.id.hasPrefix("album:") ? "Album" : "Playlist")
+                    Text("•")
+                    Text("\(playlist.tracks.count) songs")
+                }
+                .font(.caption).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(CapyColor.tertiaryText)
+        }
+        .padding(.vertical, 7).contentShape(Rectangle())
+    }
 }
 
 private struct PlaylistGridCard: View {
@@ -1568,6 +1595,9 @@ private struct PlaylistDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if let playlist {
                     Menu {
+                        ShareLink(item: "\(playlist.name) — \(playlist.tracks.count) songs") {
+                            Label("Share playlist", systemImage: "square.and.arrow.up")
+                        }
                         Button { showRename = true } label: { Label("Rename playlist", systemImage: "pencil") }
                         Button(role: .destructive) { showRemoveDownloads = true } label: { Label("Delete all downloads", systemImage: "arrow.down.circle") }
                             .disabled(player.hasActiveDownloads || !playlist.tracks.contains(where: player.hasDownload))
@@ -1771,11 +1801,75 @@ private struct ExplicitBadge: View {
     }
 }
 
+private struct TrackActionSheet: View {
+    @EnvironmentObject private var player: WavePlayer
+    @EnvironmentObject private var social: SocialStore
+    @Environment(\.dismiss) private var dismiss
+    let track: Track
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                HStack(spacing: 14) {
+                    Artwork(track: track, size: 64, radius: 10)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(track.title).font(.headline.weight(.semibold)).lineLimit(2)
+                        Text(track.artist).font(.subheadline).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 22).padding(.top, 12).padding(.bottom, 18)
+                Divider().opacity(0.35)
+                action("Play now", icon: "play.fill") { dismiss(); Task { await player.play(track) } }
+                action("Play next", icon: "text.insert") { player.queue.insert(track, at: 0); dismiss() }
+                action("Add to queue", icon: "text.append") { player.queue.append(track); dismiss() }
+                Menu {
+                    ForEach(player.playlists) { playlist in
+                        Button(playlist.name) { player.add(track, to: playlist.id); dismiss() }
+                    }
+                    if !social.sharedPlaylists.isEmpty {
+                        Section("Shared playlists") {
+                            ForEach(social.sharedPlaylists) { playlist in
+                                Button(playlist.name) { Task { await social.add(track, to: playlist) }; dismiss() }
+                            }
+                        }
+                    }
+                } label: { actionLabel("Add to playlist", icon: "rectangle.stack.badge.plus", trailing: "chevron.right") }
+                .disabled(player.playlists.isEmpty && social.sharedPlaylists.isEmpty)
+                if player.hasDownload(track) {
+                    action("Remove download", icon: "arrow.down.circle", role: .destructive) { player.delete(track); dismiss() }
+                        .disabled(player.hasActiveDownloads)
+                } else {
+                    action("Download", icon: "arrow.down.circle") { dismiss(); Task { await player.download(track) } }
+                }
+                ShareLink(item: "\(track.title) — \(track.artist)") {
+                    actionLabel("Share", icon: "square.and.arrow.up")
+                }
+            }.padding(.bottom, 24)
+        }
+    }
+
+    private func action(_ title: String, icon: String, role: ButtonRole? = nil, perform: @escaping () -> Void) -> some View {
+        Button(role: role, action: perform) { actionLabel(title, icon: icon) }.buttonStyle(.plain)
+    }
+    private func actionLabel(_ title: String, icon: String, trailing: String? = nil) -> some View {
+        HStack(spacing: 16) {
+            Image(systemName: icon).font(.title3).frame(width: 28)
+            Text(title).font(.body.weight(.medium))
+            Spacer()
+            if let trailing { Image(systemName: trailing).font(.caption.weight(.bold)).foregroundStyle(CapyColor.tertiaryText) }
+        }
+        .foregroundStyle(title == "Remove download" ? Color.red : Color.white)
+        .frame(minHeight: 58).padding(.horizontal, 22).contentShape(Rectangle())
+    }
+}
+
 private struct TrackCard: View {
     @EnvironmentObject var player: WavePlayer
     @EnvironmentObject var social: SocialStore
     let track: Track
     var titleIdentifier: String? = nil
+    @State private var showActions = false
     var body: some View {
         HStack(spacing: 14) {
             Button { Task { await player.play(track) } } label: {
@@ -1823,32 +1917,24 @@ private struct TrackCard: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Download failed. \(reason)")
             }
-            Menu {
-                Button { Task { await player.play(track) } } label: { Label("Play now", systemImage: "play.fill") }
-                Button { player.queue.insert(track, at: 0) } label: { Label("Play next", systemImage: "text.insert") }
-                Button { player.queue.append(track) } label: { Label("Add to queue", systemImage: "text.append") }
-                Menu("Add to playlist", systemImage: "rectangle.stack.badge.plus") {
-                    ForEach(player.playlists) { playlist in
-                        Button(playlist.name) { player.add(track, to: playlist.id) }
-                    }
-                    if !social.sharedPlaylists.isEmpty {
-                        Section("Shared playlists") {
-                            ForEach(social.sharedPlaylists) { playlist in
-                                Button(playlist.name) { Task { await social.add(track, to: playlist) } }
-                            }
-                        }
-                    }
-                }.disabled(player.playlists.isEmpty && social.sharedPlaylists.isEmpty)
-                if player.hasDownload(track) {
-                    Button(role: .destructive) { player.delete(track) } label: { Label("Delete download", systemImage: "trash") }
-                        .disabled(player.hasActiveDownloads)
-                } else {
-                    Button { Task { await player.download(track) } } label: { Label("Download", systemImage: "arrow.down.circle") }
-                }
-            } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 42, height: 42).background(.white.opacity(0.06), in: Circle()) }
-                .accessibilityLabel("Song actions")
-                .accessibilityIdentifier("song-menu-\(track.id)")
+            Button {
+                showActions = true
+                CapyHaptics.selection()
+            } label: {
+                Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 42, height: 42)
+                    .background(.white.opacity(0.06), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Song actions")
+            .accessibilityIdentifier("song-menu-\(track.id)")
         }.padding(12).waveSurface(radius: 22, highlighted: player.current?.id == track.id)
+        .sheet(isPresented: $showActions) {
+            TrackActionSheet(track: track)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(28)
+                .presentationBackground(CapyColor.background)
+        }
     }
 
     private func shortTime(_ seconds: Double) -> String {
