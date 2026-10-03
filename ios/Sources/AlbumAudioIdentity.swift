@@ -171,7 +171,7 @@ enum AlbumAudioIdentity {
         let localizedIDs = Set(candidates.filter { localizedTitleMatches(track, $0) && score(track, $0) != nil }.map(\.playableID))
         return candidates.enumerated().compactMap { offset, candidate -> (Track, Double)? in
             if localizedIDs.count > 1 && localizedTitleMatches(track, candidate) { return nil }
-            score(track, candidate).map { (candidate, $0 - Double(offset) * 0.001) }
+            return score(track, candidate).map { (candidate, $0 - Double(offset) * 0.001) }
         }.max { $0.1 < $1.1 }?.0
     }
 
