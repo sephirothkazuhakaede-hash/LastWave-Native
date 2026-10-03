@@ -26,21 +26,17 @@ struct TrackDownloadState: Equatable {
         switch stage {
         case .queued: return attempt > 1 ? "Retry \(attempt) queued" : "Queued"
         case .preparing:
-            return retry + "Preparing" + (detail.map { " · \($0)" } ?? "")
+            return retry + "Preparing"
         case .downloading:
             let percent = progress.map { " · \(Int(($0 * 100).rounded()))%" } ?? ""
-            return retry + (source ?? "Downloading") + percent
+            return retry + "Downloading" + percent
         case .saving: return "Saving"
-        case .downloaded: return "Downloaded · \(Self.formatted(elapsedSeconds))"
-        case .failed: return retry + "Failed" + (detail.map { ": \($0)" } ?? "")
+        case .downloaded: return "Downloaded"
+        case .failed: return retry + "Download failed"
         }
     }
 
-    private static func formatted(_ seconds: TimeInterval) -> String {
-        if seconds < 1 { return "<1s" }
-        if seconds < 60 { return "\(Int(seconds.rounded()))s" }
-        return String(format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
-    }
+
 }
 
 struct DownloadBatchSummary: Equatable {
@@ -54,9 +50,8 @@ struct DownloadBatchSummary: Equatable {
     var finishedAt: Date?
 
     var statusText: String {
-        if let finishedAt {
-            let seconds = max(0, finishedAt.timeIntervalSince(startedAt))
-            return "\(completed)/\(total) downloaded, \(failed) failed · \(Int(seconds.rounded()))s"
+        if finishedAt != nil {
+            return "\(completed)/\(total) downloaded" + (failed > 0 ? " · \(failed) failed" : "")
         }
         let handled = completed + failed
         return "Downloading \(handled) of \(total) · \(active) active · \(queued) queued" +
@@ -132,7 +127,7 @@ struct DownloadBatchSummary: Equatable {
 
     private func localCopy(for track: Track) -> Track? {
         downloads.first {
-            let sameRecording = $0.playableID == track.playableID
+            let sameRecording = OfflineDownloadRemoval.matches(track, $0)
             let sameVersion = track.isExplicit == nil || $0.isExplicit == nil || $0.isExplicit == track.isExplicit
             return sameRecording && sameVersion && $0.downloadQuality == audioQuality.backendValue
                 && FileManager.default.fileExists(atPath: localURL($0).path)
@@ -460,6 +455,10 @@ struct DownloadBatchSummary: Equatable {
                 }
             }
         }
+    }
+    var hasActiveDownloads: Bool { !downloading.isEmpty || !downloadingPlaylists.isEmpty }
+    func hasDownload(_ track: Track) -> Bool {
+        downloads.contains { OfflineDownloadRemoval.matches(track, $0) && FileManager.default.fileExists(atPath: localURL($0).path) }
     }
     func isDownloaded(_ track: Track) -> Bool { localCopy(for: track) != nil }
     func isPlaylistDownloaded(_ playlist: ImportedPlaylist) -> Bool {
@@ -855,23 +854,35 @@ struct DownloadBatchSummary: Equatable {
             if token == generation { lyrics = [] }
         }
     }
-    func delete(_ track: Track) {
-        do {
-            let url = localURL(track)
-            if FileManager.default.fileExists(atPath: url.path) {
-                try FileManager.default.removeItem(at: url)
-            }
-            downloads.removeAll { $0.id == track.id }
-            downloading.remove(track.id)
-            downloadProgress.removeValue(forKey: track.id)
-            downloadFailures.removeValue(forKey: track.id)
-            downloadStates.removeValue(forKey: track.id)
-            downloadDiagnostics.removeValue(forKey: track.id)
-            lastPersistedDuration.removeValue(forKey: track.id)
-            lastPersistedDurationAuthority.removeValue(forKey: track.id)
-            persistAuthoritativeDurations()
-            try JSONEncoder().encode(downloads).write(to: index, options: .atomic)
-        } catch { self.error = error.localizedDescription }
+    func delete(_ track: Track) { deleteDownloads(for: [track]) }
+    func deleteAllDownloads() { deleteDownloads(for: downloads) }
+    func deleteDownloads(for tracks: [Track]) {
+        guard !hasActiveDownloads else { error = "Wait for current downloads to finish before removing downloaded music."; return }
+        let copies = OfflineDownloadRemoval.copies(for: tracks, in: downloads)
+        guard !copies.isEmpty else { return }
+        var removed: [Track] = []
+        for copy in copies {
+            do {
+                try OfflineDownloadRemoval.removeFiles([copy], localURL: localURL)
+                removed.append(copy)
+            } catch { self.error = "Couldn't delete a download: " + error.localizedDescription }
+        }
+        let removedKeys = Set(removed.map { localURL($0).path })
+        downloads.removeAll { removedKeys.contains(localURL($0).path) }
+        let knownRows = playlists.flatMap(\.tracks) + queue + recentTracks + playbackHistory + (current.map { [$0] } ?? [])
+        let affected = Set(tracks.map(\.id) + removed.map(\.id) + removed.map(\.playableID))
+            .union(knownRows.filter { row in removed.contains { OfflineDownloadRemoval.matches(row, $0) } }.map(\.id))
+        for id in affected {
+            downloadProgress.removeValue(forKey: id)
+            downloadFailures.removeValue(forKey: id)
+            downloadStates.removeValue(forKey: id)
+            downloadDiagnostics.removeValue(forKey: id)
+        }
+        downloadBatchSummary = nil
+        playlistDownloadProgress.removeAll()
+        // Playlist/library entries, canonical aliases and duration metadata survive.
+        do { try JSONEncoder().encode(downloads).write(to: index, options: .atomic) }
+        catch { self.error = "Couldn't save download changes: " + error.localizedDescription }
     }
     private static func outputName() -> String {
         let names = AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portName)

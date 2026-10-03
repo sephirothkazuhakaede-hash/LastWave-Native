@@ -1009,6 +1009,8 @@ private struct AlbumDetailView: View {
     private let fixtureTracks: [Track]?
     @State private var tracks: [Track]
     @State private var loading: Bool
+    @State private var showDelete = false
+    @State private var showRemoveDownloads = false
 
     init(album: Album, fixtureTracks: [Track]? = nil) {
         self.album = album
@@ -1052,6 +1054,26 @@ private struct AlbumDetailView: View {
         }
         .navigationTitle(album.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button(role: .destructive) { showRemoveDownloads = true } label: { Label("Delete all downloads", systemImage: "arrow.down.circle") }
+                        .disabled(player.hasActiveDownloads || !tracks.contains(where: player.hasDownload))
+                    if player.playlists.contains(where: { $0.id == downloadableAlbum.id }) {
+                        Button(role: .destructive) { showDelete = true } label: { Label("Delete playlist", systemImage: "trash") }
+                    }
+                } label: { Image(systemName: "ellipsis.circle").frame(width: 44, height: 44) }
+            }
+        }
+        .alert("Delete saved album?", isPresented: $showDelete) {
+            Button("Delete playlist", role: .destructive) { player.deletePlaylist(downloadableAlbum.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Remove this saved album from Library. Downloaded songs will stay on this iPhone.") }
+        .alert("Delete all downloads?", isPresented: $showRemoveDownloads) {
+            Button("Delete downloads", role: .destructive) { player.deleteDownloads(for: tracks) }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Remove this album's offline audio, including copies used by other playlists. The album and its song entries will stay.") }
+
         .task {
             guard fixtureTracks == nil else { return }
             do { tracks = try await player.catalog.albumTracks(for: album); player.prewarm(tracks) }
@@ -1202,6 +1224,9 @@ private struct PlaylistLibraryView: View {
     @EnvironmentObject var player: WavePlayer
     @EnvironmentObject var social: SocialStore
     @State private var showCreator = false
+    @State private var playlistToDelete: ImportedPlaylist?
+    @State private var showDelete = false
+    @State private var showRemoveAllDownloads = false
     @State private var playlistToRename: ImportedPlaylist?
     @State private var filter: LibraryFilter = .all
     @State private var sort: LibrarySort = .recent
@@ -1259,7 +1284,7 @@ private struct PlaylistLibraryView: View {
                                     .buttonStyle(.plain)
                                     .contextMenu {
                                         Button { playlistToRename = playlist } label: { Label("Rename", systemImage: "pencil") }
-                                        Button(role: .destructive) { player.deletePlaylist(playlist.id) } label: { Label("Delete playlist", systemImage: "trash") }
+                                        Button(role: .destructive) { playlistToDelete = playlist; showDelete = true } label: { Label("Delete playlist", systemImage: "trash") }
                                     }
                             }
                         }
@@ -1274,6 +1299,14 @@ private struct PlaylistLibraryView: View {
         }.scrollIndicators(.hidden)
        }
        .toolbar(.hidden, for: .navigationBar)
+       .alert("Delete playlist?", isPresented: $showDelete) {
+           Button("Delete playlist", role: .destructive) { if let playlistToDelete { player.deletePlaylist(playlistToDelete.id) } }
+           Button("Cancel", role: .cancel) {}
+       } message: { Text("The playlist will be removed. Downloaded songs will stay on this iPhone.") }
+       .alert("Remove all downloaded songs?", isPresented: $showRemoveAllDownloads) {
+           Button("Remove all downloads", role: .destructive) { player.deleteAllDownloads() }
+           Button("Cancel", role: .cancel) {}
+       } message: { Text("Remove all offline audio from this iPhone. Your playlists and library entries will stay.") }
        .sheet(isPresented: $showCreator) { NewPlaylistSheet() }
        .sheet(item: $playlistToRename) { RenamePlaylistSheet(playlistID: $0.id, currentName: $0.name) }
       }
@@ -1313,11 +1346,18 @@ private struct PlaylistLibraryView: View {
 
     private var downloadsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            CapySectionHeader("Downloaded music", subtitle: "Stored on this iPhone")
+            HStack {
+                CapySectionHeader("Downloaded music", subtitle: "Stored on this iPhone")
+                Spacer()
+                Menu {
+                    Button(role: .destructive) { showRemoveAllDownloads = true } label: { Label("Remove all downloads", systemImage: "trash") }
+                        .disabled(player.hasActiveDownloads || player.downloads.isEmpty)
+                } label: { Label("Manage", systemImage: "slider.horizontal.3").font(.capyCaption).lineLimit(1) }
+            }
             if player.downloads.isEmpty {
                 CapyScreenState(kind: .empty, title: "Nothing offline yet", message: "Download a song, album or playlist and it will appear here with its lyrics.")
             } else {
-                ForEach(player.downloads) { TrackCard(track: $0, canDelete: true) }
+                ForEach(player.downloads) { TrackCard(track: $0) }
             }
         }
     }
@@ -1480,6 +1520,8 @@ private struct PlaylistDetailView: View {
     let playlistID: String
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var showRename = false
+    @State private var showDelete = false
+    @State private var showRemoveDownloads = false
     @State private var showCollaborate = false
     private var playlist: ImportedPlaylist? { player.playlists.first { $0.id == playlistID } }
     var body: some View {
@@ -1527,11 +1569,22 @@ private struct PlaylistDetailView: View {
                 if let playlist {
                     Menu {
                         Button { showRename = true } label: { Label("Rename playlist", systemImage: "pencil") }
-                        Button(role: .destructive) { player.deletePlaylist(playlist.id); dismiss() } label: { Label("Delete playlist", systemImage: "trash") }
+                        Button(role: .destructive) { showRemoveDownloads = true } label: { Label("Delete all downloads", systemImage: "arrow.down.circle") }
+                            .disabled(player.hasActiveDownloads || !playlist.tracks.contains(where: player.hasDownload))
+                        Button(role: .destructive) { showDelete = true } label: { Label("Delete playlist", systemImage: "trash") }
                     } label: { Image(systemName: "ellipsis.circle").frame(width: 44, height: 44).contentShape(Rectangle()) }
+                        .accessibilityIdentifier("playlist-management-menu")
                 }
             }
         }
+        .alert("Delete playlist?", isPresented: $showDelete) {
+            Button("Delete playlist", role: .destructive) { player.deletePlaylist(playlistID); dismiss() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("The playlist will be removed. Downloaded songs will stay on this iPhone.") }
+        .alert("Delete all downloads?", isPresented: $showRemoveDownloads) {
+            Button("Delete downloads", role: .destructive) { if let playlist { player.deleteDownloads(for: playlist.tracks) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Remove these songs' offline audio from this iPhone, including copies used by other playlists. The playlist and its songs will stay.") }
         .sheet(isPresented: $showRename) {
             if let playlist { RenamePlaylistSheet(playlistID: playlist.id, currentName: playlist.name) }
         }
@@ -1656,6 +1709,8 @@ private struct TrackCollectionView: View {
     let title: String, subtitle: String
     let tracks: [Track]
     var isOffline = false
+    @State private var showRemoveAllDownloads = false
+    private var displayedTracks: [Track] { isOffline ? player.downloads : tracks }
     var body: some View {
         ScrollView {
             CapyScreenContainer {
@@ -1669,10 +1724,20 @@ private struct TrackCollectionView: View {
                             Text(subtitle).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).lineLimit(2)
                         }
                         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                        Image(systemName: isOffline ? "arrow.down.circle.fill" : "music.note.list")
-                            .font(.title).foregroundStyle(Color.waveBlue).frame(width: 56, height: 56).waveGlass(radius: 22)
+                        if isOffline {
+                            Menu {
+                                Button(role: .destructive) { showRemoveAllDownloads = true } label: { Label("Remove all downloads", systemImage: "trash") }
+                                    .disabled(player.hasActiveDownloads || player.downloads.isEmpty)
+                            } label: {
+                                Label("Manage", systemImage: "slider.horizontal.3")
+                                    .font(.capyCallout).lineLimit(1).foregroundStyle(Color.waveBlue)
+                                    .padding(.horizontal, 12).frame(minHeight: 44).waveGlass(radius: 16)
+                            }.accessibilityLabel("Manage downloads")
+                        } else {
+                            Image(systemName: "music.note.list").font(.title).foregroundStyle(Color.waveBlue).frame(width: 56, height: 56).waveGlass(radius: 22)
+                        }
                     }.padding(.bottom, 8)
-                    if tracks.isEmpty {
+                    if displayedTracks.isEmpty {
                         VStack(spacing: 18) {
                             Image(systemName: isOffline ? "internaldrive" : "music.note.list").font(.system(size: 52)).foregroundStyle(Color.waveBlue)
                             Text(isOffline ? "Nothing downloaded yet" : "Your queue is clear").font(.title3.bold())
@@ -1682,11 +1747,15 @@ private struct TrackCollectionView: View {
                         .padding(.horizontal, 30).padding(.vertical, 70)
                         .frame(maxWidth: .infinity)
                         .waveGlass(radius: 30)
-                    } else { ForEach(tracks) { TrackCard(track: $0, canDelete: isOffline) } }
+                    } else { ForEach(displayedTracks) { TrackCard(track: $0) } }
                 }
                 .padding(.top, 10).padding(.bottom, 30)
             }
         }.scrollIndicators(.hidden)
+        .alert("Remove all downloaded songs?", isPresented: $showRemoveAllDownloads) {
+            Button("Remove all downloads", role: .destructive) { player.deleteAllDownloads() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Remove all offline audio from this iPhone. Your playlists and library entries will stay.") }
     }
 }
 
@@ -1706,7 +1775,6 @@ private struct TrackCard: View {
     @EnvironmentObject var player: WavePlayer
     @EnvironmentObject var social: SocialStore
     let track: Track
-    var canDelete = false
     var titleIdentifier: String? = nil
     var body: some View {
         HStack(spacing: 14) {
@@ -1739,7 +1807,7 @@ private struct TrackCard: View {
             .buttonStyle(.plain)
             .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
-            if let state = player.downloadStates[track.id] {
+            if let state = player.downloadStates[track.id], state.stage != .downloaded || player.hasDownload(track) {
                 downloadIndicator(state)
             } else if player.isDownloaded(track) {
                 Image(systemName: "arrow.down.circle.fill").foregroundStyle(Color.waveBlue).accessibilityLabel("Downloaded")
@@ -1756,29 +1824,30 @@ private struct TrackCard: View {
                 .accessibilityLabel("Download failed. \(reason)")
             }
             Menu {
-                if let diagnostic = player.downloadDiagnostics[track.id] {
-                    Text(diagnostic)
-                }
                 Button { Task { await player.play(track) } } label: { Label("Play now", systemImage: "play.fill") }
                 Button { player.queue.insert(track, at: 0) } label: { Label("Play next", systemImage: "text.insert") }
                 Button { player.queue.append(track) } label: { Label("Add to queue", systemImage: "text.append") }
-                if !player.playlists.isEmpty {
-                    Menu("Add to playlist", systemImage: "rectangle.stack.badge.plus") {
-                        ForEach(player.playlists) { playlist in
-                            Button(playlist.name) { player.add(track, to: playlist.id) }
+                Menu("Add to playlist", systemImage: "rectangle.stack.badge.plus") {
+                    ForEach(player.playlists) { playlist in
+                        Button(playlist.name) { player.add(track, to: playlist.id) }
+                    }
+                    if !social.sharedPlaylists.isEmpty {
+                        Section("Shared playlists") {
+                            ForEach(social.sharedPlaylists) { playlist in
+                                Button(playlist.name) { Task { await social.add(track, to: playlist) } }
+                            }
                         }
                     }
+                }.disabled(player.playlists.isEmpty && social.sharedPlaylists.isEmpty)
+                if player.hasDownload(track) {
+                    Button(role: .destructive) { player.delete(track) } label: { Label("Delete download", systemImage: "trash") }
+                        .disabled(player.hasActiveDownloads)
+                } else {
+                    Button { Task { await player.download(track) } } label: { Label("Download", systemImage: "arrow.down.circle") }
                 }
-                if !social.sharedPlaylists.isEmpty {
-                    Menu("Add to shared playlist", systemImage: "person.2.badge.plus") {
-                        ForEach(social.sharedPlaylists) { playlist in
-                            Button(playlist.name) { Task { await social.add(track, to: playlist) } }
-                        }
-                    }
-                }
-                if canDelete { Button(role: .destructive) { player.delete(track) } label: { Label("Delete download", systemImage: "trash") } }
-                else { Button { Task { await player.download(track) } } label: { Label("Download", systemImage: "arrow.down.circle") } }
             } label: { Image(systemName: "ellipsis").font(.title3.bold()).frame(width: 42, height: 42).background(.white.opacity(0.06), in: Circle()) }
+                .accessibilityLabel("Song actions")
+                .accessibilityIdentifier("song-menu-\(track.id)")
         }.padding(12).waveSurface(radius: 22, highlighted: player.current?.id == track.id)
     }
 
