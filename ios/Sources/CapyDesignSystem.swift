@@ -4,8 +4,10 @@ import UIKit
 // MARK: - Foundations
 
 enum CapyColor {
-    static let accent = Color(red: 0.56, green: 0.80, blue: 0.92)
-    static let accentStrong = Color(red: 0.35, green: 0.69, blue: 0.88)
+    // CapyFlow violet palette: #DC95FF primary, #D78FEE supporting/deeper accent.
+    // Keep these centralized so lyrics, controls, glass highlights, and navigation stay consistent.
+    static let accent = Color(red: 220.0 / 255.0, green: 149.0 / 255.0, blue: 255.0 / 255.0)
+    static let accentStrong = Color(red: 215.0 / 255.0, green: 143.0 / 255.0, blue: 238.0 / 255.0)
     static let background = Color(red: 0.025, green: 0.035, blue: 0.055)
     static let backgroundRaised = Color(red: 0.07, green: 0.105, blue: 0.13)
     static let surface = Color.white.opacity(0.065)
