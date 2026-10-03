@@ -3,7 +3,20 @@ import Foundation
 struct LyricLine: Identifiable, Equatable, Codable {
     let time: Double?
     let text: String
+    var words: [LyricWord]? = nil
     var id: String { "\(time ?? -1)-\(text)" }
+}
+
+struct LyricWord: Equatable, Codable {
+    let time: Double
+    let text: String
+}
+
+struct BackendLyricsResult: Decodable {
+    let provider: String
+    let synchronization: String
+    let timingOrigin: String
+    let lines: [LyricLine]
 }
 
 private struct LyricsRecord: Decodable {
@@ -20,8 +33,11 @@ actor LyricsService {
     private var pending: [String: Task<[LyricLine], Error>] = [:]
     private let folder: URL
     private let session: URLSession
+    private let backendLookup: @Sendable (Track) async throws -> BackendLyricsResult?
 
-    init(session: URLSession = .shared, folder: URL? = nil) {
+    init(session: URLSession = .shared, folder: URL? = nil,
+         backendLookup: @escaping @Sendable (Track) async throws -> BackendLyricsResult? = { try await BackendClient.shared.lyrics(for: $0) }) {
+        self.backendLookup = backendLookup
         self.session = session
         self.folder = folder ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("OfflineLyrics", isDirectory: true)
@@ -62,6 +78,18 @@ actor LyricsService {
             try? data.write(to: file, options: .atomic)
             return saved
         }
+        do {
+            if let result = try await backendLookup(track), !result.lines.isEmpty,
+               ["plain", "line", "word", "syllable"].contains(result.synchronization) {
+                try Task.checkCancellation()
+                cache[key] = result.lines
+                if let data = try? JSONEncoder().encode(result.lines) { try? data.write(to: file, options: .atomic) }
+                return result.lines
+            }
+        } catch {
+            try Task.checkCancellation()
+            // Emergency direct LRCLIB fallback; offline files were checked first.
+        }
         var request = URLRequest(url: Self.lookupURL(for: track))
         request.timeoutInterval = 15
         request.setValue("CapyFlow-iOS/0.2 (https://github.com/sephirothkazuhakaede-hash/LastWave-Native)", forHTTPHeaderField: "User-Agent")
@@ -71,6 +99,15 @@ actor LyricsService {
         guard http.statusCode == 200 else { throw WaveError.message("Lyrics are not available for this song.") }
         let records = try JSONDecoder().decode([LyricsRecord].self, from: data)
         let matching = records.filter { record in
+            if let title = record.trackName {
+                guard AlbumAudioIdentity.versionMarkers(title) == AlbumAudioIdentity.versionMarkers(track.title) else { return false }
+                // AlbumAudioIdentity intentionally strips edition labels for media
+                // matching. Lyrics must additionally preserve clean/explicit identity.
+                for marker in ["clean", "explicit", "reverb"] {
+                    if AlbumAudioIdentity.key(title).contains(marker) != AlbumAudioIdentity.key(track.title).contains(marker) { return false }
+                }
+            }
+            if record.instrumental && !AlbumAudioIdentity.key(track.title).contains("instrumental") { return false }
             if let title = record.trackName, AlbumAudioIdentity.key(AlbumAudioIdentity.title(title)) != AlbumAudioIdentity.key(AlbumAudioIdentity.title(track.title)) { return false }
             if let artist = record.artistName, AlbumAudioIdentity.key(AlbumAudioIdentity.artist(artist)) != AlbumAudioIdentity.key(AlbumAudioIdentity.artist(track.artist)) { return false }
             if let duration = track.duration, let actual = record.duration, abs(duration - actual) > max(5, min(12, duration * 0.04)) { return false }

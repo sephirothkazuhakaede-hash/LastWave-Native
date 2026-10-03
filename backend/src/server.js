@@ -1,4 +1,6 @@
 import http from 'node:http';
+import { LyricsResolver, defaultLyricsAdapters } from './lyrics.js';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { authorizeRequest } from './firebase-auth.js';
@@ -45,8 +47,10 @@ export function createServer({
   ytDlpVersion = null,
   fetchImpl = globalThis.fetch,
   logger = console,
+  lyricsResolver = null,
 }) {
   const startedAt = Date.now();
+  const lyrics = lyricsResolver ?? new LyricsResolver({ providers: defaultLyricsAdapters(fetchImpl), root: config.cacheDir ? path.join(config.cacheDir, "lyrics") : null });
 
   const server = http.createServer(async (request, response) => {
     const requestStarted = performance.now();
@@ -100,6 +104,11 @@ export function createServer({
           cache: await cache.stats(),
           resolver: { inFlight: resolver.inFlightCount },
         });
+        return;
+      }
+
+      if (request.method === 'GET' && pathname === '/v1/lyrics') {
+        json(response, 200, await lyrics.resolve(Object.fromEntries(url.searchParams)));
         return;
       }
 

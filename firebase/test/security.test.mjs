@@ -98,3 +98,26 @@ test('repairing a conflicting legacy profile never deletes another users reserva
   await assertSucceeds(batch.commit());
   await assertSucceeds(getDoc(doc(account('bob'), 'usernames', 'shared_name')));
 });
+
+test('activity is opt-in and owner-only; privacy OFF removes presence atomically', async () => {
+  const alice = account('alice'), bob = account('bob');
+  const presence = { title: 'Song', artist: 'Artist', videoID: 'abcdefghijk', artworkURL: '',
+    playing: true, updatedAt: serverTimestamp(), expiresAt: Timestamp.fromMillis(Date.now() + 300000) };
+  await assertFails(setDoc(doc(alice, 'listeningActivity', 'alice'), presence));
+  await assertSucceeds(setDoc(doc(alice, 'activitySettings', 'alice'), { sharing: true, updatedAt: serverTimestamp() }));
+  await assertSucceeds(setDoc(doc(alice, 'listeningActivity', 'alice'), presence));
+  await assertSucceeds(getDoc(doc(bob, 'listeningActivity', 'alice')));
+  await assertFails(getDoc(doc(bob, 'activitySettings', 'alice')));
+  await assertFails(setDoc(doc(bob, 'listeningActivity', 'alice'), presence));
+  await assertFails(setDoc(doc(alice, 'listeningActivity', 'alice'), { ...presence, audio: 'payload' }));
+  await assertFails(setDoc(doc(alice, 'listeningActivity', 'alice'), { ...presence, title: 'x'.repeat(301) }));
+  await assertFails(setDoc(doc(alice, 'listeningActivity', 'alice'), { ...presence, expiresAt: Timestamp.fromMillis(Date.now() + 86400000) }));
+  await assertFails(setDoc(doc(alice, 'activitySettings', 'alice'), { sharing: false, updatedAt: serverTimestamp() }));
+  const batch = writeBatch(alice);
+  batch.set(doc(alice, 'activitySettings', 'alice'), { sharing: false, updatedAt: serverTimestamp() });
+  batch.delete(doc(alice, 'listeningActivity', 'alice'));
+  await assertSucceeds(batch.commit());
+  const removed = await assertSucceeds(getDoc(doc(bob, 'listeningActivity', 'alice')));
+  if (removed.exists()) throw new Error('Privacy OFF must remove presence');
+  await assertFails(setDoc(doc(alice, 'listeningActivity', 'alice'), presence));
+});

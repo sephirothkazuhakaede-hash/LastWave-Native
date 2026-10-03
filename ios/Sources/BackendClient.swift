@@ -191,6 +191,29 @@ actor BackendClient {
         session = URLSession(configuration: configuration)
     }
 
+    /// Lyrics use the same discovered server and HTTPS token policy as media,
+    /// but do not modify playback health/backoff or duration state.
+    func lyrics(for track: Track) async throws -> BackendLyricsResult? {
+        await refreshDiscoveredConfigurationIfNeeded()
+        guard let configuration = BackendConfiguration.active else { return nil }
+        var url = configuration.baseURL
+        if url.lastPathComponent.lowercased() != "v1" { url.appendPathComponent("v1") }
+        url.appendPathComponent("lyrics")
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+        components.queryItems = [
+            URLQueryItem(name: "title", value: track.title),
+            URLQueryItem(name: "artist", value: AlbumAudioIdentity.artist(track.artist)),
+            URLQueryItem(name: "album", value: track.albumTitle),
+            URLQueryItem(name: "duration", value: track.duration.map { String($0) }),
+            URLQueryItem(name: "videoId", value: track.playableID),
+            URLQueryItem(name: "explicit", value: track.isExplicit.map { String($0) })
+        ].filter { $0.value != nil }
+        let (data, _) = try await perform(url: components.url!, timeout: 12,
+                                         retryServerErrors: false,
+                                         includeAuthentication: configuration.usesSecureTransport)
+        return try JSONDecoder().decode(BackendLyricsResult.self, from: data)
+    }
+
     /// Returns nil whenever the optional backend is disabled or unavailable.
     /// Callers should immediately use their existing YouTube resolver in that case.
     func resolveStream(

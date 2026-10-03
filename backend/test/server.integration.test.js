@@ -193,3 +193,25 @@ test('server rejects multiple ranges without contacting the resolver', async (t)
   assert.equal(response.status, 416);
   assert.equal(resolves, 0);
 });
+
+test('lyrics endpoint shares v1 auth, returns standardized quality and caches without touching media', async (t) => {
+  const { LyricsResolver } = await import('../src/lyrics.js');
+  let queries = 0;
+  const lyricsResolver = new LyricsResolver({ providers: [{ name: 'fixture', available: true, async search() {
+    queries++; return [{ title: 'Song', artist: 'Singer', duration: 200, syncedLyrics: '[00:01]Fixture line' }];
+  } }] });
+  const config = { authMode: 'local', allowAnonymousLan: false, corsOrigin: '', host: '127.0.0.1' };
+  const server = createServer({ config, resolver: {}, cache: {}, timings: new TimingRecorder(10),
+    lyricsResolver, logger: { info() {}, error() {} } });
+  const root = await listen(server); t.after(() => close(server));
+  const url = root + '/v1/lyrics?title=Song&artist=Singer&duration=200';
+  const first = await fetch(url); assert.equal(first.status, 200);
+  const result = await first.json(); assert.equal(result.provider, 'fixture');
+  assert.equal(result.synchronization, 'line'); assert.equal(result.timingOrigin, 'provider');
+  assert.equal((await (await fetch(url)).json()).cached, true); assert.equal(queries, 1);
+  assert.equal((await fetch(root + '/v1/lyrics?title=Song')).status, 400);
+  const protectedServer = createServer({ config: { ...config, authMode: 'firebase' }, resolver: {}, cache: {},
+    timings: new TimingRecorder(10), lyricsResolver, logger: { info() {}, error() {} } });
+  const protectedRoot = await listen(protectedServer); t.after(() => close(protectedServer));
+  assert.equal((await fetch(protectedRoot + '/v1/lyrics?title=Song&artist=Singer')).status, 401);
+});

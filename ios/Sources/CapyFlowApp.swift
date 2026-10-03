@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import PhotosUI
 import UIKit
 import FirebaseCore
@@ -7,6 +8,9 @@ import GoogleSignIn
 @main struct CapyFlowApp: App {
     @StateObject private var player: WavePlayer
     @StateObject private var auth: AuthSession
+    @StateObject private var activity: ListeningActivityStore
+    @StateObject private var updates: StableUpdateStore
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var social: SocialStore
     init() {
         FirebaseApp.configure()
@@ -18,6 +22,10 @@ import GoogleSignIn
         let player = WavePlayer()
         let auth = AuthSession()
         let social = SocialStore()
+        let activity = ListeningActivityStore()
+        activity.observe(player)
+        _activity = StateObject(wrappedValue: activity)
+        _updates = StateObject(wrappedValue: StableUpdateStore())
 #if DEBUG
         if LayoutFixture.requested != nil {
             LayoutFixture.install(into: player, social: social)
@@ -34,9 +42,28 @@ import GoogleSignIn
                 .environmentObject(player)
                 .environmentObject(auth)
                 .environmentObject(social)
+                .environmentObject(activity)
+                .environmentObject(updates)
                 .preferredColorScheme(.dark)
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
+                .task(id: auth.user?.uid) { activity.bind(userID: auth.user?.uid); activity.watchFriends(social.following) }
+                .onReceive(social.$following.debounce(for: .milliseconds(300), scheduler: RunLoop.main)) { activity.watchFriends($0) }
+                .task { if enablesAutomaticUpdates { await updates.check() } }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active && enablesAutomaticUpdates { Task { await updates.check() } }
+                }
+                .sheet(item: $updates.presented) { manifest in
+                    StableUpdateSheet(manifest: manifest).environmentObject(updates)
+                }
         }
+    }
+
+    private var enablesAutomaticUpdates: Bool {
+#if DEBUG
+        return LayoutFixture.requested == nil
+#else
+        return true
+#endif
     }
 
     @ViewBuilder private var appContent: some View {
@@ -154,7 +181,7 @@ private enum WaveTab: String, CaseIterable {
 }
 
 private enum ProfileDrawerDestination: String, Identifiable {
-    case profile, settings
+    case profile, settings, activity, updates
     var id: String { rawValue }
 }
 
@@ -171,6 +198,7 @@ struct RootView: View {
     @State private var searchMode: SearchMode = .songs
     @State private var lastSearchSignature = ""
     @State private var showProfileDrawer = false
+    @State private var drawerPerson: SocialProfile?
     @State private var drawerDestination: ProfileDrawerDestination?
     var body: some View {
         ZStack {
@@ -205,8 +233,11 @@ struct RootView: View {
                             .onTapGesture { closeDrawer() }
                         ProfileDrawerView(
                             close: { closeDrawer() },
-                            openProfile: { openDrawerDestination(.profile) },
-                            openSettings: { openDrawerDestination(.settings) }
+                            openProfile: { drawerPerson = nil; openDrawerDestination(.profile) },
+                            openSettings: { openDrawerDestination(.settings) },
+                            openActivity: { openDrawerDestination(.activity) },
+                            openUpdates: { openDrawerDestination(.updates) },
+                            openPerson: { person in drawerPerson = person; openDrawerDestination(.profile) }
                         )
                         .frame(width: min(350, geometry.size.width * 0.88))
                         .frame(maxHeight: .infinity)
@@ -226,11 +257,16 @@ struct RootView: View {
                 .presentationBackground(.clear)
         }
         .sheet(isPresented: Binding(
-            get: { drawerDestination == .profile },
+            get: { drawerDestination == .profile || drawerDestination == .activity || drawerDestination == .updates },
             set: { if !$0 { drawerDestination = nil } }
         )) {
             NavigationStack {
-                ProfilePageView()
+                Group {
+                    if drawerDestination == .activity { FriendActivitySettingsView() }
+                    else if drawerDestination == .updates { StableUpdatesView() }
+                    else if let drawerPerson { SocialPersonProfileView(person: drawerPerson) }
+                    else { ProfilePageView() }
+                }
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Done") { drawerDestination = nil }
@@ -316,6 +352,9 @@ private struct ProfileDrawerView: View {
     let close: () -> Void
     let openProfile: () -> Void
     let openSettings: () -> Void
+    let openActivity: () -> Void
+    let openUpdates: () -> Void
+    let openPerson: (SocialProfile) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -359,10 +398,14 @@ private struct ProfileDrawerView: View {
             VStack(spacing: 8) {
                 drawerButton("Profile & friends", icon: "person.2.fill", action: openProfile)
                 drawerButton("Settings", icon: "gearshape.fill", action: openSettings)
+                drawerButton("Friend Activity privacy", icon: "hand.raised", action: openActivity)
+                drawerButton("Updates", icon: "arrow.down.circle", action: openUpdates)
             }
             .padding(.horizontal, 16).padding(.top, 20)
 
-            Spacer()
+            ScrollView {
+                FriendActivityShelf(openPerson: openPerson).padding(18)
+            }
             Text("Your music and downloads work even when social features are offline.")
                 .font(.capyCaption).foregroundStyle(CapyColor.tertiaryText)
                 .padding(20)
@@ -832,6 +875,13 @@ private struct SettingsPageView: View {
                                     settingsRow("Streaming server", icon: "bolt.horizontal.circle.fill")
                                 }
                                 .buttonStyle(.plain)
+
+                                NavigationLink { FriendActivitySettingsView() } label: {
+                                    settingsRow("Friend Activity", icon: "person.2.wave.2")
+                                }.buttonStyle(.plain)
+                                NavigationLink { StableUpdatesView() } label: {
+                                    settingsRow("Updates", icon: "arrow.down.circle")
+                                }.buttonStyle(.plain)
 
                                 storageSection
 

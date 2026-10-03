@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import FirebaseFirestore
 
 struct SocialHubView: View {
     @EnvironmentObject private var social: SocialStore
@@ -55,6 +56,8 @@ struct SocialHubView: View {
                             ForEach(social.following) { person in SocialPersonRow(person: person) }
                         }
 
+                        FriendActivityShelf().padding(16).waveSurface(radius: 22)
+
                         if !social.sharedPlaylists.isEmpty {
                             HStack { Text("Shared playlists").font(.title3.bold()); Spacer(); Image(systemName: "person.2.fill").foregroundStyle(Color.waveBlue) }
                             ForEach(social.sharedPlaylists) { playlist in
@@ -86,8 +89,10 @@ struct SocialHubView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(profile.displayName).font(.title2.bold()).lineLimit(2)
             Text("@" + profile.username).foregroundStyle(Color.waveBlue).lineLimit(1)
-            Text("\(social.followerCount) followers  •  \(social.followingCount) following")
-                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            HStack {
+                NavigationLink("\(social.followerCount) followers") { RelationshipListView(ownerID: profile.id, kind: .followers) }
+                NavigationLink("\(social.followingCount) following") { RelationshipListView(ownerID: profile.id, kind: .following) }
+            }.font(.caption).foregroundStyle(CapyColor.secondaryText)
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .layoutPriority(1)
@@ -120,20 +125,23 @@ private struct SocialPersonRow: View {
     let person: SocialProfile
     var body: some View {
         HStack(spacing: 13) {
-            SocialAvatar(profile: person, size: 52)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(person.displayName).font(.headline).lineLimit(2)
-                Text("@" + person.username).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-            }
-            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
-            let follows = social.isFollowing(person.id)
-            Button(follows ? "Following" : "Follow") {
-                Task { await social.setFollowing(person, following: !follows) }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(follows ? Color.white.opacity(0.12) : Color.waveBlue)
-            .foregroundStyle(follows ? Color.primary : Color.black)
+            NavigationLink { SocialPersonProfileView(person: person) } label: {
+                HStack(spacing: 13) {
+                    SocialAvatar(profile: person, size: 52)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(person.displayName).font(.headline).lineLimit(2)
+                        Text("@" + person.username).font(.subheadline).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                    }
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain)
+            if person.id != social.currentUserID { FollowControl(person: person) }
+            Menu {
+                Button(social.isFollowing(person.id) ? "Unfollow" : "Follow") {
+                    Task { await social.setFollowing(person, following: !social.isFollowing(person.id)) }
+                }.disabled(person.id == social.currentUserID)
+            } label: { Image(systemName: "ellipsis").frame(width: 32, height: 44) }
+
         }
         .padding(12).waveSurface(radius: 20)
     }
@@ -197,16 +205,19 @@ struct ProfilePageView: View {
                             }
                             ViewThatFits(in: .horizontal) {
                                 HStack(spacing: 12) {
-                                    profileMetric("\(social.followerCount)", "Followers")
-                                    profileMetric("\(social.followingCount)", "Following")
+                                    NavigationLink { RelationshipListView(ownerID: profile.id, kind: .followers) } label: { profileMetric("\(social.followerCount)", "Followers") }.buttonStyle(.plain)
+                                    NavigationLink { RelationshipListView(ownerID: profile.id, kind: .following) } label: { profileMetric("\(social.followingCount)", "Following") }.buttonStyle(.plain)
                                     profileMetric("\(social.sharedPlaylists.count)", "Shared")
                                 }
                                 VStack(spacing: 10) {
-                                    profileMetric("\(social.followerCount)", "Followers")
-                                    profileMetric("\(social.followingCount)", "Following")
+                                    NavigationLink { RelationshipListView(ownerID: profile.id, kind: .followers) } label: { profileMetric("\(social.followerCount)", "Followers") }.buttonStyle(.plain)
+                                    NavigationLink { RelationshipListView(ownerID: profile.id, kind: .following) } label: { profileMetric("\(social.followingCount)", "Following") }.buttonStyle(.plain)
                                     profileMetric("\(social.sharedPlaylists.count)", "Shared")
                                 }
                             }
+                            FriendActivityShelf().padding(16).waveSurface(radius: 22)
+                            NavigationLink { FriendActivitySettingsView() } label: { Label("Friend Activity privacy", systemImage: "hand.raised") }
+                                .buttonStyle(CapySecondaryButtonStyle())
                             Button { showEditor = true; CapyHaptics.selection() } label: {
                                 Label("Customize profile", systemImage: "person.crop.circle.badge.plus")
                             }
@@ -604,5 +615,199 @@ private struct SocialTrackRow: View {
                 Button { Task { await player.download(track) } } label: { Label("Download", systemImage: "arrow.down.circle") }
             } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
         }.padding(10).waveSurface(radius: 20, highlighted: player.current?.id == track.id)
+    }
+}
+
+struct RelationshipListView: View {
+    @EnvironmentObject private var social: SocialStore
+    let ownerID: String
+    let kind: RelationshipKind
+    @State private var people: [SocialProfile] = []
+    @State private var cursor: DocumentSnapshot?
+    @State private var loading = false
+    @State private var loaded = false
+    @State private var hasMore = false
+    @State private var failure: String?
+    @State private var fromCache = false
+
+    var body: some View {
+        ZStack {
+            WaveBackdrop()
+            ScrollView {
+                CapyScreenContainer {
+                    LazyVStack(spacing: 10) {
+                        if fromCache { Text("Showing saved profiles").font(.capyCaption).foregroundStyle(CapyColor.secondaryText) }
+                        ForEach(people) { SocialPersonRow(person: $0) }
+                        if let error = social.error { Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning) }
+                        if loading { ProgressView("Loading \(kind.rawValue.lowercased())…").padding(24) }
+                        if let failure {
+                            Text(failure).font(.capyCaption).foregroundStyle(CapyColor.warning)
+                            Button("Retry") { Task { await load(reset: !loaded) } }.buttonStyle(CapySecondaryButtonStyle())
+                        } else if loaded && people.isEmpty {
+                            ContentUnavailableView("No \(kind.rawValue.lowercased()) yet", systemImage: "person.2",
+                                                   description: Text(kind == .followers ? "People who follow this profile will appear here." : "Follow someone to see them here."))
+                        }
+                        if hasMore && !loading && failure == nil {
+                            Button("Load more") { Task { await load(reset: false) } }.buttonStyle(CapySecondaryButtonStyle())
+                        }
+                    }.padding(.top, 16).padding(.bottom, 30)
+                }
+            }.refreshable { await load(reset: true) }
+        }
+        .navigationTitle(kind.rawValue).navigationBarTitleDisplayMode(.inline)
+        .task { if !loaded { await load(reset: true) } }
+    }
+
+    @MainActor private func load(reset: Bool) async {
+        guard !loading else { return }
+        loading = true; failure = nil
+        defer { loading = false }
+        do {
+            let page = try await social.relationshipPage(ownerID: ownerID, kind: kind, after: reset ? nil : cursor)
+            try Task.checkCancellation()
+            if reset { people = [] }
+            let existing = Set(people.map(\.id))
+            people.append(contentsOf: page.people.filter { !existing.contains($0.id) })
+            cursor = page.cursor; hasMore = page.hasMore; fromCache = page.fromCache; loaded = true
+        } catch {
+            if !Task.isCancelled { failure = "Couldn't load \(kind.rawValue.lowercased()): " + error.localizedDescription }
+        }
+    }
+}
+
+struct SocialPersonProfileView: View {
+    @EnvironmentObject private var social: SocialStore
+    let person: SocialProfile
+    var body: some View {
+        ZStack {
+            CapyAmbientBackdrop(seed: person.id, artworkURL: person.avatarURL)
+            ScrollView {
+                CapyScreenContainer {
+                    VStack(spacing: 18) {
+                        SocialAvatar(profile: person, size: 124)
+                        Text(person.displayName).font(.capyTitle).multilineTextAlignment(.center)
+                        Text("@" + person.username).foregroundStyle(CapyColor.accent)
+                        if !person.bio.isEmpty { Text(person.bio).foregroundStyle(CapyColor.secondaryText) }
+                        if person.id != social.currentUserID { FollowControl(person: person) }
+                        HStack {
+                            NavigationLink("Followers") { RelationshipListView(ownerID: person.id, kind: .followers) }
+                            NavigationLink("Following") { RelationshipListView(ownerID: person.id, kind: .following) }
+                        }.buttonStyle(CapySecondaryButtonStyle())
+                        if let error = social.error { Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning) }
+                    }.padding(.vertical, 24)
+                }
+            }
+        }.navigationTitle(person.displayName).navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct FollowControl: View {
+    @EnvironmentObject private var social: SocialStore
+    let person: SocialProfile
+    @State private var working = false
+    var body: some View {
+        let follows = social.isFollowing(person.id)
+        Button {
+            Task {
+                working = true
+                await social.setFollowing(person, following: !follows)
+                working = false
+            }
+        } label: {
+            if working { ProgressView().frame(minWidth: 56) }
+            else { Text(follows ? "Following" : "Follow").font(.capyCaption) }
+        }
+        .buttonStyle(.borderedProminent).tint(follows ? CapyColor.surfaceStrong : CapyColor.accent)
+        .foregroundStyle(follows ? Color.white : Color.black).disabled(working)
+    }
+}
+
+struct FriendActivityShelf: View {
+    @EnvironmentObject private var social: SocialStore
+    @EnvironmentObject private var activity: ListeningActivityStore
+    @EnvironmentObject private var player: WavePlayer
+    var openPerson: ((SocialProfile) -> Void)? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Friend Activity").font(.capyCallout)
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                let friends = social.following.filter { person in
+                    guard let item = activity.activities[person.id] else { return false }
+                    return context.date.timeIntervalSince(item.updatedAt) < 86400
+                }.sorted { (activity.activities[$0.id]?.updatedAt ?? .distantPast) > (activity.activities[$1.id]?.updatedAt ?? .distantPast) }
+                if friends.isEmpty {
+                    Text("When friends share their listening activity, it appears here.")
+                        .font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                } else {
+                    ScrollView(.horizontal) {
+                        HStack(alignment: .top, spacing: 14) {
+                            ForEach(friends) { person in
+                                if let item = activity.activities[person.id] {
+                                    VStack(spacing: 7) {
+                                        personLink(person, item: item)
+                                        Button { Task { await player.play(item.track) } } label: {
+                                            Text(item.track.title).font(.capyCaption).lineLimit(2)
+                                                .foregroundStyle(CapyColor.secondaryText)
+                                        }.buttonStyle(.plain).disabled(!item.canPlay)
+                                        Text(item.track.artist).font(.caption2).foregroundStyle(CapyColor.tertiaryText).lineLimit(1)
+                                        Text(item.isListening(at: context.date) ? "Listening now" : "Recently · " + item.updatedAt.formatted(.relative(presentation: .numeric)))
+                                            .font(.caption2).foregroundStyle(item.isListening(at: context.date) ? CapyColor.accent : CapyColor.tertiaryText)
+                                            .lineLimit(2)
+                                    }.frame(width: 100)
+                                }
+                            }
+                        }
+                    }.scrollIndicators(.hidden)
+                }
+            }
+            if let error = activity.error {
+                Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func personLink(_ person: SocialProfile, item: FriendListeningActivity) -> some View {
+        if let openPerson {
+            Button { openPerson(person) } label: { personLabel(person, item: item) }.buttonStyle(.plain)
+        } else {
+            NavigationLink { SocialPersonProfileView(person: person) } label: { personLabel(person, item: item) }.buttonStyle(.plain)
+        }
+    }
+    private func personLabel(_ person: SocialProfile, item: FriendListeningActivity) -> some View {
+        VStack(spacing: 6) {
+            SocialAvatar(profile: person, size: 64)
+                .overlay(alignment: .bottomTrailing) { Artwork(track: item.track, size: 28, radius: 6).offset(x: 7, y: 3) }
+            Text(person.displayName).font(.capyCaption).foregroundStyle(.primary).lineLimit(1)
+        }.accessibilityLabel("View \(person.displayName)'s profile")
+    }
+}
+
+struct FriendActivitySettingsView: View {
+    @EnvironmentObject private var activity: ListeningActivityStore
+    @EnvironmentObject private var social: SocialStore
+    var body: some View {
+        ZStack {
+            WaveBackdrop()
+            ScrollView {
+                CapyScreenContainer {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Toggle("Share my listening activity", isOn: Binding(get: { activity.sharing }, set: { value in
+                            Task { await activity.setSharing(value) }
+                        }))
+                        .tint(CapyColor.accent).disabled(social.currentUserID == nil || activity.preferenceLoading)
+                        Text("Friends can see your current or recent song. Turning this off removes your shared activity. Only song details are shared.")
+                            .font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                        if social.currentUserID == nil { Text("Sign in to share listening activity.").font(.capyCaption) }
+                        if activity.preferenceLoading { ProgressView("Loading privacy preference…") }
+                        if let error = activity.error {
+                            Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning)
+                            Button("Retry preference sync") { Task { await activity.setSharing(activity.sharing) } }
+                                .buttonStyle(CapySecondaryButtonStyle())
+                        }
+                    }.padding(16).waveSurface(radius: 20).padding(.top, 16)
+                }
+            }
+        }.navigationTitle("Friend Activity").navigationBarTitleDisplayMode(.inline)
     }
 }

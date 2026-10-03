@@ -121,12 +121,25 @@ struct SharedPlaylist: Identifiable, Equatable {
     }
 }
 
+enum RelationshipKind: String { case followers = "Followers", following = "Following" }
+struct RelationshipPage {
+    let people: [SocialProfile]
+    let cursor: DocumentSnapshot?
+    let hasMore: Bool
+    let fromCache: Bool
+}
+
 enum SocialConnectionState: Equatable {
     case signedOut
     case connecting
     case ready
     case offline
     case setupRequired
+
+    func receivingProfileSnapshot(isFromCache: Bool, exists: Bool) -> SocialConnectionState {
+        // A cache hit cannot demote ready, invent offline, or erase an error state.
+        exists && !isFromCache && self != .setupRequired ? .ready : self
+    }
 
     var title: String {
         switch self {
@@ -182,11 +195,15 @@ enum SocialConnectionState: Equatable {
     private var userID: String?
     private var boundUser: FirebaseAuth.User?
     private var listeners: [ListenerRegistration] = []
+    private var followingIDs: Set<String> = []
+    private var profileCache: [String: (SocialProfile, Date)] = [:]
     private var followingListeners: [String: ListenerRegistration] = [:]
     var currentUserID: String? { userID }
     private var setupTask: Task<Void, Never>?
+    private var listenerEpoch = UUID()
 
     func bind(to user: FirebaseAuth.User?) {
+        listenerEpoch = UUID()
         setupTask?.cancel()
         listeners.forEach { $0.remove() }
         listeners.removeAll()
@@ -194,6 +211,8 @@ enum SocialConnectionState: Equatable {
         followingListeners.removeAll()
         profile = nil
         following = []
+        followingIDs = []
+        profileCache = [:]
         sharedPlaylists = []
         followerCount = 0
         followingCount = 0
@@ -208,9 +227,12 @@ enum SocialConnectionState: Equatable {
 
     func retryConnection() {
         guard let user = boundUser, userID == user.uid else { return }
+        listenerEpoch = UUID()
         setupTask?.cancel()
         listeners.forEach { $0.remove() }
         listeners.removeAll()
+        followingListeners.values.forEach { $0.remove() }
+        followingListeners.removeAll()
         error = nil
         connectionState = .connecting
         startSocial(for: user)
@@ -266,6 +288,7 @@ enum SocialConnectionState: Equatable {
                 avatarData: avatarData
             )
             usernameAvailability = .current(username)
+            connectionState = .ready
             return true
         } catch {
             if isSocialTransactionError(error, code: .usernameTaken) {
@@ -332,8 +355,8 @@ enum SocialConnectionState: Equatable {
             do {
                 snapshot = try await request.getDocuments()
             } catch {
+                handleSocialError(error)
                 snapshot = try await request.getDocuments(source: .cache)
-                connectionState = .offline
             }
             var people = snapshot.documents.compactMap { SocialProfile(id: $0.documentID, data: $0.data()) }
 
@@ -358,7 +381,7 @@ enum SocialConnectionState: Equatable {
         } catch { handleSocialError(error) }
     }
 
-    func isFollowing(_ profileID: String) -> Bool { following.contains { $0.id == profileID } }
+    func isFollowing(_ profileID: String) -> Bool { followingIDs.contains(profileID) || following.contains { $0.id == profileID } }
 
     func setFollowing(_ person: SocialProfile, following shouldFollow: Bool) async {
         guard let uid = userID, uid != person.id else { return }
@@ -372,6 +395,10 @@ enum SocialConnectionState: Equatable {
                 ])
             } else {
                 try await ref.delete()
+            }
+            if userID == uid {
+                if shouldFollow { followingIDs.insert(person.id) } else { followingIDs.remove(person.id) }
+                objectWillChange.send()
             }
         } catch { handleSocialError(error) }
     }
@@ -564,6 +591,38 @@ enum SocialConnectionState: Equatable {
         }
     }
 
+    /// One edge page and batched profile reads, performed on page load rather
+    /// than in row bodies. Firestore profile list rules cap each batch at 20.
+    func relationshipPage(ownerID: String, kind: RelationshipKind,
+                          after cursor: DocumentSnapshot? = nil) async throws -> RelationshipPage {
+        var query: Query = db.collection("follows")
+            .whereField(kind == .followers ? "followingID" : "followerID", isEqualTo: ownerID)
+            .order(by: FieldPath.documentID()).limit(to: 50)
+        if let cursor { query = query.start(afterDocument: cursor) }
+        let snapshot = try await query.getDocuments()
+        try Task.checkCancellation()
+        let ids = snapshot.documents.compactMap { $0.data()[kind == .followers ? "followerID" : "followingID"] as? String }
+        var people: [SocialProfile] = []
+        let missing = ids.filter { id in
+            if let cached = profileCache[id], Date().timeIntervalSince(cached.1) < 300 { people.append(cached.0); return false }
+            return true
+        }
+        for start in stride(from: 0, to: missing.count, by: 20) {
+            let batch = Array(missing[start..<min(start + 20, missing.count)])
+            let profiles = try await db.collection("profiles").whereField(FieldPath.documentID(), in: batch).limit(to: 20).getDocuments()
+            try Task.checkCancellation()
+            for document in profiles.documents {
+                if let person = SocialProfile(id: document.documentID, data: document.data()) {
+                    profileCache[person.id] = (person, Date()); people.append(person)
+                }
+            }
+        }
+        let order = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($0.element, $0.offset) })
+        people.sort { (order[$0.id] ?? 0) < (order[$1.id] ?? 0) }
+        return RelationshipPage(people: people, cursor: snapshot.documents.last, hasMore: snapshot.documents.count == 50,
+                                fromCache: snapshot.metadata.isFromCache)
+    }
+
     private func loadProfile(_ uid: String) async -> SocialProfile? {
         let ref = db.collection("profiles").document(uid)
         let snapshot: DocumentSnapshot?
@@ -577,15 +636,18 @@ enum SocialConnectionState: Equatable {
     }
 
     private func ensureProfileWithRetry(for user: FirebaseAuth.User) async {
+        let epoch = listenerEpoch
         working = true
-        defer { working = false }
+        defer { if listenerEpoch == epoch { working = false } }
         for attempt in 0..<3 {
             guard !Task.isCancelled, userID == user.uid else { return }
             do {
                 try await ensureProfile(for: user)
-                guard userID == user.uid else { return }
-                error = nil
-                if connectionState != .offline { connectionState = .ready }
+                guard !Task.isCancelled, userID == user.uid, listenerEpoch == epoch else { return }
+                if connectionState != .setupRequired {
+                    if connectionState == .offline { error = nil }
+                    connectionState = .ready
+                }
                 return
             } catch {
                 guard !Task.isCancelled else { return }
@@ -618,12 +680,8 @@ enum SocialConnectionState: Equatable {
             }
             throw lastFailure ?? socialTransactionError(.usernameTaken, "Couldn't reserve an initial username. Please try again.")
         } catch {
-            // Firestore's local cache is useful on a disconnected launch, but it must
-            // never be mistaken for proof that a username is available.
-            if shouldAutomaticallyRetry(error),
-               let cached = try? await ref.getDocument(source: .cache), cached.exists {
-                connectionState = .offline
-            }
+            // The profile listener already exposes cache data. The caller handles
+            // this actual server failure; no cache-derived connectivity decisions.
             throw error
         }
     }
@@ -740,35 +798,38 @@ enum SocialConnectionState: Equatable {
     }
 
     private func listen(to uid: String) {
-        listeners.append(db.collection("profiles").document(uid).addSnapshotListener { [weak self] snapshot, error in
+        let epoch = listenerEpoch
+        listeners.append(db.collection("profiles").document(uid).addSnapshotListener(includeMetadataChanges: true) { [weak self] snapshot, error in
             Task { @MainActor in
-                guard let self, self.userID == uid else { return }
+                guard let self, self.userID == uid, self.listenerEpoch == epoch else { return }
                 if let data = snapshot?.data() { self.profile = SocialProfile(id: uid, data: data) }
                 if let error { self.handleSocialError(error); return }
-                if snapshot?.metadata.isFromCache == true {
-                    self.connectionState = .offline
-                } else if snapshot != nil {
-                    self.connectionState = .ready
+                // Cache is data availability, not a connectivity failure. Metadata
+                // changes must be observed even if the server returns identical data.
+                if let snapshot {
+                    self.connectionState = self.connectionState.receivingProfileSnapshot(
+                        isFromCache: snapshot.metadata.isFromCache, exists: snapshot.exists)
                 }
             }
         })
         listeners.append(db.collection("follows").whereField("followerID", isEqualTo: uid).addSnapshotListener { [weak self] snapshot, error in
             let ids = snapshot?.documents.compactMap { $0.data()["followingID"] as? String } ?? []
             Task { @MainActor in
-                if let error { self?.handleSocialError(error); return }
-                await self?.loadFollowing(ids, owner: uid)
+                guard let self, self.userID == uid, self.listenerEpoch == epoch else { return }
+                if let error { self.handleSocialError(error); return }
+                await self.loadFollowing(ids, owner: uid)
             }
         })
         listeners.append(db.collection("follows").whereField("followingID", isEqualTo: uid).addSnapshotListener { [weak self] snapshot, error in
             Task { @MainActor in
-                guard let self, self.userID == uid else { return }
+                guard let self, self.userID == uid, self.listenerEpoch == epoch else { return }
                 if let error { self.handleSocialError(error); return }
                 self.followerCount = snapshot?.documents.count ?? 0
             }
         })
         listeners.append(db.collection("playlists").whereField("memberIDs", arrayContains: uid).addSnapshotListener { [weak self] snapshot, error in
             Task { @MainActor in
-                guard let self, self.userID == uid else { return }
+                guard let self, self.userID == uid, self.listenerEpoch == epoch else { return }
                 self.sharedPlaylists = snapshot?.documents.compactMap { SharedPlaylist(id: $0.documentID, data: $0.data()) }
                     .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } ?? []
                 if let error { self.handleSocialError(error) }
@@ -777,8 +838,10 @@ enum SocialConnectionState: Equatable {
     }
 
     private func loadFollowing(_ ids: [String], owner uid: String) async {
+        let epoch = listenerEpoch
         guard userID == uid else { return }
         followingCount = ids.count
+        followingIDs = Set(ids)
         let selected = Set(ids.prefix(50))
         for id in Array(followingListeners.keys) where !selected.contains(id) {
             followingListeners.removeValue(forKey: id)?.remove()
@@ -787,10 +850,13 @@ enum SocialConnectionState: Equatable {
         for id in selected where followingListeners[id] == nil {
             followingListeners[id] = db.collection("profiles").document(id).addSnapshotListener { [weak self] snapshot, error in
                 Task { @MainActor in
-                    guard let self, self.userID == uid else { return }
+                    guard let self, self.userID == uid, self.listenerEpoch == epoch, self.followingIDs.contains(id) else { return }
                     if let error { self.handleSocialError(error); return }
                     self.following.removeAll { $0.id == id }
-                    if let data = snapshot?.data(), let person = SocialProfile(id: id, data: data) { self.following.append(person) }
+                    if let data = snapshot?.data(), let person = SocialProfile(id: id, data: data) {
+                        self.following.append(person)
+                        self.profileCache[id] = (person, Date())
+                    }
                     self.following.sort { $0.username < $1.username }
                 }
             }

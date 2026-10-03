@@ -108,6 +108,33 @@ service cloud.firestore {
         (resource.data.followerID == request.auth.uid || resource.data.followingID == request.auth.uid);
     }
 
+    match /activitySettings/{uid} {
+      allow get: if owns(uid);
+      allow list: if false;
+      allow create, update: if owns(uid) &&
+        request.resource.data.keys().hasOnly(['sharing', 'updatedAt']) &&
+        request.resource.data.sharing is bool && request.resource.data.updatedAt == request.time &&
+        (request.resource.data.sharing == true ||
+          !existsAfter(/databases/$(database)/documents/listeningActivity/$(uid)));
+      allow delete: if owns(uid);
+    }
+    match /listeningActivity/{uid} {
+      allow get: if signedIn();
+      allow list: if signedIn() && request.query.limit <= 20;
+      allow create, update: if owns(uid) &&
+        getAfter(/databases/$(database)/documents/activitySettings/$(uid)).data.sharing == true &&
+        request.resource.data.keys().hasOnly(['title', 'artist', 'videoID', 'artworkURL', 'playing', 'updatedAt', 'expiresAt']) &&
+        request.resource.data.title is string && request.resource.data.title.size() <= 300 &&
+        request.resource.data.artist is string && request.resource.data.artist.size() <= 300 &&
+        request.resource.data.videoID is string && request.resource.data.videoID.size() <= 128 &&
+        request.resource.data.artworkURL is string && request.resource.data.artworkURL.size() <= 2048 &&
+        request.resource.data.playing is bool && request.resource.data.updatedAt == request.time &&
+        request.resource.data.expiresAt is timestamp &&
+        request.resource.data.expiresAt > request.time - duration.value(5, 'm') &&
+        request.resource.data.expiresAt <= request.time + duration.value(10, 'm');
+      allow delete: if owns(uid);
+    }
+
     match /playlists/{playlistID} {
       function isMember(data) {
         return signedIn() && request.auth.uid in data.memberIDs;

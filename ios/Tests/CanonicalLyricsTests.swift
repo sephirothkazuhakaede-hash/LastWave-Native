@@ -27,7 +27,7 @@ final class CanonicalLyricsTests: XCTestCase {
         FixtureLyricsProtocol.lock.unlock()
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FixtureLyricsProtocol.self]
-        return LyricsService(session: URLSession(configuration: config), folder: folder)
+        return LyricsService(session: URLSession(configuration: config), folder: folder, backendLookup: { _ in nil })
     }
     private func folder() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
     private func tracks() -> (Track, Track) {
@@ -85,4 +85,29 @@ final class CanonicalLyricsTests: XCTestCase {
         XCTAssertEqual(result, lines)
         XCTAssertEqual(FixtureLyricsProtocol.requests.count, 0)
     }
+    func testBackendResultIsPreferredAndRetainsGenuineWordTimingsOffline() async throws {
+        let path = folder()
+        defer { try? FileManager.default.removeItem(at: path) }
+        let lines = [LyricLine(time: 1, text: "Fixture line", words: [LyricWord(time: 1, text: "Fixture"), LyricWord(time: 2, text: "line")])]
+        let service = LyricsService(folder: path, backendLookup: { _ in
+            BackendLyricsResult(provider: "fixture", synchronization: "word", timingOrigin: "provider", lines: lines)
+        })
+        let fetched = try await service.lyrics(for: tracks().0)
+        XCTAssertEqual(fetched, lines)
+        let offline = try await LyricsService(folder: path, backendLookup: { _ in throw URLError(.notConnectedToInternet) }).lyrics(for: tracks().1)
+        XCTAssertEqual(offline, lines)
+    }
+    func testBackendFailureUsesDirectEmergencyFallback() async throws {
+        let path = folder()
+        defer { try? FileManager.default.removeItem(at: path) }
+        _ = service(body: #"[{"instrumental":false,"trackName":"Song","artistName":"Singer","duration":200,"plainLyrics":"Emergency fixture"}]"#, folder: path)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [FixtureLyricsProtocol.self]
+        let service = LyricsService(session: URLSession(configuration: config), folder: path,
+                                    backendLookup: { _ in throw URLError(.notConnectedToInternet) })
+        let fetched = try await service.lyrics(for: tracks().0)
+        XCTAssertEqual(fetched, [LyricLine(time: nil, text: "Emergency fixture")])
+        XCTAssertEqual(FixtureLyricsProtocol.requests.count, 1)
+    }
+
 }

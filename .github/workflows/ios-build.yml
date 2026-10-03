@@ -53,7 +53,7 @@ jobs:
       - name: Test recording identity and download management
         run: |
           DEVICE_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for devices in d["devices"].values() for x in devices if x["name"].startswith("iPhone")))')
-          xcodebuild -project CapyFlow.xcodeproj -scheme CapyFlow -configuration Debug -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath identity-tests -only-testing:CapyFlowTests/LocalizedRecordingTests -only-testing:CapyFlowTests/OfflineDownloadRemovalTests -only-testing:CapyFlowUITests/DownloadManagementUITests CODE_SIGNING_ALLOWED=NO test
+          xcodebuild -project CapyFlow.xcodeproj -scheme CapyFlow -configuration Debug -destination "platform=iOS Simulator,id=$DEVICE_ID" -derivedDataPath identity-tests -only-testing:CapyFlowTests/FriendActivityTests -only-testing:CapyFlowTests/SocialConnectionTests -only-testing:CapyFlowTests/StableUpdateTests -only-testing:CapyFlowTests/CanonicalLyricsTests -only-testing:CapyFlowTests/LocalizedRecordingTests -only-testing:CapyFlowTests/OfflineDownloadRemovalTests -only-testing:CapyFlowUITests/DownloadManagementUITests CODE_SIGNING_ALLOWED=NO test
       - run: xcodebuild -project CapyFlow.xcodeproj -scheme CapyFlow -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
       - name: Verify compiled app icon
         run: |
@@ -63,17 +63,17 @@ jobs:
         run: |
           APP_PLIST=build/Build/Products/Release-iphoneos/CapyFlow.app/Info.plist
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PLIST")" = "CapyFlow"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")" = "0.4.5"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")" = "12"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")" = "0.4.6"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")" = "13"
       - name: Package unsigned IPA
         run: |
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/CapyFlow.app Payload/
-          zip -r CapyFlow-0.4.5-unsigned.ipa Payload
-          unzip -t CapyFlow-0.4.5-unsigned.ipa
+          zip -r CapyFlow-0.4.6-unsigned.ipa Payload
+          unzip -t CapyFlow-0.4.6-unsigned.ipa
       - uses: actions/upload-artifact@v4
         with:
-          name: CapyFlow-0.4.5-unsigned-IPA
-          path: ios/CapyFlow-0.4.5-unsigned.ipa
+          name: CapyFlow-0.4.6-unsigned-IPA
+          path: ios/CapyFlow-0.4.6-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
