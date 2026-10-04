@@ -9,3 +9,5 @@
 - Preserves existing playback, downloads, lyrics, queue, account backups and streaming configuration.
 
 Install the signed update over the existing app using the same bundle identifier and signing identity to retain local data.
+
+CapyFlow 0.4.11 · Build 18 is available through Sidebar → Updates → Check for updates. The IPA requires signing before installation.
