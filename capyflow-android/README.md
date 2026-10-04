@@ -91,3 +91,16 @@ Play next prepends an entry; Add to queue appends. Queue entries have stable uni
 identities, with viewport-preserving drag swaps and gradual edge scrolling.
 The lyrics viewport grows from 152dp to 196dp. Shared/collaborative playlists still
 require Android account integration. GitHub tests and lint run before APK upload.
+
+
+### dev8 accounts and collaboration
+
+Android uses the same Firebase project, Google sign-in identity, `profiles`, `usernames`, `follows`, `playlists`, account-private library blobs, conversations and listening activity records as iOS. Custom names, usernames, bios and compressed profile photos are stored in the existing cross-platform fields. Username reservations are transactional and follow the shared 14-day cooldown.
+
+The creator UID identifies a playlist owner; the visible `By @username` label listens to that creator's CapyFlow profile. Linked shared documents are authoritative in both My Playlists and Shared Playlists. Song mutations use Firestore transactions to preserve concurrent additions. The owner can delete shared access while keeping the latest personal copy, or delete the playlist from both views. Collaborators can leave but cannot delete or rename the owner's playlist.
+
+Private playlists and covers are backed up under the authenticated UID and restored on sign-in after reinstall. Local downloads remain device-local. Pending local-only changes require a successful cloud sync before uninstall. Collaboration requires a connection for transactions.
+
+Android acknowledges message delivery using participant-private receipt documents; iOS already supplies read receipts for Seen. Older iOS builds do not acknowledge unseen delivery, so Android correctly shows Sent until Seen for those recipients. Friend Activity uses the existing opt-in sharing setting and expiring listening records on both platforms.
+
+Google sign-in configuration uses the registered Android app and GitHub CI signing certificate; changing the signing key requires registering its fingerprint. Client Firebase identifiers are public app configuration, not service account credentials. Security and Android validation run on GitHub Actions. Real-device iOS/Android end-to-end testing remains necessary; CI does not substitute for that check.

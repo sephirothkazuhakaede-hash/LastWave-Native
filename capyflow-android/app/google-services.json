@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "144576986614",
+    "project_id": "capyflow-aa6c5",
+    "storage_bucket": "capyflow-aa6c5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:144576986614:android:fac871210d213f7161dbd7",
+        "android_client_info": {
+          "package_name": "com.seph.capyflow"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "144576986614-22hmpg790hltakib4ml6sohqa1n7evqo.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAKFCKbBNZADotuyArv8AVelTYVMSIjkXk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "144576986614-22hmpg790hltakib4ml6sohqa1n7evqo.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

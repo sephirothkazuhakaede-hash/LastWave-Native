@@ -4,7 +4,7 @@ if (firebaseConfigured) apply(plugin = "com.google.gms.google-services")
 android {
     namespace = "com.seph.capyflow"
     compileSdk = 36
-    defaultConfig { applicationId = "com.seph.capyflow"; minSdk = 26; targetSdk = 36; versionCode = 7; versionName = "0.1.0-dev7"; buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString()) }
+    defaultConfig { applicationId = "com.seph.capyflow"; minSdk = 26; targetSdk = 36; versionCode = 8; versionName = "0.1.0-dev8"; buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString()) }
     if (rootProject.file("signing/capyflow-preview.jks").exists()) signingConfigs { getByName("debug") { storeFile = rootProject.file("signing/capyflow-preview.jks"); storePassword = "android"; keyAlias = "capyflow-preview"; keyPassword = "android" } }
     compileOptions { isCoreLibraryDesugaringEnabled = true; sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }

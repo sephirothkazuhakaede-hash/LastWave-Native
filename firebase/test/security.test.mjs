@@ -193,3 +193,33 @@ test('direct chats are participant-private, atomic and require following to star
   await assertFails(updateDoc(doc(bob, 'conversations', 'alice_bob', 'messages', 'reply'), { text: 'Changed' }));
   await assertFails(deleteDoc(doc(bob, 'conversations', 'alice_bob', 'messages', 'reply')));
 });
+
+
+test('delivery receipts are recipient-owned, latest-message-only, and private to participants', async () => {
+  await env.withSecurityRulesDisabled(async c => {
+    await setDoc(doc(c.firestore(), 'conversations', 'alice_bob'), {
+      memberIDs: ['alice', 'bob'], lastMessageID: 'latest', lastSenderID: 'alice',
+      lastText: 'Hello', readMessageIDs: {alice: 'latest', bob: ''},
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now()
+    });
+  });
+  const receipt = db => doc(db, 'conversations', 'alice_bob', 'receipts', 'bob');
+  const fields = () => ({messageID: 'latest', receivedAt: serverTimestamp()});
+  await assertFails(setDoc(receipt(account('alice')), fields()));
+  await assertFails(setDoc(receipt(account('mallory')), fields()));
+  await assertFails(setDoc(receipt(account('bob')), {...fields(), messageID: 'old'}));
+  await assertSucceeds(setDoc(receipt(account('bob')), fields()));
+  await assertSucceeds(getDoc(receipt(account('alice'))));
+  await assertFails(getDoc(receipt(account('mallory'))));
+});
+
+test('deleting shared access does not delete the account-private source playlist', async () => {
+  const alice=account('alice'), bob=account('bob');
+  await assertSucceeds(setDoc(doc(alice,'playlists','shared'),{ownerID:'alice',sourceID:'source',memberIDs:['alice'],name:'Mix',tracks:[]}));
+  await assertSucceeds(updateDoc(doc(alice,'playlists','shared'),{memberIDs:['alice','bob']}));
+  await assertSucceeds(setDoc(doc(alice,'users','alice','library','source'),{playlistID:'source',deleted:false,payload:Bytes.fromUint8Array(new TextEncoder().encode('{"id":"source","name":"Mix","tracks":[]}')),updatedAt:serverTimestamp()}));
+  await assertFails(deleteDoc(doc(bob,'playlists','shared')));
+  await assertSucceeds(deleteDoc(doc(alice,'playlists','shared')));
+  await assertSucceeds(getDoc(doc(alice,'users','alice','library','source')));
+  await assertFails(getDoc(doc(bob,'users','alice','library','source')));
+});

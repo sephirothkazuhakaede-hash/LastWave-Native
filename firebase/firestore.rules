@@ -210,6 +210,20 @@ service cloud.firestore {
         );
       allow delete: if false;
 
+      // A recipient acknowledges the latest message after receiving it from the server.
+      // Senders cannot forge another participant's delivery receipt.
+      match /receipts/{recipientID} {
+        function parentThread() { return get(/databases/$(database)/documents/conversations/$(threadID)).data; }
+        allow get: if participant(parentThread());
+        allow list: if false;
+        allow create, update: if owns(recipientID) && participant(parentThread()) &&
+          request.resource.data.keys().hasOnly(['messageID', 'receivedAt']) &&
+          request.resource.data.messageID == parentThread().lastMessageID &&
+          parentThread().lastSenderID != request.auth.uid &&
+          request.resource.data.receivedAt == request.time;
+        allow delete: if false;
+      }
+
       match /messages/{messageID} {
         function thread() { return get(/databases/$(database)/documents/conversations/$(threadID)).data; }
         allow get: if participant(thread());

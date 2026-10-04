@@ -77,6 +77,27 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     private var controller: MediaController? = null
     private val controllerFuture = MediaController.Builder(app, SessionToken(app, ComponentName(app, PlaybackService::class.java))).buildAsync()
     private var searchJob: Job? = null
+    var collaboration: SocialModel? = null
+    private var sharedSources: Map<String,SharedCollection> = emptyMap()
+    fun applySharedCollections(shared: List<SharedCollection>) {
+        sharedSources=shared.filter{it.ownerID==user?.uid && !it.sourceID.startsWith("cloud:")}.associateBy{it.sourceID}
+        var changed=false
+        sharedSources.forEach{(id,item) ->
+            val old=playlists.firstOrNull{it.id==id}
+            val updated=(old ?: Playlist(id,item.name,emptyList(),ownerID=item.ownerID)).copy(name=item.name,tracks=item.tracks,ownerID=item.ownerID)
+            if(old?.json()?.toString()!=updated.json().toString()){
+                playlists=playlists.filterNot{it.id==id}+updated;sync(updated);changed=true
+            }
+        }
+        if(changed)persistLibrary()
+    }
+    fun keepPersonalCopy(shared:SharedCollection){
+        if(shared.ownerID!=user?.uid)return
+        sharedSources=sharedSources-shared.sourceID
+        val old=playlists.firstOrNull{it.id==shared.sourceID}
+        val updated=(old ?: Playlist(shared.sourceID,shared.name,emptyList(),ownerID=shared.ownerID)).copy(name=shared.name,tracks=shared.tracks)
+        playlists=playlists.filterNot{it.id==updated.id}+updated;persistLibrary();sync(updated)
+    }
     private var playJob: Job? = null
     private var lyricJob: Job? = null
     private var libraryListener: ListenerRegistration? = null
@@ -85,7 +106,7 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     private val authListener = FirebaseAuth.AuthStateListener { a ->
         user = a.currentUser
         if (owner != (a.currentUser?.uid ?: "guest")) {
-            accountEpoch++; libraryListener?.remove(); owner = a.currentUser?.uid ?: "guest"
+            accountEpoch++; sharedSources=emptyMap(); libraryListener?.remove(); owner = a.currentUser?.uid ?: "guest"
             playlists = readPlaylists(); PlaybackAuthorization.token = null
             if(owner!="guest" && !prefs.contains("guestImportedTo")) {
                 val guest=runCatching{JSONArray(prefs.getString("library.guest","[]")).let{a -> (0 until a.length()).map{Playlist.from(a.getJSONObject(it))}}}.getOrDefault(emptyList())
@@ -332,18 +353,23 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     fun downloadAll(tracks: List<Track>){tracks.distinctBy{it.playableID}.forEach{download(it)}}
     fun addAlbumToPlaylist(album: Album, tracks: List<Track>){val id=createPlaylist(album.title,album.id) ?: return;tracks.distinctBy{it.playableID}.forEach{addToPlaylist(id,it)}}
     fun removeDownload(track: Track) { if (downloadedFile(track).delete()) { downloads = downloads.filterNot { it.id == track.id }; prefs.edit().putString("downloads", JSONArray(downloads.map { it.json() }).toString()).apply() } }
-    fun createPlaylist(name: String, albumID: String?=null): String? { if (name.trim().isEmpty()) return null; val p = Playlist(UUID.randomUUID().toString(), name.trim(), emptyList(),albumID=albumID); playlists = playlists + p; persistLibrary(); sync(p);return p.id }
-    fun addToPlaylist(id: String, track: Track) { val p = playlists.firstOrNull { it.id == id } ?: return; if (p.tracks.any { it.id == track.id }) return; val updated = p.copy(tracks = p.tracks + track); playlists = playlists.map { if (it.id == id) updated else it }; persistLibrary(); sync(updated) }
-    fun removeFromPlaylist(id: String, trackID: String) { val p = playlists.firstOrNull { it.id == id } ?: return; val updated = p.copy(tracks = p.tracks.filterNot { it.id == trackID }); playlists = playlists.map { if(it.id == id) updated else it }; persistLibrary(); sync(updated) }
-    fun deletePlaylist(id: String) { playlists = playlists.filterNot { it.id == id }; persistLibrary(); sync(null, id) }
+    fun createPlaylist(name: String, albumID: String?=null): String? { if (name.trim().isEmpty()) return null; val p = Playlist(UUID.randomUUID().toString(), name.trim(), emptyList(),albumID=albumID,ownerID=user?.uid); playlists = playlists + p; persistLibrary(); sync(p);return p.id }
+    fun addToPlaylist(id: String, track: Track) { collaboration?.sharedPlaylists?.firstOrNull{it.id==id.removePrefix("cloud:") || (it.ownerID==user?.uid && it.sourceID==id)}?.let{shared -> collaboration?.editShared(shared){tracks -> if(tracks.any{it.playableID==track.playableID})tracks else tracks+track};return}; val p = playlists.firstOrNull { it.id == id } ?: return; if (p.tracks.any { it.id == track.id }) return; val updated = p.copy(tracks = p.tracks + track); playlists = playlists.map { if (it.id == id) updated else it }; persistLibrary(); sync(updated) }
+    fun removeFromPlaylist(id: String, trackID: String) { collaboration?.sharedPlaylists?.firstOrNull{it.id==id.removePrefix("cloud:") || (it.ownerID==user?.uid && it.sourceID==id)}?.let{shared -> collaboration?.editShared(shared){tracks -> tracks.filterNot{it.id==trackID}};return}; val p = playlists.firstOrNull { it.id == id } ?: return; val updated = p.copy(tracks = p.tracks.filterNot { it.id == trackID }); playlists = playlists.map { if(it.id == id) updated else it }; persistLibrary(); sync(updated) }
+    fun deletePlaylist(id: String) { collaboration?.sharedPlaylists?.firstOrNull{it.ownerID==user?.uid && (it.sourceID==id || "cloud:"+it.id==id)}?.let{shared -> collaboration?.deleteShared(shared){sharedSources=sharedSources-shared.sourceID;deletePersonalPlaylist(shared.sourceID)};return};deletePersonalPlaylist(id) }
+    private fun deletePersonalPlaylist(id:String){ playlists = playlists.filterNot { it.id == id }; persistLibrary(); sync(null, id) }
     fun hasDownload(track: Track)=downloads.any{it.playableID==track.playableID} && downloadedFile(track).isFile
-    fun renamePlaylist(id: String,name: String){if(name.isBlank())return;updatePlaylist(id){it.copy(name=name.trim())}}
+    fun renamePlaylist(id: String,name: String){if(name.isBlank())return;collaboration?.sharedPlaylists?.firstOrNull{it.ownerID==user?.uid && (it.sourceID==id || "cloud:"+it.id==id)}?.let{collaboration?.renameShared(it,name);return};updatePlaylist(id){it.copy(name=name.trim())}}
     private fun updatePlaylist(id: String,change:(Playlist)->Playlist){val p=playlists.firstOrNull{it.id==id} ?: return;val updated=change(p);playlists=playlists.map{if(it.id==id)updated else it};persistLibrary();sync(updated)}
     fun setPlaylistArtwork(id: String,uri: Uri){viewModelScope.launch{try{val app=getApplication<Application>();val file=withContext(Dispatchers.IO){val directory=File(app.filesDir,"playlist-artwork");directory.mkdirs();val target=File(directory,"${safeID(id)}-${UUID.randomUUID()}.jpg");app.contentResolver.openInputStream(uri)?.use{input -> val bitmap=android.graphics.BitmapFactory.decodeStream(input) ?: error("Choose an image");val scaled=android.graphics.Bitmap.createScaledBitmap(bitmap,minOf(bitmap.width,1000),maxOf(1,(bitmap.height.toDouble()*minOf(bitmap.width,1000)/bitmap.width).toInt()),true);target.outputStream().use{scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG,88,it)};target} ?: error("Couldn’t open image")};updatePlaylist(id){it.copy(artworkURL=Uri.fromFile(file).toString())}}catch(e: CancellationException){throw e}catch(e: Exception){error=e.message}}}
     private fun sync(playlist: Playlist?, id: String = playlist!!.id) {
         if (user == null || db == null) return
         val fields = mutableMapOf<String,Any>("playlistID" to id, "deleted" to (playlist == null), "updatedAt" to FieldValue.serverTimestamp())
-        playlist?.let { val bytes = it.json().toString().toByteArray(); if(bytes.size > 750000) { error = "Playlist is too large for cloud backup"; return }; fields["payload"] = Blob.fromBytes(bytes) }
+        playlist?.let { val localCover=it.artworkURL?.takeIf{url->url.startsWith("file:")}?.let{url->runCatching{File(Uri.parse(url).path!!).readBytes()}.getOrNull()}
+            val cloud=if(localCover!=null)it.copy(artworkURL=null) else it
+            val bytes = cloud.json().toString().toByteArray(); if(bytes.size > 750000) { error = "Playlist is too large for cloud backup"; return }; fields["payload"] = Blob.fromBytes(bytes)
+            if(localCover!=null){val image=android.graphics.BitmapFactory.decodeByteArray(localCover,0,localCover.size);if(image!=null){val cover=boundedJpeg(image,128000);fields["cover"]=Blob.fromBytes(cover)}}
+        }
         // Durable pending records survive offline edits and process restarts.
         val pendingValue = playlist?.json()?.toString() ?: "deleted"
         prefs.edit().putString("pending.$owner.$id", pendingValue).commit()
@@ -364,8 +390,11 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
                 snapshot.documents.forEach { d -> val id = d.getString("playlistID") ?: return@forEach
                     if(prefs.contains("pending.$uid.$id")) return@forEach
                     if(d.getBoolean("deleted") == true) merged.remove(id)
-                    else d.getBlob("payload")?.toBytes()?.let { bytes -> runCatching { Playlist.from(JSONObject(String(bytes))) }.onSuccess { merged[id] = it } }
+                    else d.getBlob("payload")?.toBytes()?.let { bytes -> runCatching { Playlist.from(JSONObject(String(bytes))) }.onSuccess { var restored=it.copy(ownerID=it.ownerID ?: uid)
+                        d.getBlob("cover")?.toBytes()?.let{cover -> val file=File(getApplication<Application>().filesDir,"playlist-artwork/${safeID(id)}-cloud.jpg");file.parentFile!!.mkdirs();file.writeBytes(cover);restored=restored.copy(artworkURL=Uri.fromFile(file).toString())}
+                        merged[id] = restored } }
                 }
+                sharedSources.forEach{(id,item) -> val old=merged[id] ?: Playlist(id,item.name,emptyList(),ownerID=item.ownerID);merged[id]=old.copy(name=item.name,tracks=item.tracks,ownerID=item.ownerID)}
                 playlists = merged.values.toList(); persistLibrary(); cloudStatus = if(snapshot.metadata.isFromCache) "Offline library" else "Playlists backed up"
             }
         }

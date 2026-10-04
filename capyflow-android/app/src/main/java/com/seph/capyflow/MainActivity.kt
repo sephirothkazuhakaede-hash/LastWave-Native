@@ -80,7 +80,9 @@ class MainActivity : ComponentActivity() {
         if(Build.VERSION.SDK_INT >= 33) permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         setContent {
             val vm: CapyModel = viewModel(); val social: SocialModel = viewModel(); model = vm
-            LaunchedEffect(vm.user?.uid) { social.bind(vm.db,vm.user?.uid) }
+            LaunchedEffect(vm.user?.uid) { vm.collaboration=social;social.bind(vm.db,vm.user?.uid) }
+            LaunchedEffect(social.sharedPlaylists,vm.user?.uid){vm.applySharedCollections(social.sharedPlaylists)}
+            LaunchedEffect(vm.current?.playableID,vm.playing,social.sharingActivity,vm.user?.uid){while(true){social.publishActivity(vm.current,vm.playing);kotlinx.coroutines.delay(60000)}}
             MaterialTheme(colorScheme = darkColorScheme(primary=Violet,secondary=Color(0xFFD78FEE),background=Night,surface=Raised,onPrimary=Night)) {
                 CompositionLocalProvider(LocalContentColor provides Color.White) { CapyApp(vm,social,::signIn) }
             }
@@ -125,13 +127,13 @@ class MainActivity : ComponentActivity() {
                 when(tab) {
                     "Home" -> LazyColumn(verticalArrangement=Arrangement.spacedBy(20.dp)) {
                         item { Surface(shape=RoundedCornerShape(30.dp),color=Violet.copy(alpha=.10f)) { Column(Modifier.fillMaxWidth().padding(24.dp)) { Text("YOUR NEXT FAVORITE",color=Violet,fontSize=11.sp,letterSpacing=2.sp);Text("Find your flow.",fontSize=32.sp,fontWeight=FontWeight.Bold); Text("Your music. Your people. All in one place.",color=Color.White.copy(alpha=.65f),modifier=Modifier.padding(top=8.dp)); Button(onClick={tab="Search"},modifier=Modifier.padding(top=16.dp)) { Icon(Icons.Default.Search,null); Spacer(Modifier.width(8.dp)); Text("Explore music") } } } }
-                        if(vm.downloads.isNotEmpty()) {
-                            item { Section("Ready offline") }
-                            items(vm.downloads.take(6),key={it.id}) { t -> TrackRow(t,{vm.play(t,vm.downloads)},vm,{addTrack=t}) }
-                        }
                         if(vm.playlists.isNotEmpty()) {
                             item { Section("Your playlists") }
-                            item { LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp)) { items(vm.playlists,key={it.id}) { p -> Column(Modifier.width(145.dp).clickable { selectedPlaylist=p.id; tab="Library" }) { Artwork(p.tracks.firstOrNull()?.artwork,145); Text(p.name,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=10.dp)); Text("${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f)) } } } }
+                            item { LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp)) { items(vm.playlists,key={it.id}) { p -> Column(Modifier.width(145.dp).clickable { selectedPlaylist=p.id; tab="Library" }) { PlaylistCover(p,145); Text(p.name,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=10.dp)); Text("${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f)) } } } }
+                        }
+                        if(vm.recentTracks.isNotEmpty()){
+                            item{Section("Recently played")}
+                            items(vm.recentTracks.take(8),key={it.playableID}){t -> TrackRow(t,{vm.play(t,vm.recentTracks)},vm,{addTrack=t})}
                         }
                         item { Spacer(Modifier.height(12.dp)) }
                     }
@@ -161,9 +163,9 @@ class MainActivity : ComponentActivity() {
                         else (slideInHorizontally(tween(320),initialOffsetX={-it/4})+fadeIn(tween(220))) togetherWith (slideOutHorizontally(tween(320),targetOffsetX={it})+fadeOut(tween(220)))
                     },label="Playlist navigation") { id ->
                         BackHandler(enabled=id!=null){selectedPlaylist=null}
-                        val playlist=vm.playlists.firstOrNull{it.id==id}
-                        if(playlist!=null) PlaylistScreen(vm,playlist,{selectedPlaylist=null},{tab="Search";selectedPlaylist=null},{addTrack=it})
-                        else LibraryScreen(vm,{selectedPlaylist=it},{showNewPlaylist=true},{showSettings=true},{addTrack=it})
+                        val playlist=vm.playlists.firstOrNull{it.id==id} ?: social.sharedPlaylists.firstOrNull{"cloud:"+it.id==id}?.imported()
+                        if(playlist!=null) PlaylistScreen(vm,social,playlist,{selectedPlaylist=null},{tab="Search";selectedPlaylist=null},{addTrack=it},{selectedProfile=it})
+                        else LibraryScreen(vm,social,{selectedPlaylist=it},{showNewPlaylist=true},{showSettings=true},{addTrack=it})
                     }
                     "Social" -> {
                         if(vm.user == null) Column { EmptyState("Listen together","Sign in with the same Google account you use on iOS.",Icons.Default.People); Button(onClick=signIn,modifier=Modifier.fillMaxWidth()) {Text("Continue with Google")} }
@@ -176,18 +178,21 @@ class MainActivity : ComponentActivity() {
             BackHandler(enabled=showPlayer){showPlayer=false}
             PlayerScreen(vm,{showPlayer=false},{showQueue=true},{vm.current?.let{addTrack=it}})
         }
+        AnimatedVisibility(showSettings,enter=fadeIn(tween(200)),exit=fadeOut(tween(200))){Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha=.55f)).clickable{showSettings=false})}
+        AnimatedVisibility(showSettings,enter=slideInHorizontally(tween(300),initialOffsetX={-it}),exit=slideOutHorizontally(tween(260),targetOffsetX={-it})){
+            AccountDrawer(vm,social,signIn,{showSettings=false},{selectedProfile=it},{tab="Social";showSettings=false})
+        }
     }
     if(showQueue) ModalBottomSheet(onDismissRequest={showQueue=false},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night) { QueueSheet(vm) }
-    if(showSettings) ModalBottomSheet(onDismissRequest={showSettings=false},containerColor=Night) { Settings(vm,signIn) }
     if(showNewPlaylist) { var name by remember {mutableStateOf("")}; AlertDialog(onDismissRequest={showNewPlaylist=false},title={Text("New playlist")},text={OutlinedTextField(name,{name=it},label={Text("Playlist name")})},confirmButton={TextButton(onClick={val id=vm.createPlaylist(name);if(id!=null)addTrack?.let{vm.addToPlaylist(id,it)};addTrack=null;showNewPlaylist=false},enabled=name.isNotBlank()) {Text("Create")}},dismissButton={TextButton(onClick={showNewPlaylist=false}) {Text("Cancel")}}) }
     addTrack?.takeUnless{showNewPlaylist}?.let { t -> ModalBottomSheet(onDismissRequest={addTrack=null},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night) {
         Column(Modifier.fillMaxWidth().padding(20.dp).navigationBarsPadding()) {Section("Add to playlist");Row(Modifier.padding(vertical=12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(t.artwork,48);Column(Modifier.padding(start=12.dp)){Text(t.title,maxLines=1,overflow=TextOverflow.Ellipsis);Text(t.artist,color=Violet,fontSize=12.sp)}}
             TextButton(onClick={showNewPlaylist=true},modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.Add,null);Text("Create a new playlist")}
-            LazyColumn(Modifier.heightIn(max=420.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){items(vm.playlists,key={it.id}){p -> val added=p.tracks.any{it.playableID==t.playableID};Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Glass).clickable(enabled=!added){vm.addToPlaylist(p.id,t);addTrack=null}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(p.tracks.firstOrNull()?.artwork,56);Column(Modifier.weight(1f).padding(start=12.dp)){Text(p.name,fontWeight=FontWeight.Bold);Text(if(added)"Already added" else "${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f))};Icon(if(added)Icons.Default.CheckCircle else Icons.Default.Add,null,tint=Violet)} } }
+            LazyColumn(Modifier.heightIn(max=420.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){items(vm.playlists+social.sharedPlaylists.filter{it.ownerID!=vm.user?.uid}.map{it.imported()},key={it.id}){p -> val added=p.tracks.any{it.playableID==t.playableID};Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Glass).clickable(enabled=!added){vm.addToPlaylist(p.id,t);addTrack=null}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(p.tracks.firstOrNull()?.artwork,56);Column(Modifier.weight(1f).padding(start=12.dp)){Text(p.name,fontWeight=FontWeight.Bold);Text(if(added)"Already added" else "${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f))};Icon(if(added)Icons.Default.CheckCircle else Icons.Default.Add,null,tint=Violet)} } }
         }
     } }
-    selectedProfile?.let { p -> ModalBottomSheet(onDismissRequest={selectedProfile=null},containerColor=Night) {Column(Modifier.fillMaxWidth().padding(24.dp).navigationBarsPadding(),horizontalAlignment=Alignment.CenterHorizontally) {Artwork(p.avatar,88);Text(p.displayName,fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=12.dp));Text("@${p.username}",color=Violet); if(p.bio.isNotBlank())Text(p.bio,modifier=Modifier.padding(vertical=16.dp));if(p.id!=vm.user?.uid)Row(horizontalArrangement=Arrangement.spacedBy(12.dp)){Button(onClick={social.follow(p,p.id !in social.following)}){Text(if(p.id in social.following)"Unfollow" else "Follow")};OutlinedButton(onClick={social.openChat(p.id);chatPeer=p.id;selectedProfile=null}){Text("Message")}}} } }
-    chatPeer?.let { id -> ModalBottomSheet(onDismissRequest={social.closeChat();chatPeer=null},containerColor=Night,modifier=Modifier.fillMaxHeight(),dragHandle=null) {ChatScreen(id,vm,social){social.closeChat();chatPeer=null}} }
+    chatPeer?.let { id -> ModalBottomSheet(onDismissRequest={social.closeChat();chatPeer=null},containerColor=Night,modifier=Modifier.fillMaxHeight(),dragHandle=null) {ChatScreen(id,vm,social,{selectedProfile=it}){social.closeChat();chatPeer=null}} }
+    selectedProfile?.let { p -> ProfilePreview(social,vm.user?.uid,p,{selectedProfile=null}){id->social.openChat(id);chatPeer=id;selectedProfile=null} }
     val error = vm.error ?: social.error
     if(error != null) AlertDialog(onDismissRequest={vm.error=null;social.error=null},title={Text("CapyFlow")},text={Text(error)},confirmButton={TextButton(onClick={vm.error=null;social.error=null}) {Text("OK")}})
 }
@@ -204,7 +209,7 @@ class MainActivity : ComponentActivity() {
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(if(vm.current?.id==track.id)Violet.copy(alpha=.10f) else Color.Transparent).clickable(onClick=onPlay).padding(8.dp),verticalAlignment=Alignment.CenterVertically) {
         Artwork(track.artwork,56);Column(Modifier.weight(1f).padding(horizontal=12.dp)) {Text(track.title,maxLines=2,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold,color=if(vm.current?.id==track.id)Violet else Color.White);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){if(vm.hasDownload(track))Icon(Icons.Default.DownloadForOffline,"Downloaded",tint=Violet,modifier=Modifier.size(15.dp));if(track.isExplicit==true)ExplicitBadge();Text(track.artist,maxLines=1,overflow=TextOverflow.Ellipsis,fontSize=12.sp,color=Color.White.copy(alpha=.6f))}}
-        if(track.id in vm.downloading)CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp)
+        if(track.playableID in vm.downloading)CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp)
         Box {IconButton(onClick={menu=true}) {Icon(Icons.Default.MoreVert,"Song options")};DropdownMenu(menu,{menu=false}) {DropdownMenuItem(text={Text("Play next")},onClick={vm.playNext(track);menu=false});DropdownMenuItem(text={Text("Add to queue")},onClick={vm.enqueue(track);menu=false});DropdownMenuItem(text={Text("Add to playlist")},onClick={onAdd();menu=false});DropdownMenuItem(text={Text(if(vm.hasDownload(track))"Downloaded" else "Download")},onClick={vm.download(track);menu=false});if(remove!=null)DropdownMenuItem(text={Text("Remove")},onClick={remove();menu=false})} }
     }
 }
@@ -226,13 +231,13 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.fillMaxSize().widthIn(max=620.dp).align(Alignment.TopCenter).verticalScroll(rememberScrollState()).padding(horizontal=24.dp,vertical=8.dp),horizontalAlignment=Alignment.CenterHorizontally) {
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.Default.KeyboardArrowDown,"Close player")};Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally){Text("NOW PLAYING",fontSize=11.sp,letterSpacing=2.sp,fontWeight=FontWeight.Bold);Text("CapyFlow",fontSize=12.sp,color=Violet)};IconButton(onClick=onAdd){Icon(Icons.Default.PlaylistAdd,"Add to playlist")}}
                 Spacer(Modifier.height(12.dp));Artwork(track?.artwork,artSize)
-                Column(Modifier.fillMaxWidth().padding(top=16.dp,bottom=4.dp)){Text(track?.title ?: "CapyFlow",fontSize=26.sp,fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis);Text(track?.artist.orEmpty(),fontSize=16.sp,color=Color.White.copy(alpha=.66f),maxLines=1,overflow=TextOverflow.Ellipsis)}
+                Column(Modifier.fillMaxWidth().padding(top=16.dp,bottom=4.dp)){Text(track?.title ?: "CapyFlow",fontSize=26.sp,fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){if(track?.isExplicit==true)ExplicitBadge();Text(track?.artist.orEmpty(),fontSize=16.sp,color=Color.White.copy(alpha=.66f),maxLines=1,overflow=TextOverflow.Ellipsis)}}
                 Slider(value=scrub.coerceIn(0f,maxOf(vm.duration.toFloat(),1f)),onValueChange={scrubbing=true;scrub=it},onValueChangeFinished={vm.seek(scrub.toDouble());scrubbing=false},valueRange=0f..maxOf(vm.duration.toFloat(),1f),thumb={Box(Modifier.size(12.dp).background(Violet,CircleShape))},track={state -> SliderDefaults.Track(state,modifier=Modifier.height(4.dp),colors=SliderDefaults.colors(activeTrackColor=Violet,inactiveTrackColor=Color.White.copy(alpha=.14f)),drawStopIndicator=null,thumbTrackGapSize=0.dp)})
                 Row(Modifier.fillMaxWidth()){Text(clock(if(scrubbing)scrub.toDouble() else vm.elapsed),fontSize=12.sp,color=Color.White.copy(alpha=.5f));Spacer(Modifier.weight(1f));Text("−"+clock((vm.duration-(if(scrubbing)scrub.toDouble() else vm.elapsed)).coerceAtLeast(0.0)),fontSize=12.sp,color=Color.White.copy(alpha=.5f))}
-                Row(Modifier.padding(vertical=14.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(32.dp)){IconButton(onClick={vm.previous()},modifier=Modifier.size(52.dp)){Icon(Icons.Default.SkipPrevious,"Restart song",modifier=Modifier.size(32.dp))};FilledIconButton(onClick={vm.toggle()},modifier=Modifier.size(70.dp)){if(vm.loading)CircularProgressIndicator(Modifier.size(28.dp),color=Night) else Icon(if(vm.playing)Icons.Default.Pause else Icons.Default.PlayArrow,"Play or pause",modifier=Modifier.size(36.dp))};IconButton(onClick={vm.next()},enabled=vm.queue.isNotEmpty(),modifier=Modifier.size(52.dp)){Icon(Icons.Default.SkipNext,"Next song",modifier=Modifier.size(32.dp))}}
+                Row(Modifier.padding(vertical=14.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(32.dp)){IconButton(onClick={vm.previous()},modifier=Modifier.size(52.dp)){Icon(Icons.Default.SkipPrevious,"Previous song",modifier=Modifier.size(32.dp))};FilledIconButton(onClick={vm.toggle()},modifier=Modifier.size(70.dp)){if(vm.loading)CircularProgressIndicator(Modifier.size(28.dp),color=Night) else Icon(if(vm.playing)Icons.Default.Pause else Icons.Default.PlayArrow,"Play or pause",modifier=Modifier.size(36.dp))};IconButton(onClick={vm.next()},enabled=vm.queue.isNotEmpty(),modifier=Modifier.size(52.dp)){Icon(Icons.Default.SkipNext,"Next song",modifier=Modifier.size(32.dp))}}
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(10.dp)) {
                     PlayerAction("Lyrics",Icons.Default.FormatQuote,showLyrics,Modifier.weight(1f)){showLyrics=!showLyrics}
-                    val saved=track!=null && vm.downloads.any{it.playableID==track.playableID};val downloading=track?.id in vm.downloading
+                    val saved=track!=null && vm.downloads.any{it.playableID==track.playableID};val downloading=track?.playableID in vm.downloading
                     PlayerAction(if(downloading)"Saving…" else if(saved)"Saved" else "Save",if(saved)Icons.Default.CheckCircle else Icons.Default.Download,saved,Modifier.weight(1f)){track?.let{vm.download(it)}}
                     PlayerAction("Queue",Icons.AutoMirrored.Filled.QueueMusic,false,Modifier.weight(1f),onQueue)
                 }
@@ -248,7 +253,7 @@ class MainActivity : ComponentActivity() {
     LaunchedEffect(vm.current?.playableID,lines,active){if(synced && lines.isNotEmpty())state.animateScrollToItem(maxOf(0,active),-followOffset)}
     Column(Modifier.fillMaxWidth().padding(top=12.dp).clip(RoundedCornerShape(24.dp)).background(Glass).padding(horizontal=18.dp,vertical=12.dp)) {
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(if(synced)"LIVE LYRICS" else "LYRICS",fontSize=10.sp,letterSpacing=2.sp,color=Violet,modifier=Modifier.weight(1f));if(!synced && lines.isNotEmpty())Text("Timing unavailable",fontSize=10.sp,color=Color.White.copy(alpha=.5f))}
-        Box(Modifier.fillMaxWidth().height(196.dp),contentAlignment=Alignment.CenterStart) {
+        Box(Modifier.fillMaxWidth().height(220.dp),contentAlignment=Alignment.CenterStart) {
             if(vm.lyricsLoading)CircularProgressIndicator(Modifier.size(24.dp))
             else if(vm.lyricsError!=null)Column{Text(vm.lyricsError.orEmpty(),fontSize=13.sp);TextButton(onClick={vm.retryLyrics()}){Text("Retry")}}
             else if(lines.isEmpty())Text("Lyrics aren’t available for this track yet.",color=Color.White.copy(alpha=.6f),fontSize=13.sp)
@@ -337,22 +342,21 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
         }
     }
 }
-@Composable fun ChatScreen(peer: String,vm: CapyModel,social: SocialModel,onClose:()->Unit) {
-    var draft by remember(peer){mutableStateOf("")};var profile by remember(peer){mutableStateOf<Profile?>(null)}
-    LaunchedEffect(peer){runCatching{social.profile(peer)}.onSuccess{profile=it}}
+@Composable fun ChatScreen(peer: String,vm: CapyModel,social: SocialModel,onProfile:(Profile)->Unit,onClose:()->Unit) {
+    var draft by remember(peer){mutableStateOf("")};val profile=liveProfile(social,peer)
     Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding().padding(16.dp)) {
-        Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Text(profile?.displayName ?: "Messages",fontSize=22.sp,fontWeight=FontWeight.Bold)}
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp),reverseLayout=true){items(social.messages.reversed(),key={it.id}){m -> Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.sender==vm.user?.uid)Arrangement.End else Arrangement.Start){Column(Modifier.widthIn(max=280.dp).clip(RoundedCornerShape(20.dp)).background(if(m.sender==vm.user?.uid)Violet.copy(alpha=.22f) else Glass).padding(14.dp)){Text(m.text);if(m.pending)Text("Sending…",fontSize=10.sp,color=Color.White.copy(alpha=.5f))}}}}
+        Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Row(Modifier.clickable{profile?.let(onProfile)},verticalAlignment=Alignment.CenterVertically){ProfileAvatar(profile,40);Text(profile?.displayName ?: "Messages",fontSize=22.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(start=10.dp))}}
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp),reverseLayout=true){items(social.messages.reversed(),key={it.id}){m -> Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.sender==vm.user?.uid)Arrangement.End else Arrangement.Start){Column(Modifier.widthIn(max=280.dp).clip(RoundedCornerShape(20.dp)).background(if(m.sender==vm.user?.uid)Violet.copy(alpha=.22f) else Glass).padding(14.dp)){Text(m.text);Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){if(m.date>0)Text(java.text.SimpleDateFormat("h:mm a",java.util.Locale.getDefault()).format(java.util.Date(m.date)),fontSize=10.sp,color=Color.White.copy(alpha=.5f));if(m.sender==vm.user?.uid)Text(social.messageStatus(m),fontSize=10.sp,color=Color.White.copy(alpha=.5f))}}}}}
         Row(Modifier.padding(top=12.dp),verticalAlignment=Alignment.CenterVertically){OutlinedTextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),maxLines=4);IconButton(onClick={val submitted=draft;social.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!social.sending){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Violet)}}
     }
 }
 
-@Composable fun ExplicitBadge(){Text("E",fontSize=9.sp,fontWeight=FontWeight.Bold,color=Night,modifier=Modifier.clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha=.65f)).padding(horizontal=4.dp,vertical=1.dp))}
+@Composable fun ExplicitBadge(){Box(Modifier.size(14.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha=.65f)),contentAlignment=Alignment.Center){Text("E",fontSize=9.sp,lineHeight=9.sp,fontWeight=FontWeight.Bold,color=Night)}}
 @Composable fun PlaylistCover(playlist: Playlist,size: Int){val url=playlist.artworkURL ?: playlist.tracks.firstOrNull()?.artwork;if(url!=null)Artwork(url,size) else Box(Modifier.size(size.dp).clip(RoundedCornerShape(if(size>100)28.dp else 18.dp)).background(Violet.copy(alpha=.12f)),contentAlignment=Alignment.Center){Icon(Icons.AutoMirrored.Filled.QueueMusic,null,tint=Violet,modifier=Modifier.size((size*.38f).dp))}}
-@Composable fun LibraryScreen(vm: CapyModel,onOpen:(String)->Unit,onCreate:()->Unit,onProfile:()->Unit,onAdd:(Track)->Unit) {
+@Composable fun LibraryScreen(vm: CapyModel,social:SocialModel,onOpen:(String)->Unit,onCreate:()->Unit,onProfile:()->Unit,onAdd:(Track)->Unit) {
     var filter by rememberSaveable{mutableStateOf("All")};var sort by rememberSaveable{mutableStateOf("Recently added")};var menu by remember{mutableStateOf(false)};var offline by rememberSaveable{mutableStateOf(false)}
     BackHandler(enabled=offline){offline=false}
-    val collections=vm.playlists.filter{when(filter){"Albums" -> it.albumID!=null;"Playlists" -> it.albumID==null;else -> true}}.let{if(sort=="Name")it.sortedBy{p->p.name.lowercase()} else it.reversed()}
+    val collections=(if(filter=="Shared")social.sharedPlaylists.map{it.imported()} else vm.playlists+social.sharedPlaylists.filter{it.ownerID!=vm.user?.uid}.map{it.imported()}).filter{when(filter){"Albums" -> it.albumID!=null;"Playlists" -> it.albumID==null;else -> true}}.let{if(sort=="Name")it.sortedBy{p->p.name.lowercase()} else it.reversed()}
     LazyColumn(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(18.dp),contentPadding=PaddingValues(top=16.dp,bottom=24.dp)) {
         item{Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
             IconButton(onClick=onProfile,modifier=Modifier.size(44.dp).clip(CircleShape).background(Violet.copy(alpha=.15f))){Icon(Icons.Default.AccountCircle,"Profile",tint=Violet)}
@@ -364,8 +368,7 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
         if(offline || filter=="Downloaded") {
             if(vm.downloads.isEmpty())item{EmptyState("Your music, anywhere","Download a song from its menu to listen offline.",Icons.Default.DownloadForOffline)}
             items(vm.downloads,key={it.playableID}){t -> TrackRow(t,{vm.play(t,vm.downloads)},vm,{onAdd(t)},remove={vm.removeDownload(t)})}
-        } else if(filter=="Shared")item{EmptyState("Listen together","Shared playlists need the Android account service, which isn’t configured yet.",Icons.Default.People)}
-        else {
+        } else {
             item{Column{Section("Your collection");Text("${collections.size} saved",fontSize=12.sp,color=Color.White.copy(alpha=.55f))}}
             items(collections,key={it.id}){p -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).clickable{onOpen(p.id)}.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){PlaylistCover(p,68);Column(Modifier.weight(1f).padding(horizontal=14.dp)){Text(p.name,fontSize=18.sp,fontWeight=FontWeight.SemiBold);Text("${if(p.albumID!=null)"Album" else "Playlist"} · ${p.tracks.size} songs",fontSize=13.sp,color=Color.White.copy(alpha=.55f))};Icon(Icons.Default.ChevronRight,null,tint=Color.White.copy(alpha=.4f))}}
             if(collections.isEmpty())item{EmptyState("Make it yours","Create a playlist or save an album from Search.",Icons.AutoMirrored.Filled.QueueMusic)}
@@ -376,18 +379,21 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
         }
     }
 }
-@Composable fun PlaylistScreen(vm: CapyModel,playlist: Playlist,onClose:()->Unit,onSearch:()->Unit,onAdd:(Track)->Unit) {
-    var menu by remember{mutableStateOf(false)};var rename by remember{mutableStateOf(false)};var delete by remember{mutableStateOf(false)};var songPicker by remember{mutableStateOf(false)}
+@Composable fun PlaylistScreen(vm: CapyModel,social:SocialModel,playlist: Playlist,onClose:()->Unit,onSearch:()->Unit,onAdd:(Track)->Unit,onProfile:(Profile)->Unit) {
+    var menu by remember{mutableStateOf(false)};var rename by remember{mutableStateOf(false)};var delete by remember{mutableStateOf(false)};var songPicker by remember{mutableStateOf(false)};var collaborate by remember{mutableStateOf(false)};var deleteShared by remember{mutableStateOf(false)}
+    val shared=social.sharedFor(playlist);val isOwner=shared==null || shared.ownerID==vm.user?.uid
+    val creator=liveProfile(social,shared?.ownerID ?: playlist.ownerID ?: vm.user?.uid)
     val context=LocalContext.current
     val artwork=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri -> uri?.let{vm.setPlaylistArtwork(playlist.id,it)}}
     LazyColumn(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(18.dp),contentPadding=PaddingValues(top=12.dp,bottom=24.dp)) {
         item{Row(verticalAlignment=Alignment.CenterVertically){TextButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,null);Text("Back")};Text(playlist.name,fontSize=18.sp,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.weight(1f));Box{IconButton(onClick={menu=true}){Icon(Icons.Default.MoreHoriz,"Playlist options",tint=Violet)};DropdownMenu(menu,{menu=false}){
-            DropdownMenuItem(text={Text("Rename playlist")},onClick={menu=false;rename=true})
+            DropdownMenuItem(text={Text("Rename playlist")},enabled=isOwner,onClick={menu=false;rename=true})
             DropdownMenuItem(text={Text("Share playlist")},onClick={menu=false;val message="${playlist.name}\n"+playlist.tracks.joinToString("\n"){"${it.title} — ${it.artist}"};context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT,message),"Share playlist"))})
             DropdownMenuItem(text={Text("Remove playlist downloads")},enabled=playlist.tracks.any{vm.hasDownload(it)},onClick={menu=false;playlist.tracks.forEach{vm.removeDownload(it)}})
-            DropdownMenuItem(text={Text("Delete playlist")},onClick={menu=false;delete=true})
+            if(shared!=null)DropdownMenuItem(text={Text(if(isOwner)"Delete shared playlist" else "Leave shared playlist")},onClick={menu=false;deleteShared=true})
+            if(isOwner)DropdownMenuItem(text={Text("Delete playlist")},onClick={menu=false;delete=true})
         }}}}
-        item{Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){PlaylistCover(playlist,140);Column(Modifier.weight(1f).padding(start=18.dp)){Text(if(playlist.albumID!=null)"ALBUM" else "PLAYLIST",fontSize=11.sp,letterSpacing=3.sp,color=Violet,fontWeight=FontWeight.Bold);Text(playlist.name,fontSize=27.sp,fontWeight=FontWeight.Bold,maxLines=3,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(vertical=8.dp));Text("By ${vm.user?.displayName ?: "You"}",fontSize=13.sp,color=Color.White.copy(alpha=.65f));Text("${playlist.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.5f),modifier=Modifier.padding(top=6.dp))}}}
+        item{Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){PlaylistCover(playlist,140);Column(Modifier.weight(1f).padding(start=18.dp)){Text(if(playlist.albumID!=null)"ALBUM" else "PLAYLIST",fontSize=11.sp,letterSpacing=3.sp,color=Violet,fontWeight=FontWeight.Bold);Text(playlist.name,fontSize=27.sp,fontWeight=FontWeight.Bold,maxLines=3,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(vertical=8.dp));Text(creator?.username?.let{"By @$it"} ?: if(vm.user==null && shared==null)"By you" else "Loading creator…",fontSize=13.sp,color=Color.White.copy(alpha=.65f));Text("${playlist.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.5f),modifier=Modifier.padding(top=6.dp))}}}
         item{Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
             Button(onClick={playlist.tracks.firstOrNull()?.let{vm.play(it,playlist.tracks)}},enabled=playlist.tracks.isNotEmpty(),shape=CircleShape,modifier=Modifier.weight(1f).height(48.dp)){Icon(Icons.Default.PlayArrow,null);Text("Play",modifier=Modifier.padding(start=8.dp))}
             OutlinedButton(onClick={val shuffled=playlist.tracks.shuffled();shuffled.firstOrNull()?.let{vm.play(it,shuffled)}},enabled=playlist.tracks.isNotEmpty(),shape=CircleShape,modifier=Modifier.weight(1f).height(48.dp)){Icon(Icons.Default.Shuffle,null);Text("Shuffle",modifier=Modifier.padding(start=8.dp))}
@@ -395,25 +401,35 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
         item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
             PlayerAction("Add songs",Icons.Default.Add,false,Modifier.weight(1f)){songPicker=true}
             PlayerAction("Download",Icons.Default.DownloadForOffline,false,Modifier.weight(1f)){vm.downloadAll(playlist.tracks)}
-            PlayerAction("Artwork",Icons.Default.AddPhotoAlternate,false,Modifier.weight(1f)){artwork.launch("image/*")}
-            PlayerAction("Collaborate",Icons.Default.GroupAdd,false,Modifier.weight(1f)){vm.error="Collaborative playlists need the Android account service, which isn’t configured yet."}
+            if(isOwner && !playlist.id.startsWith("cloud:"))PlayerAction("Artwork",Icons.Default.AddPhotoAlternate,false,Modifier.weight(1f)){artwork.launch("image/*")}
+            PlayerAction("Collaborate",Icons.Default.GroupAdd,false,Modifier.weight(1f)){collaborate=true}
         }}
+        val failed=playlist.tracks.filter{it.playableID in vm.downloadFailures}
+        if(failed.isNotEmpty())item{Column{Text("Couldn’t download: "+failed.joinToString{it.title},fontSize=12.sp,color=Violet);TextButton(onClick={vm.retryFailedDownloads(failed)}){Text("Retry failed songs")}}}
         item{Column{Section("Songs");Text(if(playlist.tracks.isEmpty())"Add music from Search" else "Tap a row to play",fontSize=12.sp,color=Color.White.copy(alpha=.55f))}}
         if(playlist.tracks.isEmpty())item{Surface(shape=RoundedCornerShape(28.dp),color=Glass){Column(Modifier.padding(20.dp)){EmptyState("This playlist is ready","Find a song in Search, open its menu, then choose Add to playlist.",Icons.AutoMirrored.Filled.QueueMusic);TextButton(onClick=onSearch,modifier=Modifier.align(Alignment.CenterHorizontally)){Text("Find songs")}}}}
         items(playlist.tracks,key={it.id}){t -> TrackRow(t,{vm.play(t,playlist.tracks)},vm,{onAdd(t)},remove={vm.removeFromPlaylist(playlist.id,t.id)})}
     }
     if(rename){var name by remember{mutableStateOf(playlist.name)};AlertDialog(onDismissRequest={rename=false},title={Text("Rename playlist")},text={OutlinedTextField(name,{name=it},singleLine=true)},confirmButton={TextButton(onClick={vm.renamePlaylist(playlist.id,name);rename=false},enabled=name.isNotBlank()){Text("Save")}},dismissButton={TextButton(onClick={rename=false}){Text("Cancel")}})}
-    if(delete)AlertDialog(onDismissRequest={delete=false},title={Text("Delete playlist?")},text={Text("Downloaded songs will stay on this device.")},confirmButton={TextButton(onClick={vm.deletePlaylist(playlist.id);delete=false;onClose()}){Text("Delete")}},dismissButton={TextButton(onClick={delete=false}){Text("Cancel")}})
+    if(delete)AlertDialog(onDismissRequest={delete=false},title={Text("Delete playlist?")},text={Text(if(shared!=null)"This removes the playlist from My Playlists and Shared Playlists for everyone. Downloaded songs stay on this device." else "Downloaded songs will stay on this device.")},confirmButton={TextButton(onClick={vm.deletePlaylist(playlist.id);delete=false;onClose()}){Text("Delete")}},dismissButton={TextButton(onClick={delete=false}){Text("Cancel")}})
+    if(deleteShared && shared!=null)AlertDialog(onDismissRequest={deleteShared=false},title={Text(if(isOwner)"Delete shared playlist?" else "Leave shared playlist?")},text={Text(if(isOwner)"Collaborators will lose access. Your personal playlist keeps all its latest songs." else "You will lose access to this shared playlist.")},confirmButton={TextButton(onClick={if(isOwner)social.deleteShared(shared){vm.keepPersonalCopy(shared);deleteShared=false;if(playlist.id.startsWith("cloud:"))onClose()}else{social.removeMember(shared,vm.user!!.uid);deleteShared=false;onClose()}}){Text(if(isOwner)"Delete shared playlist" else "Leave")}},dismissButton={TextButton(onClick={deleteShared=false}){Text("Cancel")}})
+    if(collaborate)CollaborateSheet(vm,social,playlist,{collaborate=false},onProfile)
     if(songPicker) PlaylistSongPicker(vm,playlist,{songPicker=false},onSearch)
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun PlaylistSongPicker(vm: CapyModel,playlist: Playlist,onClose:()->Unit,onSearch:()->Unit){
-    var query by remember{mutableStateOf("")}
-    LaunchedEffect(query){kotlinx.coroutines.delay(400);vm.search(query)}
-    ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night){Column(Modifier.fillMaxWidth().padding(20.dp).navigationBarsPadding()){
-        Section("Add songs");OutlinedTextField(query,{query=it},placeholder={Text("Search songs or artists")},singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(24.dp))
-        if(vm.searching)LinearProgressIndicator(Modifier.fillMaxWidth())
-        LazyColumn(Modifier.heightIn(max=420.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){items(if(query.isBlank())vm.downloads else vm.results,key={it.id}){t -> val added=playlist.tracks.any{it.playableID==t.playableID};Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Glass).padding(12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(t.artwork,48);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(t.title,maxLines=1,overflow=TextOverflow.Ellipsis);Text(t.artist,color=Color.White.copy(alpha=.6f),fontSize=12.sp)};IconButton(onClick={vm.addToPlaylist(playlist.id,t)},enabled=!added){Icon(if(added)Icons.Default.CheckCircle else Icons.Default.Add,if(added)"Added" else "Add song",tint=Violet)}}}}
-        TextButton(onClick={onClose();onSearch()}){Text("Open Search")}
+    var query by remember{mutableStateOf("")};var albums by remember{mutableStateOf(false)};var selected by remember{mutableStateOf<Album?>(null)}
+    LaunchedEffect(query,albums){kotlinx.coroutines.delay(400);vm.search(query,albums)}
+    ModalBottomSheet(onDismissRequest={vm.closeAlbum();onClose()},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night){Column(Modifier.fillMaxWidth().padding(20.dp).navigationBarsPadding()){
+        Section("Add songs")
+        Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){FilterChip(!albums,{albums=false;selected=null},label={Text("Songs")});FilterChip(albums,{albums=true;selected=null},label={Text("Albums")})}
+        if(selected!=null){Row(verticalAlignment=Alignment.CenterVertically){TextButton(onClick={selected=null;vm.closeAlbum()}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null);Text("Albums")};Text(selected!!.title,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));TextButton(onClick={vm.albumTracks.forEach{vm.addToPlaylist(playlist.id,it)}}){Text("Add all")}}}
+        else OutlinedTextField(query,{query=it},placeholder={Text(if(albums)"Search albums or artists" else "Search songs or artists")},singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(24.dp))
+        if(vm.searching||vm.albumLoading)LinearProgressIndicator(Modifier.fillMaxWidth())
+        LazyColumn(Modifier.heightIn(max=420.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            if(albums && selected==null)items(vm.albums,key={it.id}){a -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Glass).clickable{selected=a;vm.openAlbum(a)}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(a.artwork,56);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(a.title,fontWeight=FontWeight.Bold);Text(a.artist,fontSize=12.sp,color=Violet)};Icon(Icons.Default.ChevronRight,null)}}
+            else items(if(selected!=null)vm.albumTracks else if(query.isBlank())vm.downloads else vm.results,key={it.playableID}){t -> val added=playlist.tracks.any{it.playableID==t.playableID};Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Glass).padding(12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(t.artwork,48);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(t.title,maxLines=1,overflow=TextOverflow.Ellipsis);Text(t.artist,color=Color.White.copy(alpha=.6f),fontSize=12.sp)};IconButton(onClick={vm.addToPlaylist(playlist.id,t)},enabled=!added){Icon(if(added)Icons.Default.CheckCircle else Icons.Default.Add,if(added)"Added" else "Add song",tint=Violet)}}}
+        }
+        TextButton(onClick={vm.closeAlbum();onClose();onSearch()}){Text("Open Search")}
     }}
 }

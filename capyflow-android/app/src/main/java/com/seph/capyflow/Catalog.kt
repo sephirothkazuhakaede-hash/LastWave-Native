@@ -25,9 +25,9 @@ data class Track(val id: String, val title: String, val artist: String, val dura
 }
 fun JSONObject.nullable(key: String): String? = if (has(key) && !isNull(key)) getString(key) else null
 
-data class Playlist(val id: String, val name: String, val tracks: List<Track>, val artworkURL: String? = null, val albumID: String? = null, val originalPayload: String? = null) {
-    fun json() = (originalPayload?.let{JSONObject(it)} ?: JSONObject()).put("id", id).put("name", name).put("tracks", JSONArray(tracks.map { it.json() })).put("artworkURL",artworkURL).put("albumID",albumID)
-    companion object { fun from(j: JSONObject) = Playlist(j.getString("id"), j.getString("name"), j.getJSONArray("tracks").let { a -> (0 until a.length()).map { Track.from(a.getJSONObject(it)) } },j.nullable("artworkURL"),j.nullable("albumID"),j.toString()) }
+data class Playlist(val id: String, val name: String, val tracks: List<Track>, val artworkURL: String? = null, val albumID: String? = null, val originalPayload: String? = null, val ownerID: String? = null) {
+    fun json() = (originalPayload?.let{JSONObject(it)} ?: JSONObject()).put("id", id).put("name", name).put("tracks", JSONArray(tracks.map { it.json() })).put("artworkURL",artworkURL).put("albumID",albumID).put("ownerID",ownerID)
+    companion object { fun from(j: JSONObject) = Playlist(j.getString("id"), j.getString("name"), j.getJSONArray("tracks").let { a -> (0 until a.length()).map { Track.from(a.getJSONObject(it)) } },j.nullable("artworkURL"),j.nullable("albumID"),j.toString(),j.nullable("ownerID")) }
 }
 data class Album(val id: String, val title: String, val artist: String, val artwork: String?, val year: String? = null)
 data class Lyric(val time: Double?, val text: String)
@@ -110,8 +110,15 @@ class Catalog {
         return emptyList()
     }
     suspend fun lyrics(track: Track): List<Lyric> {
-        val url="https://lrclib.net/api/search".toHttpUrl().newBuilder().addQueryParameter("track_name",cleanTitle(track.title)).addQueryParameter("artist_name",track.artist).build()
-        return selectLyrics(JSONArray(text(url.toString(),mapOf("User-Agent" to "CapyFlow-Android"),15)),track)
+        val headers=mapOf("User-Agent" to "CapyFlow-Android/0.1 (lyrics lookup)")
+        var plain=emptyList<Lyric>()
+        val exact="https://lrclib.net/api/get".toHttpUrl().newBuilder().addQueryParameter("track_name",cleanTitle(track.title)).addQueryParameter("artist_name",track.artist).apply{track.albumTitle?.let{addQueryParameter("album_name",it)};track.duration?.let{addQueryParameter("duration",it.toString())}}.build()
+        try{val candidate=selectLyrics(JSONArray().put(JSONObject(text(exact.toString(),headers,10))),track);if(candidate.any{it.time!=null})return candidate;plain=candidate}catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){}
+        val urls=listOf(
+            "https://lrclib.net/api/search".toHttpUrl().newBuilder().addQueryParameter("track_name",cleanTitle(track.title)).addQueryParameter("artist_name",track.artist).build(),
+            "https://lrclib.net/api/search".toHttpUrl().newBuilder().addQueryParameter("q",cleanTitle(track.title)+" "+track.artist).build())
+        for(url in urls)try{val candidate=selectLyrics(JSONArray(text(url.toString(),headers,10)),track);if(candidate.any{it.time!=null})return candidate;if(plain.isEmpty())plain=candidate}catch(e:kotlinx.coroutines.CancellationException){throw e}catch(_:Exception){}
+        return plain
     }
     companion object {
         fun cleanTitle(title: String) = title.replace(Regex("(?i)\\s*[(\\[](?:official(?: music)? (?:audio|video)|lyrics?|audio|visualizer)[)\\]]"), "").trim()
