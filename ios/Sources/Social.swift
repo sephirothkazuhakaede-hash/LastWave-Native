@@ -106,6 +106,11 @@ struct SharedPlaylist: Identifiable, Equatable {
     let memberIDs: [String]
     let tracks: [Track]
 
+    func sourcePlaylist(for userID: String) -> ImportedPlaylist? {
+        guard ownerID == userID, !sourceID.hasPrefix("cloud:") else { return nil }
+        return ImportedPlaylist(id: sourceID, name: name, tracks: tracks)
+    }
+
     var imported: ImportedPlaylist { ImportedPlaylist(id: "cloud:" + id, name: name, tracks: tracks) }
 
     init?(id: String, data: [String: Any]) {
@@ -403,14 +408,21 @@ enum SocialConnectionState: Equatable {
         } catch { handleSocialError(error) }
     }
 
+    func sharedPlaylist(for playlistID: String) -> SharedPlaylist? {
+        sharedPlaylists.first {
+            "cloud:" + $0.id == playlistID ||
+            ($0.ownerID == userID && $0.sourceID == playlistID)
+        }
+    }
+
     @discardableResult func publish(_ playlist: ImportedPlaylist) async -> String? {
         guard let uid = userID, let profile else {
             error = "Sign in and finish your profile before sharing a playlist."
             return nil
         }
         let key = "capyflow.cloudPlaylist.\(uid).\(playlist.id)"
-        let savedPlaylistID = playlist.id.hasPrefix("cloud:") ? String(playlist.id.dropFirst(6))
-            : UserDefaults.standard.string(forKey: key)
+        let savedPlaylistID = sharedPlaylist(for: playlist.id)?.id ?? (playlist.id.hasPrefix("cloud:") ? String(playlist.id.dropFirst(6))
+            : UserDefaults.standard.string(forKey: key))
         let playlistID = savedPlaylistID ?? UUID().uuidString
         let ref = db.collection("playlists").document(playlistID)
         do {
@@ -633,7 +645,7 @@ enum SocialConnectionState: Equatable {
                                 fromCache: snapshot.metadata.isFromCache)
     }
 
-    private func loadProfile(_ uid: String) async -> SocialProfile? {
+    func loadProfile(_ uid: String) async -> SocialProfile? {
         let ref = db.collection("profiles").document(uid)
         let snapshot: DocumentSnapshot?
         do {
@@ -840,9 +852,10 @@ enum SocialConnectionState: Equatable {
         listeners.append(db.collection("playlists").whereField("memberIDs", arrayContains: uid).addSnapshotListener { [weak self] snapshot, error in
             Task { @MainActor in
                 guard let self, self.userID == uid, self.listenerEpoch == epoch else { return }
-                self.sharedPlaylists = snapshot?.documents.compactMap { SharedPlaylist(id: $0.documentID, data: $0.data()) }
-                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } ?? []
-                if let error { self.handleSocialError(error) }
+                if let error { self.handleSocialError(error); return }
+                guard let snapshot else { return }
+                self.sharedPlaylists = snapshot.documents.compactMap { SharedPlaylist(id: $0.documentID, data: $0.data()) }
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             }
         })
     }

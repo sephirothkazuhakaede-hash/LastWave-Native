@@ -36,6 +36,7 @@ struct AccountPlaylistRecord: Codable, Equatable {
     private var pending: [String: AccountPlaylistRecord] = [:]
     private var applying = false
     private var didBind = false
+    private var sharedSources: [String: ImportedPlaylist] = [:]
 
     func observe(_ player: WavePlayer) {
         self.player = player
@@ -50,7 +51,7 @@ struct AccountPlaylistRecord: Codable, Equatable {
         didBind = true
         if uid != nil { persistLocal() }
         generation = UUID(); writer?.cancel(); writer = nil; listener?.remove()
-        uid = userID; error = nil; pending = [:]; baseline = [:]
+        uid = userID; error = nil; pending = [:]; baseline = [:]; sharedSources = [:]
         guard let player else { return }
         let defaults = UserDefaults.standard
         let previousOwner = defaults.string(forKey: "capyflow.library.owner")
@@ -94,6 +95,31 @@ struct AccountPlaylistRecord: Codable, Equatable {
             }
         }
         flush()
+    }
+
+    // Shared documents are authoritative for linked playlists. Keep the same
+    // source ID and artwork in the personal library and account backup.
+    func applySharedPlaylists(_ shared: [SharedPlaylist], userID: String?) {
+        guard let userID, uid == userID, let player else { return }
+        sharedSources = [:]
+        for playlist in shared {
+            if let source = playlist.sourcePlaylist(for: userID) { sharedSources[source.id] = source }
+        }
+        let library = overlaySharedSources(on: player.playlists)
+        let changed = library.count != player.playlists.count ||
+            zip(library, player.playlists).contains { $0.id != $1.id || $0.name != $1.name || $0.tracks != $1.tracks }
+        guard changed else { return }
+        player.restoreAccountPlaylists(library)
+        localChanged()
+    }
+
+    private func overlaySharedSources(on library: [ImportedPlaylist]) -> [ImportedPlaylist] {
+        var result = library
+        for source in sharedSources.values {
+            if let index = result.firstIndex(where: { $0.id == source.id }) { result[index] = source }
+            else { result.append(source) }
+        }
+        return result
     }
 
     func retry() { error = nil; flush(); if pending.isEmpty, let uid { let id = uid; self.uid = nil; bind(userID: id) } }
@@ -168,7 +194,7 @@ struct AccountPlaylistRecord: Codable, Equatable {
             else { library.append(playlist) }
             player.restoreAccountPlaylistArtwork(data["cover"] as? Data, for: id)
         }
-        player.restoreAccountPlaylists(library)
+        player.restoreAccountPlaylists(overlaySharedSources(on: library))
         baseline = capture(); persistLocal()
     }
     private func flush() {

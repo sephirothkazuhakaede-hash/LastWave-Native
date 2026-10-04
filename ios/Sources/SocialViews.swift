@@ -407,56 +407,118 @@ struct CollaborateSheet: View {
     @State private var username = ""
     @State private var cloudID: String?
     @State private var working = false
+    @State private var profiles: [String: SocialProfile] = [:]
+    @State private var removeID: String?
+    @State private var confirmRemove = false
+
+    private var shared: SharedPlaylist? {
+        social.sharedPlaylist(for: playlist.id) ?? social.sharedPlaylists.first { $0.id == cloudID }
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
                 WaveBackdrop()
                 ScrollView {
-                VStack(spacing: 18) {
-                    Image(systemName: "person.2.badge.plus").font(.system(size: 46)).foregroundStyle(Color.waveBlue)
-                    Text("Share “\(playlist.name)”").font(.title2.bold()).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-                    Text("Publish the playlist to your CapyFlow account, then add a friend by username. Changes appear on both phones.")
-                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                    TextField("Friend's @username", text: $username)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled().padding(16).waveGlass(radius: 20)
-                    Button {
-                        Task {
-                            working = true
-                            cloudID = await social.invite(username: username, to: playlist)
-                            working = false
-                        }
-                    } label: {
-                        Group { if working { ProgressView() } else { Label("Add collaborator", systemImage: "person.badge.plus") } }
-                            .frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
-                    }
-                    .buttonStyle(.borderedProminent).tint(Color.waveBlue).foregroundStyle(.black)
-                    .disabled(username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || working)
-                    Button {
-                        Task { working = true; cloudID = await social.publish(playlist); working = false }
-                    } label: {
-                        Label(cloudID == nil ? "Publish shared copy" : "Shared copy ready", systemImage: cloudID == nil ? "icloud.and.arrow.up" : "checkmark.circle.fill")
-                            .frame(maxWidth: .infinity).frame(height: 48).contentShape(Rectangle())
-                    }.buttonStyle(.bordered).disabled(working)
-                    if let shared = social.sharedPlaylists.first(where: { "cloud:" + $0.id == playlist.id || $0.id == cloudID }) {
-                        ForEach(shared.memberIDs.filter { $0 != shared.ownerID }, id: \.self) { uid in
-                            HStack {
-                                Text(social.following.first(where: { $0.id == uid }).map { "@" + $0.username } ?? "Collaborator")
-                                Spacer()
-                                Button("Remove", role: .destructive) {
-                                    Task { await social.removeMember(uid, from: shared) }
+                    CapyScreenContainer {
+                        VStack(alignment: .leading, spacing: 22) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label(shared == nil ? "Build a playlist together" : "Manage collaborators", systemImage: "person.2.fill")
+                                    .font(.capySection).foregroundStyle(CapyColor.accent)
+                                Text(shared?.name ?? playlist.name).font(.capyTitle).lineLimit(3)
+                                Text("Everyone here can add and remove songs. Your collection and shared playlist stay in sync.")
+                                    .font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                            }
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Invite a friend").font(.capyCallout)
+                                TextField("Friend's @username", text: $username)
+                                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                    .padding(14).background(CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 16))
+                                Button {
+                                    Task {
+                                        working = true
+                                        if let id = await social.invite(username: username, to: playlist) {
+                                            cloudID = id; username = ""
+                                        }
+                                        working = false
+                                    }
+                                } label: {
+                                    if working { ProgressView().frame(maxWidth: .infinity) }
+                                    else { Label("Add collaborator", systemImage: "person.badge.plus").frame(maxWidth: .infinity) }
                                 }
-                            }.font(.capyCaption)
-                        }
+                                .buttonStyle(CapyPrimaryButtonStyle())
+                                .disabled(!UsernamePolicy.isValid(username) || working)
+                                if shared == nil && cloudID == nil {
+                                    Button {
+                                        Task { working = true; cloudID = await social.publish(playlist); working = false }
+                                    } label: { Label("Enable collaboration", systemImage: "person.2").frame(maxWidth: .infinity) }
+                                        .buttonStyle(CapySecondaryButtonStyle()).disabled(working)
+                                }
+                            }.padding(16).waveSurface(radius: 22)
+
+                            if let shared {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    CapySectionHeader("People", subtitle: "\(shared.memberIDs.count) in this playlist")
+                                    ForEach(shared.memberIDs.sorted { $0 == shared.ownerID && $1 != shared.ownerID }, id: \.self) { uid in
+                                        collaboratorRow(uid, in: shared)
+                                    }
+                                }
+                            }
+                            if let error = social.error {
+                                Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning)
+                            }
+                        }.padding(.vertical, 20)
                     }
-                    if let error = social.error { Text(error).font(.footnote).foregroundStyle(.orange).multilineTextAlignment(.center) }
-                }.padding(24)
                 }
             }
             .navigationTitle("Collaborate").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.tint(CapyColor.accent) } }
+            .task(id: shared?.memberIDs) {
+                profiles = [:]
+                for uid in shared?.memberIDs ?? [] {
+                    guard !Task.isCancelled else { return }
+                    if let person = await social.loadProfile(uid), !Task.isCancelled { profiles[uid] = person }
+                }
+            }
+            .confirmationDialog("Remove collaborator?", isPresented: $confirmRemove, titleVisibility: .visible) {
+                Button("Remove collaborator", role: .destructive) {
+                    if let shared, let removeID {
+                        Task { working = true; await social.removeMember(removeID, from: shared); working = false }
+                    }
+                }
+                Button("Cancel", role: .cancel) { removeID = nil }
+            } message: { Text("They will lose access to this playlist. Songs already added will stay.") }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
+    }
+
+    private func collaboratorRow(_ uid: String, in shared: SharedPlaylist) -> some View {
+        let person = profiles[uid] ?? social.following.first { $0.id == uid }
+        let owner = uid == shared.ownerID
+        return HStack(spacing: 12) {
+            if let person { SocialAvatar(profile: person, size: 48) }
+            else {
+                Image(systemName: "person.fill").foregroundStyle(CapyColor.accent)
+                    .frame(width: 48, height: 48).background(CapyColor.surfaceStrong, in: Circle())
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(person?.displayName ?? (owner ? "Playlist owner" : "Collaborator")).font(.capyCallout).lineLimit(1)
+                if let person { Text("@" + person.username).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(1) }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+            if owner {
+                Text("Owner").font(.caption.weight(.semibold)).foregroundStyle(CapyColor.accent)
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(CapyColor.accent.opacity(0.12), in: Capsule())
+            } else if shared.ownerID == social.currentUserID {
+                Button { removeID = uid; confirmRemove = true } label: {
+                    Image(systemName: "person.fill.badge.minus").font(.body.weight(.semibold))
+                        .frame(width: 44, height: 44).background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+                }.buttonStyle(.plain).foregroundStyle(Color.red).disabled(working)
+                    .accessibilityLabel("Remove " + (person?.displayName ?? "collaborator"))
+            } else {
+                Text("Collaborator").font(.caption).foregroundStyle(CapyColor.secondaryText)
+            }
+        }.padding(12).waveSurface(radius: 20)
     }
 }
 
@@ -468,6 +530,7 @@ struct SharedPlaylistDetailView: View {
     @State private var renamePresented = false
     @State private var playlistName = ""
     @State private var managePresented = false
+    @State private var addSongsPresented = false
     @Environment(\.dismiss) private var dismiss
     private var playlist: SharedPlaylist? { social.sharedPlaylists.first { $0.id == playlistID } }
     var body: some View {
@@ -479,11 +542,11 @@ struct SharedPlaylistDetailView: View {
                         if let playlist {
                             ViewThatFits(in: .horizontal) {
                                 HStack(alignment: .bottom, spacing: 18) {
-                                    SharedCover(tracks: playlist.tracks, size: 154)
+                                    sharedCover(playlist, size: 154)
                                     sharedMetadata(playlist).frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
                                 }
                                 VStack(alignment: .leading, spacing: 16) {
-                                    HStack { Spacer(minLength: 0); SharedCover(tracks: playlist.tracks, size: 230); Spacer(minLength: 0) }
+                                    HStack { Spacer(minLength: 0); sharedCover(playlist, size: 230); Spacer(minLength: 0) }
                                     sharedMetadata(playlist)
                                 }
                             }
@@ -495,6 +558,8 @@ struct SharedPlaylistDetailView: View {
                                     Label("Download", systemImage: "arrow.down.circle")
                                 }.buttonStyle(CapySecondaryButtonStyle())
                             }
+                            Button { addSongsPresented = true } label: { Label("Add songs", systemImage: "plus").frame(maxWidth: .infinity) }
+                                .buttonStyle(CapySecondaryButtonStyle())
                             CapySectionHeader("Songs", subtitle: "Everyone in this playlist sees shared changes")
                             ForEach(playlist.tracks) { track in
                                 SocialTrackRow(track: track)
@@ -538,10 +603,19 @@ struct SharedPlaylistDetailView: View {
             Button("Cancel", role: .cancel) {}
             Button("Save") { if let playlist { Task { await social.rename(playlist, to: playlistName) } } }
         }
+        .sheet(isPresented: $addSongsPresented) { PlaylistSongPicker(playlistID: "cloud:" + playlistID) }
         .sheet(isPresented: $managePresented) {
             if let playlist { CollaborateSheet(playlist: playlist.imported) }
         }
         .onChange(of: playlist == nil) { _, missing in if missing { dismiss() } }
+    }
+
+    @ViewBuilder private func sharedCover(_ playlist: SharedPlaylist, size: CGFloat) -> some View {
+        if let uid = social.currentUserID, let source = playlist.sourcePlaylist(for: uid) {
+            PlaylistCover(playlist: source, size: size, radius: 24)
+        } else {
+            SharedCover(tracks: playlist.tracks, size: size)
+        }
     }
 
     private func sharedMetadata(_ playlist: SharedPlaylist) -> some View {

@@ -2,6 +2,31 @@ import XCTest
 @testable import CapyFlow
 
 final class PlaylistCloudSyncTests: XCTestCase {
+    func testSharedPlaylistRetainsSourceIdentityOnlyForOwner() throws {
+        let track = Track(id: "abcdefghijk", title: "Collaborator song", artist: "Artist")
+        let shared = try XCTUnwrap(SharedPlaylist(id: "shared-id", data: [
+            "sourceID": "original-id", "name": "Together", "ownerID": "owner",
+            "memberIDs": ["owner", "friend"], "tracks": [track.firestoreData]
+        ]))
+        let source = try XCTUnwrap(shared.sourcePlaylist(for: "owner"))
+        XCTAssertEqual(source.id, "original-id")
+        XCTAssertEqual(source.name, "Together")
+        XCTAssertEqual(source.tracks.map(\.id), [track.id])
+        XCTAssertEqual(shared.imported.id, "cloud:shared-id")
+        XCTAssertNil(shared.sourcePlaylist(for: "friend"))
+    }
+
+    func testSharedRenameAndRemovalReplaceStaleSourceContents() throws {
+        let shared = try XCTUnwrap(SharedPlaylist(id: "shared-id", data: [
+            "sourceID": "original-id", "name": "Renamed together", "ownerID": "owner",
+            "memberIDs": ["owner", "friend"], "tracks": [[String: Any]]()
+        ]))
+        let source = try XCTUnwrap(shared.sourcePlaylist(for: "owner"))
+        XCTAssertEqual(source.name, "Renamed together")
+        XCTAssertTrue(source.tracks.isEmpty)
+        XCTAssertEqual(source.id, "original-id")
+    }
+
     func testPlaylistAndCoverRoundTripRetainsPlayableIdentity() throws {
         let track = Track(id: "abcdefghijk", title: "Song", artist: "Artist")
         let playlist = ImportedPlaylist(id: "album:source/id", name: "Road trip", tracks: [track])

@@ -56,8 +56,9 @@ import GoogleSignIn
                 .preferredColorScheme(.dark)
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
                 .task(id: auth.user?.uid) { activity.bind(userID: auth.user?.uid); activity.watchFriends(social.following) }
-                .task(id: auth.user?.uid) { if enablesAutomaticUpdates { playlistSync.bind(userID: auth.user?.uid) } }
+                .task(id: auth.user?.uid) { if enablesAutomaticUpdates { playlistSync.bind(userID: auth.user?.uid); playlistSync.applySharedPlaylists(social.sharedPlaylists, userID: social.currentUserID) } }
                 .task(id: auth.user?.uid) { messaging.bind(userID: auth.user?.uid) }
+                .onReceive(social.$sharedPlaylists) { playlistSync.applySharedPlaylists($0, userID: social.currentUserID) }
                 .onReceive(social.$following.debounce(for: .milliseconds(300), scheduler: RunLoop.main)) { activity.watchFriends($0) }
                 .task { if enablesAutomaticUpdates { await updates.check() } }
                 .onChange(of: scenePhase) { _, phase in
@@ -1516,7 +1517,7 @@ private struct PlaylistLibraryView: View {
     @ViewBuilder private var sharedSection: some View {
         if !social.sharedPlaylists.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                CapySectionHeader("Shared with you", subtitle: "Playlists you can build together")
+                CapySectionHeader("Shared playlists", subtitle: "Playlists you can build together")
                 ForEach(social.sharedPlaylists) { playlist in
                     NavigationLink { SharedPlaylistDetailView(playlistID: playlist.id) } label: { SharedPlaylistRow(playlist: playlist) }
                         .buttonStyle(.plain)
@@ -1646,7 +1647,7 @@ private struct NewPlaylistSheet: View {
     }
 }
 
-private struct PlaylistCover: View {
+struct PlaylistCover: View {
     @EnvironmentObject var player: WavePlayer
     let playlist: ImportedPlaylist
     var size: CGFloat
@@ -1673,6 +1674,7 @@ private struct PlaylistCover: View {
 }
 
 private struct PlaylistDetailView: View {
+    @EnvironmentObject private var social: SocialStore
     @EnvironmentObject var player: WavePlayer
     @EnvironmentObject var auth: AuthSession
     @Environment(\.dismiss) private var dismiss
@@ -1682,8 +1684,17 @@ private struct PlaylistDetailView: View {
     @State private var showDelete = false
     @State private var showRemoveDownloads = false
     @State private var showCollaborate = false
+    @State private var showSongPicker = false
     private var playlist: ImportedPlaylist? { player.playlists.first { $0.id == playlistID } }
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if let shared = social.sharedPlaylist(for: playlistID) {
+            SharedPlaylistDetailView(playlistID: shared.id)
+        } else {
+            localBody
+        }
+    }
+
+    private var localBody: some View {
         ZStack {
             CapyAmbientBackdrop(seed: playlistID, artworkURL: playlist?.tracks.first?.artwork)
             ScrollView {
@@ -1750,6 +1761,7 @@ private struct PlaylistDetailView: View {
         .sheet(isPresented: $showRename) {
             if let playlist { RenamePlaylistSheet(playlistID: playlist.id, currentName: playlist.name) }
         }
+        .sheet(isPresented: $showSongPicker) { PlaylistSongPicker(playlistID: playlistID) }
         .sheet(isPresented: $showCollaborate) {
             if let playlist { CollaborateSheet(playlist: playlist) }
         }
@@ -1800,6 +1812,9 @@ private struct PlaylistDetailView: View {
     }
 
     @ViewBuilder private func playlistActions(_ playlist: ImportedPlaylist) -> some View {
+        if !playlist.id.hasPrefix("album:") {
+            compactAction("Add songs", icon: "plus") { showSongPicker = true }
+        }
         compactAction(
             player.isPlaylistDownloaded(playlist) ? "Downloaded" : "Download",
             icon: player.isPlaylistDownloaded(playlist) ? "arrow.down.circle.fill" : "arrow.down.circle"
@@ -1834,6 +1849,7 @@ private struct PlaylistDetailView: View {
 }
 
 private struct RenamePlaylistSheet: View {
+    @EnvironmentObject private var social: SocialStore
     @EnvironmentObject var player: WavePlayer
     @Environment(\.dismiss) private var dismiss
     let playlistID: String
@@ -1850,8 +1866,12 @@ private struct RenamePlaylistSheet: View {
                     TextField("Playlist name", text: $name)
                         .font(.title3.weight(.semibold)).padding(16).waveGlass(radius: 20)
                     Button {
-                        player.renamePlaylist(playlistID, to: name)
-                        dismiss()
+                        if let shared = social.sharedPlaylist(for: playlistID) {
+                            Task { await social.rename(shared, to: name); if social.error == nil { dismiss() } }
+                        } else {
+                            player.renamePlaylist(playlistID, to: name)
+                            dismiss()
+                        }
                     } label: {
                         Text("Save name").frame(maxWidth: .infinity).frame(height: 50).contentShape(Rectangle())
                     }
@@ -1957,7 +1977,12 @@ private struct TrackActionSheet: View {
                 action("Add to queue", icon: "text.append") { player.queue.append(track); dismiss() }
                 Menu {
                     ForEach(player.playlists) { playlist in
-                        Button(playlist.name) { player.add(track, to: playlist.id); dismiss() }
+                        Button(playlist.name) {
+                            if let shared = social.sharedPlaylist(for: playlist.id) {
+                                Task { await social.add(track, to: shared) }
+                            } else { player.add(track, to: playlist.id) }
+                            dismiss()
+                        }
                     }
                     if !social.sharedPlaylists.isEmpty {
                         Section("Shared playlists") {
@@ -2264,6 +2289,7 @@ struct PlayerView: View {
     @State private var showLyrics: Bool
     @State private var showQueue = false
     @State private var showAudioInfo = false
+    @State private var playlistTrack: Track?
 
     init(showLyricsInitially: Bool = false) {
         _showLyrics = State(initialValue: showLyricsInitially)
@@ -2299,6 +2325,9 @@ struct PlayerView: View {
                         HStack {
                         AudioOutputPicker().frame(width: 44, height: 44)
                         Menu {
+                            if let track = player.current {
+                                Button { playlistTrack = track } label: { Label("Add to playlist", systemImage: "text.badge.plus") }
+                            }
                             Button("Audio Info / Current Quality") { showAudioInfo = true }
                             Divider()
                             Button("Clear queue", role: .destructive) { player.queue.removeAll() }
@@ -2400,6 +2429,7 @@ struct PlayerView: View {
             scrubPosition = 0
         }
         .sheet(isPresented: $showQueue) { QueueSheet().presentationDetents([.medium, .large]) }
+        .sheet(item: $playlistTrack) { AddTrackToPlaylistSheet(track: $0) }
         .alert("Audio Info / Current Quality", isPresented: $showAudioInfo) {
             Button("Done", role: .cancel) {}
         } message: {
