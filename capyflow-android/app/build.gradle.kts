@@ -4,12 +4,16 @@ if (firebaseConfigured) apply(plugin = "com.google.gms.google-services")
 android {
     namespace = "com.seph.capyflow"
     compileSdk = 36
-    defaultConfig { applicationId = "com.seph.capyflow"; minSdk = 26; targetSdk = 36; versionCode = 2; versionName = "0.1.0-dev2"; buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString()) }
-    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+    defaultConfig { applicationId = "com.seph.capyflow"; minSdk = 26; targetSdk = 36; versionCode = 6; versionName = "0.1.0-dev6"; buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString()) }
+    if (rootProject.file("signing/capyflow-preview.jks").exists()) signingConfigs { getByName("debug") { storeFile = rootProject.file("signing/capyflow-preview.jks"); storePassword = "android"; keyAlias = "capyflow-preview"; keyPassword = "android" } }
+    compileOptions { isCoreLibraryDesugaringEnabled = true; sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
 }
 dependencies {
+    implementation(files("libs/protolite-well-known-types-18.0.1-compatible.aar"))
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.5")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.compose.material3:material3")
@@ -29,3 +33,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }
+
+// The local compatible AAR retains Google API/RPC types and removes only protobuf
+// classes now also supplied by protobuf-javalite 4. See THIRD-PARTY-NOTICES.md.
+configurations.configureEach { exclude(group = "com.google.firebase", module = "protolite-well-known-types") }

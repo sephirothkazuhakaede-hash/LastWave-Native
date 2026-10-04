@@ -18,11 +18,13 @@ class PlaybackService : MediaSessionService() {
             // Attach credentials only for the exact server this app resolved.
             val trusted = PlaybackAuthorization.host
             val token = PlaybackAuthorization.token
+            val baseRequest=if(request.url.host.endsWith(".googlevideo.com"))request.newBuilder().header("User-Agent",DirectMusic.USER_AGENT).build() else request
             val signed = if (request.url.isHttps && request.url.host == trusted && token != null)
-                request.newBuilder().header("Authorization", "Bearer $token").build() else request
+                baseRequest.newBuilder().header("Authorization", "Bearer $token").build() else baseRequest
             chain.proceed(signed)
         }.build()
-        val player = ExoPlayer.Builder(this).setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(http))).build()
+        val renderers=androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true).setEnableAudioFloatOutput(false).setEnableAudioTrackPlaybackParams(false)
+        val player = ExoPlayer.Builder(this,renderers).setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(http))).build()
         player.setAudioAttributes(androidx.media3.common.AudioAttributes.Builder()
             .setUsage(androidx.media3.common.C.USAGE_MEDIA).setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
         player.setHandleAudioBecomingNoisy(true)

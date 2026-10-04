@@ -32,9 +32,24 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     val db: FirebaseFirestore? = if (BuildConfig.FIREBASE_CONFIGURED) FirebaseFirestore.getInstance() else null
     var user by mutableStateOf(auth?.currentUser); private set
     var results by mutableStateOf<List<Track>>(emptyList()); private set
+    var albums by mutableStateOf<List<Album>>(emptyList()); private set
+    var albumTracks by mutableStateOf<List<Track>>(emptyList()); private set
+    var albumLoading by mutableStateOf(false); private set
+    var lyricsError by mutableStateOf<String?>(null); private set
+    private var searchEpoch=0
+    private var albumEpoch=0
+    private var lyricEpoch=0
+    private var albumJob: Job?=null
+    private var usingLocalPlayback=false
+    private var recoveringPlayback=false
+    private var usingDirectPlayback=false
+    private var backendRetryAfter=0L
     var searching by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null)
     var current by mutableStateOf<Track?>(null); private set
+    var audioDetails by mutableStateOf("Not playing"); private set
+    private val downloadingIDs=mutableSetOf<String>()
+    private val downloadSlots=kotlinx.coroutines.sync.Semaphore(2)
     var playing by mutableStateOf(false); private set
     var loading by mutableStateOf(false); private set
     var elapsed by mutableDoubleStateOf(0.0); private set
@@ -46,6 +61,10 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     var downloads by mutableStateOf<List<Track>>(emptyList()); private set
     var downloading by mutableStateOf<Set<String>>(emptySet()); private set
     var server by mutableStateOf(prefs.getString("server", "") ?: ""); private set
+    var automaticServer by mutableStateOf(prefs.getBoolean("automaticServer",server.isBlank() || runCatching{server.toHttpUrl().host.endsWith(".trycloudflare.com")}.getOrDefault(false))); private set
+    var serverStatus by mutableStateOf(""); private set
+    private var serverEpoch=0
+    private var lastDiscoveryMs=0L
     var quality by mutableStateOf(prefs.getString("quality", "automatic") ?: "automatic"); private set
     var cloudStatus by mutableStateOf("Sign in to back up playlists"); private set
     private var controller: MediaController? = null
@@ -76,7 +95,12 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
                         loading = state == Player.STATE_BUFFERING
                         if (state == Player.STATE_ENDED) next()
                     }
-                    override fun onPlayerError(e: PlaybackException) { error = "Playback failed: ${e.message}"; loading = false }
+                    override fun onPlayerError(e: PlaybackException) {
+                        val track=current
+                        if(track!=null && !recoveringPlayback && (usingLocalPlayback || e.errorCode in 2000..2999)) {
+                            play(track,recovering=true,resumeAt=elapsed,preferDirect=!usingLocalPlayback && !usingDirectPlayback)
+                        } else { error=if(usingLocalPlayback)"This saved audio couldn’t play. Your download has been kept. Try again, or remove it from Downloads and download it again when online. (${e.errorCodeName})" else "Playback couldn’t continue. Check your connection and server, then try again. (${e.errorCodeName})";loading=false }
+                    }
                 })
                 c.currentMediaItem?.let { item -> current = Track(item.mediaId, item.mediaMetadata.title.toString(), item.mediaMetadata.artist.toString(), artworkURL = item.mediaMetadata.artworkUri?.toString()) }
             }.onFailure { error = "Player could not start: ${it.message}" }
@@ -87,57 +111,139 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     private fun readArray(key: String) = JSONArray(prefs.getString(key, "[]"))
     private fun readPlaylists() = runCatching { readArray("library.$owner").let { a -> (0 until a.length()).map { Playlist.from(a.getJSONObject(it)) } } }.getOrDefault(emptyList())
     private fun persistLibrary() { prefs.edit().putString("library.$owner", JSONArray(playlists.map { it.json() }).toString()).apply() }
-    fun search(query: String) {
-        searchJob?.cancel(); if (query.isBlank()) { results = emptyList(); searching = false; return }
-        searchJob = viewModelScope.launch {
-            searching = true; error = null
-            try { results = catalog.search(query.trim()) } catch (e: CancellationException) { throw e } catch(e: Exception) { error = e.message }
-            finally { searching = false }
+    fun search(query: String, albumsOnly: Boolean=false) {
+        searchJob?.cancel();val epoch=++searchEpoch;results=emptyList();albums=emptyList();searching=false
+        if(query.isBlank())return
+        searchJob=viewModelScope.launch { searching=true;error=null
+            try { if(albumsOnly) { val found=catalog.searchAlbums(query.trim());ensureActive();if(epoch==searchEpoch)albums=found } else { val found=catalog.search(query.trim());ensureActive();if(epoch==searchEpoch)results=found } }
+            catch(e: CancellationException){throw e} catch(e: Exception){if(epoch==searchEpoch)error=e.message}
+            finally { if(epoch==searchEpoch)searching=false }
         }
     }
+    fun openAlbum(album: Album) { albumJob?.cancel();val epoch=++albumEpoch;albumTracks=emptyList();albumLoading=true
+        albumJob=viewModelScope.launch { try { val found=catalog.albumTracks(album);ensureActive();if(epoch==albumEpoch)albumTracks=found } catch(e: CancellationException){throw e} catch(e: Exception){if(epoch==albumEpoch)error=e.message} finally {if(epoch==albumEpoch)albumLoading=false} }
+    }
+    fun closeAlbum(){albumJob?.cancel();albumEpoch++;albumTracks=emptyList();albumLoading=false}
     fun saveServer(value: String) {
-        runCatching { val url = value.trim().trimEnd('/').toHttpUrl(); require(url.isHttps && url.username.isEmpty() && url.password.isEmpty() && url.query == null && url.fragment == null) { "Enter a complete HTTPS server address" }; server = url.toString().trimEnd('/'); prefs.edit().putString("server", server).apply() }.onFailure { error = it.message }
+        runCatching {
+            val url=value.trim().trimEnd('/').toHttpUrl()
+            require(url.isHttps && url.username.isEmpty() && url.password.isEmpty() && url.query==null && url.fragment==null){"Enter a complete HTTPS server address"}
+            serverEpoch++;automaticServer=false;server=url.toString().trimEnd('/')
+            prefs.edit().putString("server",server).putBoolean("automaticServer",false).apply()
+            serverStatus="Manual server saved";error=null
+        }.onFailure{error=it.message}
+    }
+    fun useAutomaticServer() {
+        serverEpoch++;automaticServer=true
+        prefs.edit().putBoolean("automaticServer",true).apply()
+        serverStatus="Finding your active server…"
+        viewModelScope.launch {
+            try{base(forceRefresh=true)}
+            catch(e: CancellationException){throw e}
+            catch(e: Exception){if(automaticServer){serverStatus="Couldn’t refresh the server";error=e.message}}
+        }
     }
     fun saveQuality(value: String) { quality = value; prefs.edit().putString("quality", value).apply() }
-    private suspend fun base(): String {
-        if (server.isBlank() || server.toHttpUrl().host.endsWith(".trycloudflare.com")) {
-            runCatching { catalog.discover() }.onSuccess { server = it; prefs.edit().putString("server", it).apply() }
+    private suspend fun base(forceRefresh: Boolean=false): String {
+        if(automaticServer && (forceRefresh || server.isBlank() || android.os.SystemClock.elapsedRealtime()-lastDiscoveryMs>45000)) {
+            val epoch=serverEpoch
+            try {
+                refreshDiscoveredServer(epoch,{serverEpoch},{automaticServer},{catalog.discover()}) { found -> server=found;lastDiscoveryMs=android.os.SystemClock.elapsedRealtime();prefs.edit().putString("server",found).apply();serverStatus="Automatic server updated" }
+            } catch(e: CancellationException){throw e}
+            catch(e: Exception){
+                if(server.isBlank())throw IllegalStateException("Couldn’t discover your server. Check your connection or enter its current HTTPS address in Settings.",e)
+                if(automaticServer && epoch==serverEpoch)serverStatus="Discovery unavailable; trying the previous server"
+            }
         }
-        check(server.isNotBlank()) { "Streaming server is unavailable. Open Settings and enter your server address." }
-        return server.trimEnd('/').let { if (it.endsWith("/v1")) it else "$it/v1" }
+        check(server.isNotBlank()){ "Enter your streaming server address in Settings." }
+        return server.trimEnd('/').let{if(it.endsWith("/v1"))it else "$it/v1"}
     }
-    private suspend fun resolve(track: Track): Pair<String, Map<String,String>> {
-        val base = base()
-        val token = auth?.currentUser?.getIdToken(false)?.await()?.token
-        val headers = token?.let { mapOf("Authorization" to "Bearer $it") }.orEmpty()
-        PlaybackAuthorization.host = base.toHttpUrl().host; PlaybackAuthorization.token = token
-        val metadata = JSONObject(catalog.text("$base/resolve/${track.playableID}?quality=$quality", headers))
-        if (current?.id == track.id && metadata.optDouble("duration", 0.0) > 0) duration = metadata.getDouble("duration")
-        return Pair("$base/audio/${track.playableID}?quality=$quality", headers)
+    private val resolvedDownloads=mutableMapOf<String,String>()
+    private suspend fun resolve(track: Track, forPlayback: Boolean=false, preferDirect: Boolean=false): Pair<String, Map<String,String>> {
+        val requestedQuality=quality
+        val token=auth?.currentUser?.getIdToken(false)?.await()?.token
+        val headers=token?.let{mapOf("Authorization" to "Bearer $it")}.orEmpty()
+        suspend fun request(address: String): Pair<String,Map<String,String>> {
+            catalog.text(address.removeSuffix("/v1")+"/health",headers,4)
+            val metadata=JSONObject(catalog.text("$address/resolve/${track.playableID}?quality=$requestedQuality",headers,30))
+            if(forPlayback && current?.id==track.id) { if(metadata.optDouble("duration",0.0)>0)duration=metadata.getDouble("duration");audioDetails=audioDescription(metadata.optJSONObject("mediaInfo"),metadata.optString("quality",requestedQuality)) }
+            if(!forPlayback)resolvedDownloads[track.playableID]=audioDescription(metadata.optJSONObject("mediaInfo"),metadata.optString("quality",requestedQuality))
+            PlaybackAuthorization.host=address.toHttpUrl().host;PlaybackAuthorization.token=token
+            return Pair("$address/audio/${track.playableID}?quality=$requestedQuality",headers)
+        }
+        suspend fun direct(): Pair<String,Map<String,String>> {
+            val stream=withTimeout(45000){DirectMusic.resolve(track.playableID,requestedQuality)}
+            currentCoroutineContext().ensureActive()
+            val detail="Direct fallback · "+audioDescription(stream.info(),requestedQuality)
+            if(forPlayback && current?.playableID==track.playableID){usingDirectPlayback=true;audioDetails=detail;stream.duration?.let{duration=it}}
+            if(!forPlayback)resolvedDownloads[track.playableID]=detail
+            return Pair(stream.audio.url,mapOf("User-Agent" to DirectMusic.USER_AGENT))
+        }
+        if(preferDirect || android.os.SystemClock.elapsedRealtime()<backendRetryAfter)return direct()
+        return try {
+            val first=base()
+            try { val result=request(first);if(forPlayback)usingDirectPlayback=false;backendRetryAfter=0;result }
+            catch(e: CancellationException){throw e}
+            catch(e: Exception){
+                if(!automaticServer)throw e
+                val refreshed=base(forceRefresh=true)
+                if(refreshed==first)throw e
+                val result=request(refreshed);if(forPlayback)usingDirectPlayback=false;backendRetryAfter=0;result
+            }
+        } catch(e: CancellationException){throw e}
+        catch(backendFailure: Exception){
+            backendRetryAfter=android.os.SystemClock.elapsedRealtime()+30000
+            try {direct()}catch(e: CancellationException){throw e}catch(directFailure: Exception){throw IllegalStateException("MSI is unavailable and direct playback couldn’t resolve this song. ${directFailure.message}",directFailure)}
+        }
     }
-    fun play(track: Track, following: List<Track>? = null) {
-        playJob?.cancel(); lyricJob?.cancel(); controller?.pause()
-        current = track; elapsed = 0.0; duration = track.duration ?: 0.0; lyrics = emptyList(); loading = true
+
+    fun play(track: Track, following: List<Track>? = null, recovering: Boolean=false, resumeAt: Double=0.0, preferDirect: Boolean=false) {
+        if(!recovering && current?.playableID==track.playableID && playJob?.isActive==true)return
+        playJob?.cancel(); lyricJob?.cancel(); lyricEpoch++; controller?.pause()
+        recoveringPlayback=recovering;audioDetails="Resolving audio…";error=null;current = track; elapsed = resumeAt; duration = track.duration ?: 0.0; lyrics = emptyList(); loading = true
         if (following != null) queue = following.dropWhile { it.id != track.id }.drop(1)
         playJob = viewModelScope.launch {
             try {
                 val file = downloadedFile(track)
-                val uri = if (file.exists()) Uri.fromFile(file) else Uri.parse(resolve(track).first)
-                val c = controller ?: error("Player is starting. Try again in a moment.")
+                usingLocalPlayback=file.exists()
+                val uri = if (usingLocalPlayback) { audioDetails=prefs.getString("downloadQuality.${safeID(track.playableID)}","Saved audio · quality unknown") ?: "Saved audio";Uri.fromFile(file) } else Uri.parse(resolve(track,true,preferDirect).first)
+                ensureActive()
+                val c = controller ?: withTimeout(15000) { controllerFuture.awaitController() }.also { controller=it }
                 c.setMediaItem(MediaItem.Builder().setMediaId(track.id).setUri(uri).setMediaMetadata(MediaMetadata.Builder()
-                    .setTitle(track.title).setArtist(track.artist).setArtworkUri(Uri.parse(track.artwork)).build()).build())
-                c.prepare(); c.play()
+                    .setTitle(track.title).setArtist(track.artist).setArtworkUri(notificationArtwork(track)).build()).build())
+                c.prepare();if(resumeAt>0)c.seekTo((resumeAt*1000).toLong());c.play()
                 loadLyrics(track)
             } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message; loading = false }
         }
     }
     private fun loadLyrics(track: Track) {
-        lyricJob = viewModelScope.launch { lyricsLoading = true
-            try { lyrics = catalog.lyrics(track) } catch(e: CancellationException) { throw e } catch (_: Exception) { lyrics = emptyList() }
-            finally { lyricsLoading = false }
+        lyricJob?.cancel();val epoch=++lyricEpoch;lyricsLoading=true;lyricsError=null
+        lyricJob=viewModelScope.launch {
+            try { val found=fetchLyrics(track);ensureActive();if(epoch==lyricEpoch && current?.playableID==track.playableID)lyrics=found }
+            catch(e: CancellationException){throw e} catch(e: Exception){if(epoch==lyricEpoch)lyricsError="Couldn’t load lyrics. Tap Retry."}
+            finally { if(epoch==lyricEpoch)lyricsLoading=false }
         }
     }
-    fun toggle() { controller?.let { if (it.isPlaying) it.pause() else it.play() } }
+    fun retryLyrics(){current?.let{loadLyrics(it)}}
+    private fun lyricFile(track: Track)=File(getApplication<Application>().filesDir,"lyrics/${safeID(track.playableID)}.json")
+    private suspend fun fetchLyrics(track: Track): List<Lyric> {
+        val cached=withContext(Dispatchers.IO){runCatching{Catalog.decodeLyrics(lyricFile(track).readText())}.getOrDefault(emptyList())};if(cached.isNotEmpty())return cached
+        val manager=getApplication<Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val online=manager.getNetworkCapabilities(manager.activeNetwork)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)==true
+        if(!online)return emptyList()
+        val backend=try { val token=auth?.currentUser?.getIdToken(false)?.await()?.token;catalog.backendLyrics(track,base(),token?.let{mapOf("Authorization" to "Bearer $it")}.orEmpty()) } catch(e: CancellationException){throw e} catch(_: Exception){emptyList()}
+        val found=if(backend.isNotEmpty())backend else catalog.lyrics(track)
+        if(found.isNotEmpty())withContext(Dispatchers.IO){runCatching{synchronized(this@CapyModel){val file=lyricFile(track);file.parentFile!!.mkdirs();val temp=File(file.path+".tmp");temp.writeText(Catalog.encodeLyrics(found));check(temp.renameTo(file)){"Could not save lyrics"}}}}
+        return found
+    }
+    private fun artworkFile(track: Track)=File(getApplication<Application>().filesDir,"artwork/${safeID(track.artwork)}.jpg")
+    private fun notificationArtwork(track: Track): Uri { val file=artworkFile(track);return if(file.exists())Uri.fromFile(file) else Uri.parse(Catalog.artworkForDisplay(track.artwork)) }
+    private fun persistDownloads(){prefs.edit().putString("downloads",JSONArray(downloads.map{it.json()}).toString()).apply()}
+    private fun validateAudio(file: File) {
+        val extractor=android.media.MediaExtractor()
+        try { extractor.setDataSource(file.path);val index=(0 until extractor.trackCount).firstOrNull{extractor.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)?.startsWith("audio/")==true} ?: error("Download did not contain playable audio");extractor.selectTrack(index);check(extractor.readSampleData(java.nio.ByteBuffer.allocate(1024*1024),0)>0){"Audio download is incomplete"} } finally {extractor.release()}
+    }
+    fun toggle() { controller?.let { if (it.isPlaying) it.pause() else {if(it.playbackState==Player.STATE_IDLE)it.prepare();it.play()} } }
     fun seek(seconds: Double) { controller?.seekTo((seconds.coerceAtLeast(0.0) * 1000).toLong()) }
     fun next() { if (queue.isNotEmpty()) { val t = queue.first(); queue = queue.drop(1); play(t) } }
     fun previous() { seek(0.0) }
@@ -148,9 +254,12 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     private fun safeID(id: String) = MessageDigest.getInstance("SHA-256").digest(id.toByteArray()).joinToString("") { "%02x".format(it) }
     fun downloadedFile(track: Track) = File(getApplication<Application>().filesDir, "downloads/${safeID(track.playableID)}.audio")
     fun download(track: Track) {
-        if (track.id in downloading || downloads.any { it.id == track.id }) return
+        if (track.playableID in downloadingIDs || downloads.any { it.playableID == track.playableID && downloadedFile(it).exists() }) return
+        downloadingIDs.add(track.playableID)
         downloading = downloading + track.id
         viewModelScope.launch {
+            downloadSlots.acquire()
+            try {
             val destination = downloadedFile(track); val partial = File(destination.path + ".part")
             try {
                 val (url, headers) = resolve(track)
@@ -160,18 +269,26 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
                     catalog.http.newCall(request.build()).execute().use { response ->
                         check(response.isSuccessful) { "Download failed (${response.code})" }
                         check(response.header("Content-Type")?.contains("json") != true) { "Server did not return audio" }
-                        response.body!!.byteStream().use { input -> partial.outputStream().use { input.copyTo(it) } }
+                        val body=response.body ?: error("Empty download");val copied=body.byteStream().use { input -> partial.outputStream().use { input.copyTo(it) } };check(body.contentLength()<0 || copied==body.contentLength()){ "Audio download was interrupted" }
                     }
+                    validateAudio(partial)
                     check(partial.length() > 0 && partial.renameTo(destination)) { "Could not save download" }
                 }
-                downloads = downloads.filterNot { it.id == track.id } + track
-                prefs.edit().putString("downloads", JSONArray(downloads.map { it.json() }).toString()).apply()
+                downloads = downloads.filterNot { it.playableID == track.playableID } + track
+                persistDownloads()
+                prefs.edit().putString("downloadQuality.${safeID(track.playableID)}", "Offline · "+resolvedDownloads.remove(track.playableID).orEmpty()).apply()
+                try{fetchLyrics(track)}catch(e: CancellationException){throw e}catch(_: Exception){}
+                withContext(Dispatchers.IO) { runCatching { val file=artworkFile(track);file.parentFile!!.mkdirs();catalog.http.newCall(Request.Builder().url(Catalog.artworkForDisplay(track.artwork)).build()).also{it.timeout().timeout(15,java.util.concurrent.TimeUnit.SECONDS)}.execute().use { r -> if(r.isSuccessful && r.header("Content-Type")?.startsWith("image/")==true) { val temp=File(file.path+".tmp");temp.writeBytes(r.body!!.bytes());if(android.graphics.BitmapFactory.decodeFile(temp.path)!=null)temp.renameTo(file);temp.delete() } } } }
+                if(current?.playableID==track.playableID)loadLyrics(track)
             } catch(e: CancellationException) { throw e } catch (e: Exception) { error = e.message }
-            finally { partial.delete(); downloading = downloading - track.id }
+            finally { partial.delete(); downloadingIDs.remove(track.playableID);downloading = downloading - track.id }
+            } finally {downloadSlots.release()}
         }
     }
+    fun downloadAll(tracks: List<Track>){tracks.distinctBy{it.playableID}.forEach{download(it)}}
+    fun addAlbumToPlaylist(album: Album, tracks: List<Track>){val id=createPlaylist(album.title) ?: return;tracks.distinctBy{it.playableID}.forEach{addToPlaylist(id,it)}}
     fun removeDownload(track: Track) { if (downloadedFile(track).delete()) { downloads = downloads.filterNot { it.id == track.id }; prefs.edit().putString("downloads", JSONArray(downloads.map { it.json() }).toString()).apply() } }
-    fun createPlaylist(name: String) { if (name.trim().isEmpty()) return; val p = Playlist(UUID.randomUUID().toString(), name.trim(), emptyList()); playlists = playlists + p; persistLibrary(); sync(p) }
+    fun createPlaylist(name: String): String? { if (name.trim().isEmpty()) return null; val p = Playlist(UUID.randomUUID().toString(), name.trim(), emptyList()); playlists = playlists + p; persistLibrary(); sync(p);return p.id }
     fun addToPlaylist(id: String, track: Track) { val p = playlists.firstOrNull { it.id == id } ?: return; if (p.tracks.any { it.id == track.id }) return; val updated = p.copy(tracks = p.tracks + track); playlists = playlists.map { if (it.id == id) updated else it }; persistLibrary(); sync(updated) }
     fun removeFromPlaylist(id: String, trackID: String) { val p = playlists.firstOrNull { it.id == id } ?: return; val updated = p.copy(tracks = p.tracks.filterNot { it.id == trackID }); playlists = playlists.map { if(it.id == id) updated else it }; persistLibrary(); sync(updated) }
     fun deletePlaylist(id: String) { playlists = playlists.filterNot { it.id == id }; persistLibrary(); sync(null, id) }
@@ -207,4 +324,19 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     }
     fun signOut() { auth?.signOut() }
     override fun onCleared() { libraryListener?.remove(); auth?.removeAuthStateListener(authListener); MediaController.releaseFuture(controllerFuture); super.onCleared() }
+}
+
+private suspend fun com.google.common.util.concurrent.ListenableFuture<MediaController>.awaitController(): MediaController = suspendCancellableCoroutine { continuation ->
+    addListener({ try { val value=get();if(continuation.isActive)continuation.resumeWith(Result.success(value)) } catch(e: Exception){if(continuation.isActive)continuation.resumeWith(Result.failure(e))} },java.util.concurrent.Executor { it.run() })
+}
+
+fun audioDescription(info: JSONObject?, mode: String): String {
+    val label=if(mode=="dataSaver")"Data saver" else "Best available"
+    if(info==null)return "$label · format not reported"
+    val parts=mutableListOf(label)
+    info.nullable("codec")?.let{parts+=it}
+    info.optDouble("bitrateKbps").takeIf{it.isFinite() && it>0}?.let{parts+="${it.toInt()} kbps"}
+    info.optDouble("sampleRateHz").takeIf{it.isFinite() && it>0}?.let{parts+="${it/1000} kHz"}
+    if(info.optInt("availableQualityCount")==1)parts+="Only one source quality"
+    return parts.joinToString(" · ")
 }

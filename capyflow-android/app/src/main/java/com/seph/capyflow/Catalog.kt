@@ -29,6 +29,7 @@ data class Playlist(val id: String, val name: String, val tracks: List<Track>) {
     fun json() = JSONObject().put("id", id).put("name", name).put("tracks", JSONArray(tracks.map { it.json() }))
     companion object { fun from(j: JSONObject) = Playlist(j.getString("id"), j.getString("name"), j.getJSONArray("tracks").let { a -> (0 until a.length()).map { Track.from(a.getJSONObject(it)) } }) }
 }
+data class Album(val id: String, val title: String, val artist: String, val artwork: String?, val year: String? = null)
 data class Lyric(val time: Double?, val text: String)
 
 class Catalog {
@@ -36,15 +37,18 @@ class Catalog {
     private var version = "1.20260707.12.00"
     private var key = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30"
     private var configured = false
-    suspend fun text(url: String, headers: Map<String, String> = emptyMap()): String = withContext(Dispatchers.IO) {
-        val builder = Request.Builder().url(url)
-        headers.forEach { (k,v) -> builder.header(k,v) }
-        http.newCall(builder.build()).execute().use { response ->
-            check(response.isSuccessful) { "Server returned ${response.code}" }
-            response.body?.string() ?: error("Server returned an empty response")
-        }
+    suspend fun text(url: String, headers: Map<String, String> = emptyMap(), timeoutSeconds: Long = 90): String = kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+        val builder=Request.Builder().url(url);headers.forEach{(k,v)->builder.header(k,v)}
+        val call=http.newCall(builder.build());call.timeout().timeout(timeoutSeconds,TimeUnit.SECONDS)
+        continuation.invokeOnCancellation{call.cancel()}
+        call.enqueue(object: okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call,e: java.io.IOException){if(continuation.isActive)continuation.resumeWith(Result.failure(e))}
+            override fun onResponse(call: okhttp3.Call,response: okhttp3.Response){response.use{r -> val result=runCatching{check(r.isSuccessful){"Server returned ${r.code}"};r.body?.string() ?: error("Server returned an empty response")};if(continuation.isActive)continuation.resumeWith(result)}}
+        })
     }
-    suspend fun search(query: String): List<Track> = withContext(Dispatchers.IO) {
+    suspend fun search(query: String): List<Track> = parseSongs(searchResponse(query, "EgWKAQIIAWoKEAkQBRAKEAMQBA=="))
+    suspend fun searchAlbums(query: String): List<Album> = parseAlbums(searchResponse(query, "EgWKAQIYAWoKEAkQChAFEAMQBA=="))
+    private suspend fun searchResponse(query: String, params: String): JSONObject = withContext(Dispatchers.IO) {
         if (!configured) {
             runCatching {
                 val html = text("https://music.youtube.com/")
@@ -55,35 +59,80 @@ class Catalog {
         }
         val payload = JSONObject().put("context", JSONObject().put("client", JSONObject()
             .put("clientName", "WEB_REMIX").put("clientVersion", version).put("hl", "en").put("gl", "PH")))
-            .put("query", query).put("params", "EgWKAQIIAWoKEAkQBRAKEAMQBA==")
+            .put("query", query).put("params", params)
         val request = Request.Builder().url("https://music.youtube.com/youtubei/v1/search?key=$key&prettyPrint=false")
             .header("Origin", "https://music.youtube.com").header("Referer", "https://music.youtube.com/")
             .header("X-YouTube-Client-Name", "67").header("X-YouTube-Client-Version", version)
             .post(payload.toString().toRequestBody("application/json".toMediaType())).build()
         http.newCall(request).execute().use { response ->
             check(response.isSuccessful) { "Search failed (${response.code})" }
-            parseSongs(JSONObject(response.body!!.string()))
+            JSONObject(response.body!!.string())
         }
     }
-    suspend fun discover(): String {
-        val payload = JSONObject(text("https://raw.githubusercontent.com/sephirothkazuhakaede-hash/LastWave-Native/runtime/backend-discovery/backend.json"))
-        val url = payload.getString("url").trimEnd('/')
-        val parsed = url.toHttpUrl()
-        require(parsed.isHttps && parsed.host.endsWith(".trycloudflare.com")) { "Invalid discovery address" }
-        return url
+    suspend fun discover(): String = withContext(Dispatchers.IO) {
+        // GitHub's raw endpoint is CDN-cached. A new tunnel must not read the old object.
+        val url="https://raw.githubusercontent.com/sephirothkazuhakaede-hash/LastWave-Native/runtime/backend-discovery/backend.json".toHttpUrl().newBuilder()
+            .addQueryParameter("refresh",java.util.UUID.randomUUID().toString()).build()
+        val request=Request.Builder().url(url).header("Cache-Control","no-cache, no-store").header("Pragma","no-cache").build()
+        val client=http.newBuilder().cache(null).callTimeout(4,TimeUnit.SECONDS).build()
+        val call=client.newCall(request)
+        val payload=call.execute().use{response -> check(response.isSuccessful){"Server discovery failed (${response.code})"};JSONObject(response.body?.string() ?: error("Discovery returned no address"))}
+        val address=payload.getString("url").trimEnd('/');val parsed=address.toHttpUrl()
+        require(parsed.isHttps && parsed.host.endsWith(".trycloudflare.com") && parsed.username.isEmpty() && parsed.password.isEmpty() && parsed.query==null && parsed.fragment==null && parsed.port==443){"Invalid discovery address"}
+        address
+    }
+    suspend fun albumTracks(album: Album): List<Track> = withContext(Dispatchers.IO) {
+        val payload=JSONObject().put("context",JSONObject().put("client",JSONObject().put("clientName","WEB_REMIX").put("clientVersion",version).put("hl","en").put("gl","PH"))).put("browseId",album.id)
+        val request=Request.Builder().url("https://music.youtube.com/youtubei/v1/browse?key=$key&prettyPrint=false").header("Origin","https://music.youtube.com").header("X-YouTube-Client-Name","67").header("X-YouTube-Client-Version",version).post(payload.toString().toRequestBody("application/json".toMediaType())).build()
+        http.newCall(request).execute().use { r -> check(r.isSuccessful){"Album could not load (${r.code})"}; parseAlbumTracks(JSONObject(r.body!!.string()),album) }
+    }
+    suspend fun backendLyrics(track: Track, base: String, headers: Map<String,String>): List<Lyric> {
+        val url="$base/lyrics".toHttpUrl().newBuilder().addQueryParameter("title",track.title).addQueryParameter("artist",track.artist).addQueryParameter("videoId",track.playableID).apply { track.albumTitle?.let { addQueryParameter("album",it) };track.duration?.let { addQueryParameter("duration",it.toString()) } }.build()
+        val json=JSONObject(text(url.toString(),headers,12));if(json.optString("synchronization") !in setOf("plain","line","word","syllable"))return emptyList();val lines=json.optJSONArray("lines") ?: return emptyList()
+        return (0 until lines.length()).mapNotNull { i -> val l=lines.getJSONObject(i);val t=l.optString("text").trim();if(t.isBlank())null else Lyric(if(l.isNull("time"))null else l.optDouble("time").takeIf{it.isFinite()},t) }
     }
     suspend fun lyrics(track: Track): List<Lyric> {
-        val url = "https://lrclib.net/api/search".toHttpUrl().newBuilder()
-            .addQueryParameter("track_name", track.title).addQueryParameter("artist_name", track.artist).build()
-        val results = JSONArray(text(url.toString()))
-        val candidates = (0 until results.length()).map { results.getJSONObject(it) }
-        val selected = candidates.filter { track.duration == null || kotlin.math.abs(it.optDouble("duration") - track.duration) <= 10 }
-            .minByOrNull { kotlin.math.abs(it.optDouble("duration") - (track.duration ?: it.optDouble("duration"))) }
-            ?: return emptyList()
-        val synced = selected.nullable("syncedLyrics")
-        return if (synced != null) parseLyrics(synced) else selected.nullable("plainLyrics")?.lines()?.map { Lyric(null, it) }.orEmpty()
+        val url="https://lrclib.net/api/search".toHttpUrl().newBuilder().addQueryParameter("track_name",cleanTitle(track.title)).addQueryParameter("artist_name",track.artist).build()
+        return selectLyrics(JSONArray(text(url.toString(),mapOf("User-Agent" to "CapyFlow-Android"),15)),track)
     }
     companion object {
+        fun cleanTitle(title: String) = title.replace(Regex("(?i)\\s*[(\\[](?:official(?: music)? (?:audio|video)|lyrics?|audio|visualizer)[)\\]]"), "").trim()
+        private fun normalized(value: String)=cleanTitle(value).lowercase().filter { it.isLetterOrDigit() }
+        fun selectLyrics(results: JSONArray, track: Track): List<Lyric> {
+            val candidates=(0 until results.length()).map { results.getJSONObject(it) }.filter {
+                normalized(it.optString("trackName"))==normalized(track.title) && normalized(it.optString("artistName"))==normalized(track.artist) &&
+                (track.duration==null || kotlin.math.abs(it.optDouble("duration")-track.duration)<=maxOf(5.0,minOf(12.0,track.duration*.04))) &&
+                (!it.nullable("syncedLyrics").isNullOrBlank() || !it.nullable("plainLyrics").isNullOrBlank())
+            }
+            val chosen=candidates.maxByOrNull { (if(!it.nullable("syncedLyrics").isNullOrBlank())20.0 else 0.0)-kotlin.math.abs(it.optDouble("duration")-(track.duration ?: it.optDouble("duration"))) } ?: return emptyList()
+            return chosen.nullable("syncedLyrics")?.takeIf { it.isNotBlank() }?.let { parseLyrics(it) } ?: chosen.nullable("plainLyrics").orEmpty().lines().filter { it.isNotBlank() }.map { Lyric(null,it) }
+        }
+        fun encodeLyrics(lines: List<Lyric>)=JSONArray(lines.map { JSONObject().put("time",it.time ?: JSONObject.NULL).put("text",it.text) }).toString()
+        fun decodeLyrics(raw: String): List<Lyric> { val a=JSONArray(raw);return (0 until a.length()).map { val l=a.getJSONObject(it);Lyric(if(l.isNull("time"))null else l.getDouble("time"),l.getString("text")) } }
+        fun artworkForDisplay(url: String, size: Int = 1200): String {
+            val uri=runCatching { url.toHttpUrl() }.getOrNull() ?: return url
+            if(uri.query!=null || uri.host !in setOf("lh3.googleusercontent.com","lh4.googleusercontent.com","yt3.ggpht.com","yt3.googleusercontent.com"))return url
+            return url.replace(Regex("=w\\d+-h\\d+"),"=w$size-h$size").replace(Regex("=s\\d+"),"=s$size")
+        }
+        private fun walkObjects(node: Any?, visit: (JSONObject)->Unit) {
+            when(node) { is JSONObject -> { visit(node);node.keys().forEach { walkObjects(node.opt(it),visit) } };is JSONArray -> (0 until node.length()).forEach { walkObjects(node.opt(it),visit) } }
+        }
+        private fun rendered(text: JSONObject?): String = text?.optString("simpleText")?.takeIf{it.isNotBlank()} ?: text?.optJSONArray("runs")?.let { a -> (0 until a.length()).joinToString("") { a.getJSONObject(it).optString("text") } }.orEmpty()
+        private fun columns(row: JSONObject): List<JSONObject?> = row.optJSONArray("flexColumns")?.let { a -> (0 until a.length()).map { a.getJSONObject(it).optJSONObject("musicResponsiveListItemFlexColumnRenderer")?.optJSONObject("text") } }.orEmpty()
+        private fun rowArtwork(row: JSONObject): String? { val a=row.optJSONObject("thumbnail")?.optJSONObject("musicThumbnailRenderer")?.optJSONObject("thumbnail")?.optJSONArray("thumbnails") ?: return null;return (0 until a.length()).map { a.getJSONObject(it) }.maxByOrNull { it.optLong("width")*it.optLong("height") }?.nullable("url") }
+        fun parseAlbums(root: JSONObject): List<Album> {
+            val albums=linkedMapOf<String,Album>();walkObjects(root) { node -> node.optJSONObject("musicResponsiveListItemRenderer")?.let { row ->
+                val c=columns(row);var id=row.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")?.nullable("browseId");var artist="Unknown artist"
+                c.forEach { text -> text?.optJSONArray("runs")?.let { runs -> (0 until runs.length()).forEach { i -> val r=runs.getJSONObject(i);val browse=r.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")?.nullable("browseId");if(browse?.startsWith("MPRE")==true)id=browse;if(browse?.startsWith("UC")==true)artist=r.optString("text") } } }
+                val title=rendered(c.getOrNull(0));if(id?.startsWith("MPRE")==true && title.isNotBlank())albums.putIfAbsent(id!!,Album(id!!,title,artist,rowArtwork(row),Regex("\\b(?:19|20)\\d{2}\\b").find(c.joinToString(" "){rendered(it)})?.value))
+            } };return albums.values.toList()
+        }
+        fun parseAlbumTracks(root: JSONObject, album: Album): List<Track> {
+            val tracks=linkedMapOf<String,Track>();walkObjects(root) { node -> node.optJSONObject("musicResponsiveListItemRenderer")?.let { row ->
+                val id=row.optJSONObject("playlistItemData")?.nullable("videoId");val c=columns(row);val title=rendered(c.getOrNull(0))
+                if(id!=null && row.has("index") && title.isNotBlank()) { val fixed=row.optJSONArray("fixedColumns")?.optJSONObject(0)?.optJSONObject("musicResponsiveListItemFixedColumnRenderer")?.optJSONObject("text");val payload=JSONObject().put("id",id).put("albumID",album.id).put("trackNumber",rendered(row.optJSONObject("index")).toIntOrNull());tracks.putIfAbsent(id,Track(id,title,rendered(c.getOrNull(1)).ifBlank { album.artist },duration(rendered(fixed)),rowArtwork(row) ?: album.artwork,albumTitle=album.title,originalPayload=payload.toString())) }
+            } };return tracks.values.toList()
+        }
         fun duration(raw: String): Double? {
             val parts = raw.split(':'); if (parts.size !in 2..3) return null
             val numbers = parts.map { it.toDoubleOrNull() ?: return null }
@@ -93,7 +142,7 @@ class Catalog {
         fun parseLyrics(raw: String): List<Lyric> = raw.lines().flatMap { line ->
             val matches = Regex("\\[(\\d+):(\\d+(?:\\.\\d+)?)\\]").findAll(line).toList()
             val text = line.replace(Regex("\\[[^]]*]"), "").trim()
-            matches.map { Lyric(it.groupValues[1].toDouble() * 60 + it.groupValues[2].toDouble(), text) }
+            matches.filter { text.isNotBlank() }.map { Lyric(it.groupValues[1].toDouble() * 60 + it.groupValues[2].toDouble(), text) }
         }.sortedBy { it.time }
         fun parseSongs(root: JSONObject): List<Track> {
             val tracks = linkedMapOf<String, Track>()

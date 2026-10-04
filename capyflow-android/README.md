@@ -1,31 +1,83 @@
-# CapyFlow Android
+# CapyFlow Android dev5
 
-A separate native Android implementation of the current CapyFlow iOS app. Open **this folder** in Android Studio; the repository root still contains the original upstream Android application and is not this project.
+Native Android preview for Android 8.0 and newer, on all phone brands. Open this
+folder in Android Studio; the repository root contains a different upstream app.
 
-This first development build establishes CapyFlow's violet palette (#DC95FF / #D78FEE), dark translucent surfaces, app icon, Home/Search/Library/Social navigation, mini-player and full player. It implements song search, streaming from the same discovered MSI/Cloudflare server, Media3 background/notification controls, seeking, queue editing, basic matched lyrics, offline downloads, local playlists, and account-scoped playlist backups. Social code uses the existing profiles, follows, conversations and messages schemas, including profile bios and atomic send batches.
+## Included in dev5
 
-## Run
+- Full-screen Now Playing with slide-in/slide-out animation, fixed artwork and
+  a compact lyrics panel beneath the controls. Timed lyrics follow playback;
+  untimed lyrics scroll only inside that panel.
+- Vertical queue handle dragging and swipe-left to reveal Remove.
+- Separate song/album search, album track lists, Add as playlist, and Download all
+  for albums and playlists. Downloads run with at most two simultaneous jobs.
+- Higher-resolution artwork in the player and notification, plus offline artwork
+  and lyric caching when a provider returns lyrics.
+- Manual server saves are retained; automatic discovery follows new tunnel
+  addresses and cannot overwrite a later manual choice.
+- Local downloads play without MSI. Playback errors preserve the saved file.
+  Downloads are checked for complete transfers and a readable audio track.
+- MSI is tried first for online music. A failed server uses local NewPipe YouTube
+  extraction, including downloads. The direct URL is freshly resolved; no MSI
+  credentials are attached to YouTube/Googlevideo requests.
+- Best available and Data saver select highest/lowest compatible source bitrates.
+  Settings changes apply to the next stream/download; existing files keep their
+  downloaded quality. Now Playing displays reported format details and source.
+- Controller startup is awaited; repeated taps do not restart a pending resolve.
+- Standard audio playback with decoder fallback.
 
-1. Open `capyflow-android` in Android Studio and allow Gradle sync.
-2. Select the Pixel 8 emulator and press Run.
-3. Alternatively download the `CapyFlow-Android-dev1` APK artifact from the **Build CapyFlow Android** GitHub Actions workflow, extract it, and drag the APK onto the emulator.
+## Local build
 
-Search and local library are available without Firebase configuration. Playback requires the streaming server to be running; discovery uses the same `runtime/backend-discovery/backend.json` as iOS. You can also enter an HTTPS server address in Settings. Downloads are stored privately and are removed by uninstalling the app.
+Install JDK 17, Android SDK platform 36 and build-tools 35.0.0. Set ANDROID_HOME or
+create local.properties with sdk.dir. From this directory run:
 
-## Firebase setup for the existing iOS account
+    ./gradlew clean testDebugUnitTest assembleDebug
 
-In the existing **capyflow-aa6c5** project, register an Android app with package **com.seph.capyflow**. Do not create a second Firebase project. Add the debug signing SHA-1 and SHA-256 (`./gradlew :app:signingReport`), enable Google sign-in, then download the Android `google-services.json` into `app/`. The file is intentionally ignored by git. For CI, put its complete JSON in the repository Actions secret `CAPYFLOW_ANDROID_FIREBASE_JSON`. Each signing certificate used to build/install the app needs its own registered fingerprint.
+Windows: use gradlew.bat. The APK is app/build/outputs/apk/debug/app-debug.apk.
+No GitHub workflow is needed. Direct extraction requires Internet access and
+can fail if YouTube changes, blocks requests, or restricts the upload.
 
-Without that Android registration, the build shows an explicit setup message and does not pretend that sign-in or cross-platform messaging works. With it, use the same Google account on Android and iOS. Deploy the repository's existing Firestore rules; this project does not weaken or replace them.
+## Preview signing
 
-## Current limits / remaining parity work
+The source backup includes signing/capyflow-preview.jks. This key signs dev5 and
+must be reused for future previews to allow updates without uninstalling.
+Alias: capyflow-preview. Store/key passwords: android.
 
-This is dev1, not a feature-complete iOS port. Google/Firebase integration, real playback and Android-to-iOS messaging require runtime testing after configuration. Collaborative playlist editing/invitations, friend listening activity, profile editing, followers/following drill-down, albums and canonical album/song resolution, related-song autoplay, older-message pagination/read-status presentation, automatic lyric scrolling, audio routing/details, and Android update installation are not yet ported. Basic lyrics search preserves duration matching but does not yet reproduce the full iOS canonical lyrics resolver. Previous currently restarts the song. No real-device battery/background testing has been performed.
+SHA-1: 3E:E2:4B:A8:55:9C:74:8E:33:A0:CD:F5:69:4E:DB:FC:92:5B:68:1D
+SHA-256: 94:AA:54:2A:E6:28:2C:C3:2A:E0:EF:EC:40:4E:C9:50:44:B7:D5:13:05:24:37:0C:AA:6A:7F:76:7D:C9:2B:63
 
-The original Android app and all iOS sources are unchanged. Work is isolated on `feature/capyflow-android`.
+The original dev4 signing key was lost when the earlier workspace was pruned.
+Dev5 therefore cannot update dev4 in place. Keep dev4 until its data is backed
+up; uninstalling removes local playlists, downloaded audio, lyrics and artwork.
+See INSTALL-AND-BACKUP.md in the recovery kit for an optional emulator backup.
 
-## Validation
+## Accounts and lyrics
 
-`./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug`
+Android google-services.json is still missing. Google login and social/cloud
+features remain inactive until com.seph.capyflow is registered in the existing
+capyflow-aa6c5 project, the preview fingerprints above are registered, and the
+Android configuration is placed in app/google-services.json before rebuilding.
+The iOS configuration is not an Android configuration.
 
-Compatibility tests cover iOS playlist payloads and media IDs, deterministic conversation IDs, audio-only search selection, hour-long duration parsing, and timestamped lyric seeking.
+Android follows the iOS lyric route: saved cache, shared backend resolver, then
+emergency direct LRCLIB. The current backend enables LRCLIB; NetEase, QQ Music
+and Kugou adapters are present but disabled. Not every song has lyrics or timing.
+
+## Validation and remaining limits
+
+Unit tests cover playlist payload compatibility, duration/LRC parsing, song and
+album-track parsing, lyric matching/cache round trips, signed artwork URLs,
+manual/automatic server selection races, actual quality descriptions, direct
+quality selection and Firebase RPC serialization with the extractor's runtime.
+An opt-in DirectMusicIntegrationTest checks extraction and audio bytes without
+MSI (CAPY_DIRECT_SMOKE=1). Regular tests skip this external-network check.
+
+UI gestures and long playback need emulator/real-device testing. The user reported that a real Android phone did not reproduce the static;
+the source review did not establish the exact emulator-side cause. No microphone capture
+or audio effects are enabled. Diagnostics record decoder, audio format, buffer
+underruns, codec/sink errors and audio-output release; Reset audio output restarts
+it while preserving the track and position. This is not a confirmed static fix.
+
+Other iOS parity work remains: collaborative playlists, friend listening activity,
+profile editing, followers/following drill-down, related-song autoplay, full
+canonical recording matching, message pagination and in-app APK updating.
