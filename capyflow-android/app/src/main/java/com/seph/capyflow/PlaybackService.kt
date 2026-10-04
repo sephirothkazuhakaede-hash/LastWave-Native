@@ -10,6 +10,7 @@ import java.util.concurrent.TimeUnit
 
 class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
         val http = OkHttpClient.Builder().readTimeout(90, TimeUnit.SECONDS).addInterceptor { chain ->

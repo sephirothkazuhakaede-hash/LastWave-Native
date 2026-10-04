@@ -20,10 +20,13 @@ class CompatibilityTest {
         assertEquals(SocialModel.conversationID("a","z"),SocialModel.conversationID("z","a"))
     }
     @Test fun playlistPayloadReadsIOSAndPreservesRecordingIdentity() {
-        val ios=JSONObject("""{"id":"playlist-1","name":"Our songs","tracks":[{"id":"album-track","title":"Song","artist":"Artist","duration":210.5,"mediaID":"audio-video","artworkURL":"https://example.com/art.jpg","albumTitle":"Album"}]}""")
+        val ios=JSONObject("""{"id":"playlist-1","name":"Our songs","tracks":[{"id":"album-track","title":"Song","artist":"Artist","duration":210.5,"mediaID":"audio-video","artworkURL":"https://example.com/art.jpg","albumTitle":"Album","albumID":"browse-album","trackNumber":4}]}""")
         val p=Playlist.from(ios)
         assertEquals("audio-video",p.tracks.first().playableID)
-        assertEquals(p,Playlist.from(p.json()))
+        val restored = Playlist.from(p.json())
+        assertEquals(p.id,restored.id);assertEquals(p.tracks.first().playableID,restored.tracks.first().playableID)
+        assertEquals("browse-album",restored.tracks.first().json().getString("albumID"))
+        assertEquals(4,restored.tracks.first().json().getInt("trackNumber"))
     }
     @Test fun songSearchDoesNotTreatMusicVideosAsAudioRecordings() {
         fun row(id:String,type:String)=JSONObject("""{"musicResponsiveListItemRenderer":{"playlistItemData":{"videoId":"$id"},"flexColumns":[{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Song"}]}}},{"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Artist"},{"text":"3:42"}]}}}],"navigationEndpoint":{"watchEndpoint":{"watchEndpointMusicSupportedConfigs":{"watchEndpointMusicConfig":{"musicVideoType":"$type"}}}}}}""")

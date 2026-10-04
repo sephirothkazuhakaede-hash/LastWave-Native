@@ -12,15 +12,15 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 data class Track(val id: String, val title: String, val artist: String, val duration: Double? = null,
-    val artworkURL: String? = null, val mediaID: String? = null, val albumTitle: String? = null) {
+    val artworkURL: String? = null, val mediaID: String? = null, val albumTitle: String? = null, val originalPayload: String? = null) {
     val playableID get() = mediaID ?: id
     val artwork get() = artworkURL ?: "https://i.ytimg.com/vi/$playableID/hqdefault.jpg"
-    fun json() = JSONObject().put("id", id).put("title", title).put("artist", artist)
+    fun json() = (originalPayload?.let { JSONObject(it) } ?: JSONObject()).put("id", id).put("title", title).put("artist", artist)
         .put("duration", duration).put("artworkURL", artworkURL).put("mediaID", mediaID).put("albumTitle", albumTitle)
     companion object {
         fun from(j: JSONObject) = Track(j.getString("id"), j.getString("title"), j.optString("artist", "Unknown artist"),
             if (j.has("duration") && !j.isNull("duration")) j.optDouble("duration") else null,
-            j.nullable("artworkURL"), j.nullable("mediaID"), j.nullable("albumTitle"))
+            j.nullable("artworkURL"), j.nullable("mediaID"), j.nullable("albumTitle"), j.toString())
     }
 }
 fun JSONObject.nullable(key: String): String? = if (has(key) && !isNull(key)) getString(key) else null

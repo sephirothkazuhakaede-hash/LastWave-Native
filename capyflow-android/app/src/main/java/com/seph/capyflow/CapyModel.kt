@@ -183,7 +183,7 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
         val pendingValue = playlist?.json()?.toString() ?: "deleted"
         prefs.edit().putString("pending.$owner.$id", pendingValue).commit()
         val epoch = accountEpoch; val uid = owner
-        db.collection("users").document(uid).collection("library").document(safeID(id)).set(fields)
+        db.collection("users").document(uid).collection("library").document(safeID(id)).set(fields, SetOptions.merge())
             .addOnSuccessListener { if(prefs.getString("pending.$uid.$id", null) == pendingValue) prefs.edit().remove("pending.$uid.$id").apply(); if(epoch == accountEpoch) cloudStatus = "Playlists backed up" }
             .addOnFailureListener { if(epoch == accountEpoch) { cloudStatus = "Backup pending"; error = it.message } }
     }
