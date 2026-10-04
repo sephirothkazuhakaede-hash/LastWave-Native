@@ -1799,7 +1799,7 @@ private struct PlaylistDetailView: View {
                 .font(.system(size: 30, weight: .black, design: .rounded))
                 .lineLimit(4)
                 .minimumScaleFactor(0.8)
-            Text(auth.user?.displayName.map { "By \($0)" } ?? "Made on this iPhone")
+            Text(social.profile.map { "By \($0.displayName) (@\($0.username))" } ?? (auth.user == nil ? "Made on this iPhone" : "Your playlist"))
                 .font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(2)
             Text("\(playlist.tracks.count) songs")
                 .font(.capyCaption).foregroundStyle(CapyColor.tertiaryText)
