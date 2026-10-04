@@ -39,29 +39,13 @@ can fail if YouTube changes, blocks requests, or restricts the upload.
 
 ## Preview signing
 
-The source backup includes signing/capyflow-preview.jks. This key signs dev5 and
-must be reused for future previews to allow updates without uninstalling.
-Alias: capyflow-preview. Store/key passwords: android.
-
-SHA-1: 3E:E2:4B:A8:55:9C:74:8E:33:A0:CD:F5:69:4E:DB:FC:92:5B:68:1D
-SHA-256: 94:AA:54:2A:E6:28:2C:C3:2A:E0:EF:EC:40:4E:C9:50:44:B7:D5:13:05:24:37:0C:AA:6A:7F:76:7D:C9:2B:63
-
-The original dev4 signing key was lost when the earlier workspace was pruned.
-Dev5 therefore cannot update dev4 in place. Keep dev4 until its data is backed
-up; uninstalling removes local playlists, downloaded audio, lyrics and artwork.
-See INSTALL-AND-BACKUP.md in the recovery kit for an optional emulator backup.
+Dev8 uses the explicitly selected CI preview key, cached privately by GitHub Actions and checked against `.github/capyflow-signing-sha1.txt`. See the migration section below before updating an older preview. Local development builds may use a different certificate and cannot necessarily update CI builds in place.
 
 ## Accounts and lyrics
 
-Android google-services.json is still missing. Google login and social/cloud
-features remain inactive until com.seph.capyflow is registered in the existing
-capyflow-aa6c5 project, the preview fingerprints above are registered, and the
-Android configuration is placed in app/google-services.json before rebuilding.
-The iOS configuration is not an Android configuration.
+Android is registered in the existing `capyflow-aa6c5` project. The Android app configuration and retained CI signing fingerprints are configured for Google sign-in; client IDs are public configuration. Real-device sign-in still needs validation.
 
-Android follows the iOS lyric route: saved cache, shared backend resolver, then
-emergency direct LRCLIB. The current backend enables LRCLIB; NetEase, QQ Music
-and Kugou adapters are present but disabled. Not every song has lyrics or timing.
+Lyrics use the shared backend, exact-media community timing, and matched LRCLIB fallbacks. Cached lyrics are available offline. Some recordings have no genuine synced lyrics; those remain plain text instead of showing invented timing.
 
 ## Validation and remaining limits
 
@@ -76,9 +60,7 @@ UI gestures and long playback need emulator/real-device testing. The user report
 the source review did not establish the exact emulator-side cause. No microphone capture
 or audio effects are enabled. Emulator diagnostics and output resets are not included.
 
-Other iOS parity work remains: collaborative playlists, friend listening activity,
-profile editing, followers/following drill-down, related-song autoplay, full
-canonical recording matching, message pagination and in-app APK updating.
+Remaining work includes related-song autoplay, full canonical recording matching, message pagination and in-app APK updating. Account profiles, following, collaborative playlists and Friend Activity are implemented in dev8; cross-platform device testing remains necessary.
 
 
 ## Dev7 changes
