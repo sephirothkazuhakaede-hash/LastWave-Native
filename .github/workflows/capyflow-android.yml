@@ -22,8 +22,32 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: capyflow-android-debug-signing-v1
+          path: .signing/capyflow-ci.jks
+          key: capyflow-android-debug-signing-v2
+      - name: Restore or initialize preview signing
+        env:
+          CAPYFLOW_ANDROID_KEYSTORE_BASE64: ${{ secrets.CAPYFLOW_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p .signing
+          if [ -n "$CAPYFLOW_ANDROID_KEYSTORE_BASE64" ]; then
+            printf '%s' "$CAPYFLOW_ANDROID_KEYSTORE_BASE64" | base64 --decode > .signing/capyflow-ci.jks
+          fi
+          if [ ! -f .signing/capyflow-ci.jks ]; then
+            if [ -f .github/capyflow-signing-sha1.txt ]; then
+              echo '::error::Signing key is unavailable. Restore the existing keystore through CAPYFLOW_ANDROID_KEYSTORE_BASE64; refusing to replace it.'
+              exit 1
+            fi
+            keytool -genkeypair -keystore .signing/capyflow-ci.jks -alias capyflow-ci -storepass android -keypass android -keyalg RSA -keysize 3072 -validity 10000 -dname 'CN=CapyFlow Preview,O=CapyFlow,C=PH'
+          fi
+          fingerprint=$(keytool -list -v -keystore .signing/capyflow-ci.jks -alias capyflow-ci -storepass android | sed -n 's/^[[:space:]]*SHA1: //p')
+          echo "Preview signing SHA-1: $fingerprint"
+          if [ -f .github/capyflow-signing-sha1.txt ]; then
+            expected=$(tr -d '\r\n' < .github/capyflow-signing-sha1.txt)
+            if [ "$fingerprint" != "$expected" ]; then
+              echo '::error::Signing certificate does not match the registered preview key.'
+              exit 1
+            fi
+          fi
       - name: Configure Firebase when supplied
         env:
           CAPYFLOW_ANDROID_FIREBASE_JSON: ${{ secrets.CAPYFLOW_ANDROID_FIREBASE_JSON }}
@@ -32,6 +56,8 @@ jobs:
             printf '%s' "$CAPYFLOW_ANDROID_FIREBASE_JSON" > capyflow-android/app/google-services.json
           fi
       - name: Test and build
+        env:
+          CAPYFLOW_CI_KEYSTORE: ${{ github.workspace }}/.signing/capyflow-ci.jks
         working-directory: capyflow-android
         run: |
           chmod +x gradlew

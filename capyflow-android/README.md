@@ -104,3 +104,16 @@ Private playlists and covers are backed up under the authenticated UID and resto
 Android acknowledges message delivery using participant-private receipt documents; iOS already supplies read receipts for Seen. Older iOS builds do not acknowledge unseen delivery, so Android correctly shows Sent until Seen for those recipients. Friend Activity uses the existing opt-in sharing setting and expiring listening records on both platforms.
 
 Google sign-in configuration uses the registered Android app and GitHub CI signing certificate; changing the signing key requires registering its fingerprint. Client Firebase identifiers are public app configuration, not service account credentials. Security and Android validation run on GitHub Actions. Real-device iOS/Android end-to-end testing remains necessary; CI does not substitute for that check.
+
+
+### One-time dev7 signing migration
+
+The older workflow cached a path that did not contain Gradle's actual debug key, so its disposable runners signed builds with different keys. Dev8 explicitly selects and caches its preview key. A public SHA-1 pin makes later builds stop if that key is missing or changed; a replacement is never silently published. For durable recovery, the owner can supply the same keystore through the `CAPYFLOW_ANDROID_KEYSTORE_BASE64` Actions secret. The signing key is never committed or uploaded as a public artifact.
+
+The old dev7 private key was not retained and cannot be recovered from its APK. To preserve local data when switching to the corrected signer, connect one device with USB debugging, extract the new APK from the GitHub artifact, and run:
+
+```sh
+node capyflow-android/scripts/migrate-preview.mjs /path/to/app-debug.apk
+```
+
+The helper creates a streaming local backup of preferences, playlist artwork and downloaded files, then attempts a normal update. Only if Android reports an incompatible signer does it ask you to type `MIGRATE` before replacing the old preview and restoring the backup. Keep the `.tar` backup until the restored app has been checked. Set `CAPYFLOW_ADB` to the absolute `adb` executable path if it is not on PATH. No data is uploaded.

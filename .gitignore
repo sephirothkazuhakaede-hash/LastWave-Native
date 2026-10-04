@@ -75,3 +75,5 @@ credentials_backup*
 
 # Firebase/NewPipe protobuf compatibility library (no credentials)
 !capyflow-android/app/libs/protolite-well-known-types-18.0.1-compatible.aar
+
+/.signing/
