@@ -55,10 +55,10 @@ class SocialModel : ViewModel() {
         val epoch = generation
         ensureProfile(userID)
         listeners += database.collection("profiles").document(userID).addSnapshotListener { d,e ->
-            if(epoch==generation){if(e!=null)error=e.message;ownProfile=d?.takeIf{it.exists()}?.let{Profile.from(it)}}
+            if(epoch==generation){if(e!=null)error=e.message;ownProfile=d?.takeIf{it.exists()}?.let{Profile.from(it)};syncCreatorUsernames()}
         }
         listeners += database.collection("playlists").whereArrayContains("memberIDs",userID).addSnapshotListener { s,e ->
-            if(epoch==generation){if(e!=null)error=e.message;if(s!=null)sharedPlaylists=s.documents.mapNotNull{SharedCollection.from(it)}}
+            if(epoch==generation){if(e!=null)error=e.message;if(s!=null)sharedPlaylists=s.documents.mapNotNull{SharedCollection.from(it)};syncCreatorUsernames()}
         }
         listeners += database.collection("activitySettings").document(userID).addSnapshotListener { d,e ->
             if(epoch==generation){if(e!=null)error=e.message;sharingActivity=d?.getBoolean("sharing")==true}
@@ -213,6 +213,10 @@ class SocialModel : ViewModel() {
     }
     fun renameShared(shared:SharedCollection,name:String){if(name.isNotBlank())db?.collection("playlists")?.document(shared.id)?.update(mapOf("name" to name.trim(),"updatedAt" to FieldValue.serverTimestamp()))?.addOnFailureListener{error=it.message}}
     fun deleteShared(shared:SharedCollection,onDeleted:()->Unit){db?.collection("playlists")?.document(shared.id)?.delete()?.addOnSuccessListener{onDeleted()}?.addOnFailureListener{error=it.message}}
+    private fun syncCreatorUsernames(){
+        val username=ownProfile?.username ?: return;val userID=uid ?: return
+        sharedPlaylists.filter{it.ownerID==userID && it.ownerName!=username}.forEach{shared -> db?.collection("playlists")?.document(shared.id)?.update(mapOf("ownerName" to username,"updatedAt" to FieldValue.serverTimestamp()))?.addOnFailureListener{error=it.message}}
+    }
     private fun observeFriends(epoch:Int){
         val database=db ?: return;val selected=following.take(50).toSet()
         friendListeners.keys.toList().filter{it !in selected}.forEach{id -> friendListeners.remove(id)?.forEach{it.remove()};friends=friends-id;activity=activity-id}
