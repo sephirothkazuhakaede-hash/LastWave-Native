@@ -39,7 +39,7 @@ class AppUpdater(app:Application):AndroidViewModel(app){
     var progress by mutableStateOf<Float?>(null);private set
     var ready by mutableStateOf<File?>(null);private set
     private val client=OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(90,TimeUnit.SECONDS).build()
-    private fun text(url:String)=client.newCall(Request.Builder().url(url).header("User-Agent","CapyFlow-Android").build()).execute().use{r->check(r.isSuccessful){"Update server returned ${r.code}"};val body=r.body ?: error("Empty update response");check(body.contentLength()<=2_000_000){"Update response is too large"};body.string()}
+    private fun text(url:String)=client.newCall(Request.Builder().url(url).header("User-Agent","CapyFlow-Android").build()).execute().use{r->check(r.isSuccessful){"Update server returned ${r.code}"};val body=r.body ?: error("Empty update response");check(body.contentLength()<=2_000_000){"Update response is too large"};body.byteStream().use{input->val output=java.io.ByteArrayOutputStream();val bytes=ByteArray(8192);while(true){val count=input.read(bytes);if(count<0)break;check(output.size()+count<=2_000_000){"Update response is too large"};output.write(bytes,0,count)};output.toString("UTF-8")}}
     fun check(){if(busy)return;busy=true;status="Checking GitHub…";available=null
         viewModelScope.launch{try{
             val latest=withContext(Dispatchers.IO){
@@ -63,7 +63,7 @@ class AppUpdater(app:Application):AndroidViewModel(app){
                 client.newCall(Request.Builder().url(update.url).build()).execute().use{response->
                     check(response.isSuccessful){"Download returned ${response.code}"};val body=response.body ?: error("Empty download");val length=body.contentLength();check(length in 1..104857600){"Unexpected APK size"}
                     val digest=MessageDigest.getInstance("SHA-256");var count=0L
-                    body.byteStream().use{input->part.outputStream().use{output->val bytes=ByteArray(65536);while(true){val size=input.read(bytes);if(size<0)break;count+=size;check(count<=104857600){"APK exceeds size limit"};output.write(bytes,0,size);digest.update(bytes,0,size)}}}
+                    body.byteStream().use{input->part.outputStream().use{output->val bytes=ByteArray(65536);while(true){val size=input.read(bytes);if(size<0)break;count+=size;check(count<=104857600){"APK exceeds size limit"};output.write(bytes,0,size);digest.update(bytes,0,size);val fraction=count.toFloat()/length;if(fraction-(progress ?: 0f)>=.01f)withContext(Dispatchers.Main){progress=fraction}}}}
                     check(count==length){"Incomplete APK download"};check(digest.digest().joinToString(""){"%02x".format(it)}==update.sha256){"APK checksum mismatch"}
                 }
                 verify(part,update.code);destination.delete();check(part.renameTo(destination)){"Couldn’t save APK"};destination
@@ -75,7 +75,7 @@ class AppUpdater(app:Application):AndroidViewModel(app){
         val archive=pm.getPackageArchiveInfo(file.absolutePath,flags) ?: error("Invalid APK")
         val installed=pm.getPackageInfo(app.packageName,flags)
         check(archive.packageName==app.packageName){"APK belongs to another app"}
-        val version=if(Build.VERSION.SDK_INT>=28)archive.longVersionCode else archive.versionCode.toLong();check(version==code && version>BuildConfig.VERSION_CODE){"APK version does not match update"}
+        val version=if(Build.VERSION.SDK_INT>=28)archive.longVersionCode else archive.versionCode.toLong();check(version==code.toLong() && version>BuildConfig.VERSION_CODE){"APK version does not match update"}
         @Suppress("DEPRECATION") fun certificates(info:android.content.pm.PackageInfo):Set<String>{val signatures=if(Build.VERSION.SDK_INT>=28)info.signingInfo?.apkContentsSigners else info.signatures;return signatures.orEmpty().map{MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString(""){b->"%02x".format(b)}}.toSet()}
         val current=certificates(installed);check(current.isNotEmpty() && certificates(archive)==current){"APK signing key differs from the installed app"}
     }

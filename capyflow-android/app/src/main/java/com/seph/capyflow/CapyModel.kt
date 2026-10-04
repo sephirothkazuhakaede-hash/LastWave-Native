@@ -99,6 +99,8 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
         playlists=playlists.filterNot{it.id==updated.id}+updated;persistLibrary();sync(updated)
     }
     private var playJob: Job? = null
+    private var startupWatchdog:Job?=null
+    private var resolvingPlayback=false
     private var lyricJob: Job? = null
     private var libraryListener: ListenerRegistration? = null
     private var accountEpoch = 0
@@ -129,17 +131,18 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
                         if(isPlaying)current?.let{track -> recentTracks=(listOf(track)+recentTracks.filterNot{it.playableID==track.playableID}).take(40);prefs.edit().putString("recentTracks",JSONArray(recentTracks.map{it.json()}).toString()).apply()}
                     }
                     override fun onPlaybackStateChanged(state: Int) {
-                        loading = state == Player.STATE_BUFFERING
+                        loading = resolvingPlayback || state == Player.STATE_BUFFERING
                         if (state == Player.STATE_ENDED) next()
                     }
                     override fun onPlayerError(e: PlaybackException) {
+                        if(resolvingPlayback)return
                         val track=current
                         if(track!=null && !recoveringPlayback && (usingLocalPlayback || e.errorCode in 2000..2999)) {
                             play(track,recovering=true,resumeAt=elapsed,preferDirect=!usingLocalPlayback && !usingDirectPlayback)
                         } else { error=if(usingLocalPlayback)"This saved audio couldn’t play. Your download has been kept. Try again, or remove it from Downloads and download it again when online. (${e.errorCodeName})" else "Playback couldn’t continue. Check your connection and server, then try again. (${e.errorCodeName})";loading=false }
                     }
                 })
-                c.currentMediaItem?.let { item -> current = Track(item.mediaId, item.mediaMetadata.title.toString(), item.mediaMetadata.artist.toString(), artworkURL = item.mediaMetadata.artworkUri?.toString()) }
+                c.currentMediaItem?.takeIf{current==null}?.let { item -> current = Track(item.mediaId, item.mediaMetadata.title.toString(), item.mediaMetadata.artist.toString(), artworkURL = item.mediaMetadata.artworkUri?.toString()) }
             }.onFailure { error = "Player could not start: ${it.message}" }
         }, ContextCompat.getMainExecutor(app))
         auth?.addAuthStateListener(authListener)
@@ -196,65 +199,65 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
         return server.trimEnd('/').let{if(it.endsWith("/v1"))it else "$it/v1"}
     }
     private val resolvedDownloads=mutableMapOf<String,String>()
-    private suspend fun resolve(track: Track, forPlayback: Boolean=false, preferDirect: Boolean=false): Pair<String, Map<String,String>> {
+    private data class StreamSource(val url:String,val headers:Map<String,String>,val description:String,val seconds:Double?,val direct:Boolean,val host:String?=null,val token:String?=null)
+    private suspend fun resolve(track:Track,forPlayback:Boolean=false,preferDirect:Boolean=false):Pair<String,Map<String,String>>{
         val requestedQuality=quality
-        val token=auth?.currentUser?.getIdToken(false)?.await()?.token
-        val headers=token?.let{mapOf("Authorization" to "Bearer $it")}.orEmpty()
-        suspend fun request(address: String): Pair<String,Map<String,String>> {
-            catalog.text(address.removeSuffix("/v1")+"/health",headers,4)
-            val metadata=JSONObject(catalog.text("$address/resolve/${track.playableID}?quality=$requestedQuality",headers,30))
-            if(forPlayback && current?.id==track.id) { if(metadata.optDouble("duration",0.0)>0)duration=metadata.getDouble("duration");audioDetails=audioDescription(metadata.optJSONObject("mediaInfo"),metadata.optString("quality",requestedQuality)) }
-            if(!forPlayback)resolvedDownloads[track.playableID]=audioDescription(metadata.optJSONObject("mediaInfo"),metadata.optString("quality",requestedQuality))
-            PlaybackAuthorization.host=address.toHttpUrl().host;PlaybackAuthorization.token=token
-            return Pair("$address/audio/${track.playableID}?quality=$requestedQuality",headers)
-        }
-        suspend fun direct(): Pair<String,Map<String,String>> {
-            val stream=withTimeout(45000){DirectMusic.resolve(track.playableID,requestedQuality)}
-            currentCoroutineContext().ensureActive()
-            val detail="Direct fallback · "+audioDescription(stream.info(),requestedQuality)
-            if(forPlayback && current?.playableID==track.playableID){usingDirectPlayback=true;audioDetails=detail;stream.duration?.let{duration=it}}
-            if(!forPlayback)resolvedDownloads[track.playableID]=detail
-            return Pair(stream.audio.url,mapOf("User-Agent" to DirectMusic.USER_AGENT))
-        }
-        if(preferDirect || android.os.SystemClock.elapsedRealtime()<backendRetryAfter)return direct()
-        return try {
-            val first=base()
-            try { val result=request(first);if(forPlayback)usingDirectPlayback=false;backendRetryAfter=0;result }
-            catch(e: CancellationException){throw e}
-            catch(e: Exception){
-                if(!automaticServer)throw e
-                val refreshed=base(forceRefresh=true)
-                if(refreshed==first)throw e
-                val result=request(refreshed);if(forPlayback)usingDirectPlayback=false;backendRetryAfter=0;result
+        suspend fun backend():StreamSource=withTimeout(if(forPlayback)22000L else 45000L){
+            val token=withTimeoutOrNull(4000){auth?.currentUser?.getIdToken(false)?.await()?.token}
+            val headers=token?.let{mapOf("Authorization" to "Bearer $it")}.orEmpty()
+            suspend fun request(address:String):StreamSource{
+                // The resolve response itself establishes reachability; no extra health round trip.
+                val metadata=JSONObject(catalog.text("$address/resolve/${track.playableID}?quality=$requestedQuality",headers,if(forPlayback)18 else 30))
+                return StreamSource("$address/audio/${track.playableID}?quality=$requestedQuality",headers,audioDescription(metadata.optJSONObject("mediaInfo"),metadata.optString("quality",requestedQuality)),metadata.optDouble("duration",0.0).takeIf{it>0},false,address.toHttpUrl().host,token)
             }
-        } catch(e: CancellationException){throw e}
-        catch(backendFailure: Exception){
-            backendRetryAfter=android.os.SystemClock.elapsedRealtime()+30000
-            try {direct()}catch(e: CancellationException){throw e}catch(directFailure: Exception){throw IllegalStateException("MSI is unavailable and direct playback couldn’t resolve this song. ${directFailure.message}",directFailure)}
+            val first=base()
+            try{request(first)}catch(e:CancellationException){throw e}catch(e:Exception){
+                if(!automaticServer)throw e
+                val refreshed=base(forceRefresh=true);if(refreshed==first)throw e;request(refreshed)
+            }
         }
+        suspend fun direct():StreamSource=withTimeout(if(forPlayback)25000L else 45000L){
+            val stream=DirectMusic.resolve(track.playableID,requestedQuality)
+            StreamSource(stream.audio.url,mapOf("User-Agent" to DirectMusic.USER_AGENT),"Direct fallback · "+audioDescription(stream.info(),requestedQuality),stream.duration,true)
+        }
+        val stream=if(preferDirect || android.os.SystemClock.elapsedRealtime()<backendRetryAfter)direct()
+            else if(forPlayback)firstWorkingSource(4000,::backend,::direct)
+            else try{backend()}catch(e:CancellationException){throw e}catch(e:Exception){direct()}
+        currentCoroutineContext().ensureActive()
+        if(stream.direct)backendRetryAfter=android.os.SystemClock.elapsedRealtime()+30000 else backendRetryAfter=0
+        if(!stream.direct){PlaybackAuthorization.host=stream.host;PlaybackAuthorization.token=stream.token}
+        if(forPlayback && current?.playableID==track.playableID){usingDirectPlayback=stream.direct;audioDetails=stream.description;stream.seconds?.let{duration=it}}
+        if(!forPlayback)resolvedDownloads[track.playableID]=stream.description
+        return stream.url to stream.headers
     }
 
     fun play(track: Track, following: List<Track>? = null, recovering: Boolean=false, resumeAt: Double=0.0, preferDirect: Boolean=false, fromHistory: Boolean=false) {
-        if(!recovering && current?.playableID==track.playableID && playJob?.isActive==true)return
+        if(!recovering && current?.playableID==track.playableID && (playJob?.isActive==true || loading))return
         if(!recovering && !fromHistory) {
             if(following!=null)previousTracks=following.takeWhile{it.id!=track.id}
             else current?.takeIf{it.playableID!=track.playableID}?.let{previousTracks=(previousTracks+it).takeLast(100)}
         }
-        playJob?.cancel(); lyricJob?.cancel(); lyricEpoch++; controller?.pause()
+        playJob?.cancel();startupWatchdog?.cancel();lyricJob?.cancel(); lyricEpoch++; controller?.stop();resolvingPlayback=true
         recoveringPlayback=recovering;audioDetails="Resolving audio…";error=null;current = track; elapsed = resumeAt; duration = track.duration ?: 0.0; lyrics = emptyList(); loading = true
         if (following != null) queueEntries = following.dropWhile { it.id != track.id }.drop(1).map{QueueEntry(it)}
         playJob = viewModelScope.launch {
             try {
                 val file = downloadedFile(track)
-                usingLocalPlayback=file.exists()
+                usingLocalPlayback=file.isFile && file.length()>0 && !recovering
                 val uri = if (usingLocalPlayback) { audioDetails=prefs.getString("downloadQuality.${safeID(track.playableID)}","Saved audio · quality unknown") ?: "Saved audio";Uri.fromFile(file) } else Uri.parse(resolve(track,true,preferDirect).first)
                 ensureActive()
                 val c = controller ?: withTimeout(15000) { controllerFuture.awaitController() }.also { controller=it }
                 c.setMediaItem(MediaItem.Builder().setMediaId(track.id).setUri(uri).setMediaMetadata(MediaMetadata.Builder()
                     .setTitle(track.title).setArtist(track.artist).setArtworkUri(notificationArtwork(track)).build()).build())
+                resolvingPlayback=false
                 c.prepare();if(resumeAt>0)c.seekTo((resumeAt*1000).toLong());c.play()
+                if(!recovering && !usingLocalPlayback)startupWatchdog=viewModelScope.launch{
+                    delay(18000)
+                    if(current?.playableID==track.playableID && c.playWhenReady && c.playbackState==Player.STATE_BUFFERING && !c.isPlaying)
+                        play(track,recovering=true,resumeAt=resumeAt,preferDirect=!usingDirectPlayback)
+                }
                 loadLyrics(track)
-            } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message; loading = false }
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { resolvingPlayback=false;error = e.message; loading = false }
         }
     }
     private fun loadLyrics(track: Track,force: Boolean=false) {
@@ -296,7 +299,7 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
         val extractor=android.media.MediaExtractor()
         try { extractor.setDataSource(file.path);val index=(0 until extractor.trackCount).firstOrNull{extractor.getTrackFormat(it).getString(android.media.MediaFormat.KEY_MIME)?.startsWith("audio/")==true} ?: error("Download did not contain playable audio");extractor.selectTrack(index);check(extractor.readSampleData(java.nio.ByteBuffer.allocate(1024*1024),0)>0){"Audio download is incomplete"} } finally {extractor.release()}
     }
-    fun toggle() { controller?.let { if (it.isPlaying) it.pause() else {if(it.playbackState==Player.STATE_IDLE)it.prepare();it.play()} } }
+    fun toggle() { if(resolvingPlayback)return;controller?.let { if (it.isPlaying) it.pause() else {if(it.playbackState==Player.STATE_IDLE)it.prepare();it.play()} } }
     fun seek(seconds: Double) { controller?.seekTo((seconds.coerceAtLeast(0.0) * 1000).toLong()) }
     fun next() { if (queue.isNotEmpty()) { val t = queue.first(); queueEntries = queueEntries.drop(1); play(t) } }
     fun previous() {

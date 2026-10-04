@@ -24,7 +24,7 @@ class PlaybackService : MediaSessionService() {
             chain.proceed(signed)
         }.build()
         val renderers=androidx.media3.exoplayer.DefaultRenderersFactory(this).setEnableDecoderFallback(true).setEnableAudioFloatOutput(false).setEnableAudioTrackPlaybackParams(false)
-        val player = ExoPlayer.Builder(this,renderers).setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(this, OkHttpDataSource.Factory(http)))).build()
+        val player = ExoPlayer.Builder(this,renderers).setLoadControl(androidx.media3.exoplayer.DefaultLoadControl.Builder().setBufferDurationsMs(15000,45000,750,1500).build()).setMediaSourceFactory(DefaultMediaSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(this, OkHttpDataSource.Factory(http)))).build()
         player.setAudioAttributes(androidx.media3.common.AudioAttributes.Builder()
             .setUsage(androidx.media3.common.C.USAGE_MEDIA).setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
         player.setHandleAudioBecomingNoisy(true)

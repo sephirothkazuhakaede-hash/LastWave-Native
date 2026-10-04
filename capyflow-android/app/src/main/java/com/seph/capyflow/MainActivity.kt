@@ -140,7 +140,7 @@ class MainActivity : ComponentActivity() {
                         item { Surface(shape=RoundedCornerShape(30.dp),color=Violet.copy(alpha=.10f)) { Column(Modifier.fillMaxWidth().padding(24.dp)) { Text("YOUR NEXT FAVORITE",color=Violet,fontSize=11.sp,letterSpacing=2.sp);Text("Find your flow.",fontSize=32.sp,fontWeight=FontWeight.Bold); Text("Your music. Your people. All in one place.",color=Color.White.copy(alpha=.65f),modifier=Modifier.padding(top=8.dp)); Button(onClick={tab="Search"},modifier=Modifier.padding(top=16.dp)) { Icon(Icons.Default.Search,null); Spacer(Modifier.width(8.dp)); Text("Explore music") } } } }
                         if(vm.playlists.isNotEmpty()) {
                             item { Section("Your playlists") }
-                            item { LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp)) { items(vm.playlists,key={it.id}) { p -> Column(Modifier.width(145.dp).clickable { selectedPlaylist=p.id; tab="Library" }) { PlaylistCover(p,145,social.sharedFor(p)!=null); Text(p.name,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=10.dp)); Text("${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f)) } } } }
+                            item { LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp)) { items(vm.playlists,key={it.id}) { p -> Column(Modifier.width(145.dp).clickable { selectedPlaylist=p.id; tab="Library" }) { PlaylistCover(p,145,social.sharedFor(p)!=null); Text(p.name,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=10.dp)); Text("${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f));PlaylistDownloadBadge(p,vm) } } } }
                         }
                         if(vm.recentTracks.isNotEmpty()){
                             item{Section("Recently played")}
@@ -387,6 +387,9 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
 }
 
 @Composable fun ExplicitBadge(){Box(Modifier.size(14.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha=.65f)),contentAlignment=Alignment.Center){Text("E",fontSize=9.sp,lineHeight=9.sp,fontWeight=FontWeight.Bold,color=Night)}}
+@Composable fun PlaylistDownloadBadge(playlist:Playlist,vm:CapyModel){
+    if(playlist.tracks.isNotEmpty() && playlist.tracks.all{vm.hasDownload(it)})Icon(Icons.Default.DownloadForOffline,"All playlist songs downloaded",tint=Violet,modifier=Modifier.padding(top=4.dp).size(15.dp))
+}
 @Composable fun SharedBadge(label:String="Shared"){
     Row(Modifier.clip(CircleShape).background(Violet.copy(alpha=.16f)).padding(horizontal=8.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){Icon(Icons.Default.Group,"Shared playlist",tint=Violet,modifier=Modifier.size(13.dp));Text(label,fontSize=11.sp,color=Violet,fontWeight=FontWeight.SemiBold)}
 }
@@ -414,7 +417,7 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
             items(vm.downloads,key={it.playableID}){t -> TrackRow(t,{vm.play(t,vm.downloads)},vm,{onAdd(t)},remove={vm.removeDownload(t)})}
         } else {
             item{Column{Section("Your collection");Text("${collections.size} saved",fontSize=12.sp,color=Color.White.copy(alpha=.55f))}}
-            items(collections,key={it.id}){p -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).clickable{onOpen(p.id)}.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){PlaylistCover(p,68,social.sharedFor(p)!=null);Column(Modifier.weight(1f).padding(horizontal=14.dp)){Text(p.name,fontSize=18.sp,fontWeight=FontWeight.SemiBold);Text("${if(p.albumID!=null)"Album" else "Playlist"} · ${p.tracks.size} songs",fontSize=13.sp,color=Color.White.copy(alpha=.55f));if(social.sharedFor(p)!=null)SharedBadge()};Icon(Icons.Default.ChevronRight,null,tint=Color.White.copy(alpha=.4f))}}
+            items(collections,key={it.id}){p -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).clickable{onOpen(p.id)}.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){PlaylistCover(p,68,social.sharedFor(p)!=null);Column(Modifier.weight(1f).padding(horizontal=14.dp)){Text(p.name,fontSize=18.sp,fontWeight=FontWeight.SemiBold);Text("${if(p.albumID!=null)"Album" else "Playlist"} · ${p.tracks.size} songs",fontSize=13.sp,color=Color.White.copy(alpha=.55f));Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){if(social.sharedFor(p)!=null)SharedBadge();PlaylistDownloadBadge(p,vm)}};Icon(Icons.Default.ChevronRight,null,tint=Color.White.copy(alpha=.4f))}}
             if(collections.isEmpty())item{EmptyState("Make it yours","Create a playlist or save an album from Search.",Icons.AutoMirrored.Filled.QueueMusic)}
             if(filter=="All"){
                 item{Column{Section("Downloaded");Text("${vm.downloads.size} available offline",fontSize=12.sp,color=Color.White.copy(alpha=.55f))}}
@@ -444,7 +447,9 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
         }}
         item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
             PlayerAction("Add songs",Icons.Default.Add,false,Modifier.weight(1f)){songPicker=true}
-            PlayerAction("Download",Icons.Default.DownloadForOffline,false,Modifier.weight(1f)){vm.downloadAll(playlist.tracks)}
+            val allSaved=playlist.tracks.isNotEmpty() && playlist.tracks.all{vm.hasDownload(it)}
+            val saving=playlist.tracks.any{it.playableID in vm.downloading}
+            PlayerAction(if(allSaved)"Downloaded" else if(saving)"Saving…" else "Download",if(allSaved)Icons.Default.CheckCircle else Icons.Default.DownloadForOffline,allSaved,Modifier.weight(1f)){if(!allSaved)vm.downloadAll(playlist.tracks)}
             if(isOwner && !playlist.id.startsWith("cloud:"))PlayerAction("Artwork",Icons.Default.AddPhotoAlternate,false,Modifier.weight(1f)){artwork.launch("image/*")}
             PlayerAction(if(shared!=null)"Manage" else "Collaborate",if(shared!=null)Icons.Default.Group else Icons.Default.GroupAdd,shared!=null,Modifier.weight(1f)){collaborate=true}
         }}
