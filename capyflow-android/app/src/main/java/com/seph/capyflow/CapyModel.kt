@@ -60,6 +60,11 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     var lyrics by mutableStateOf<List<Lyric>>(emptyList()); private set
     var lyricsLoading by mutableStateOf(false); private set
     var playlists by mutableStateOf<List<Playlist>>(emptyList()); private set
+    var recentTracks by mutableStateOf<List<Track>>(emptyList()); private set
+    var downloadFailures by mutableStateOf<Map<String,String>>(emptyMap()); private set
+    private var previousTracks=emptyList<Track>()
+    private val lyricLocks=mutableMapOf<String,kotlinx.coroutines.sync.Mutex>()
+    private val lyricRefreshAt=mutableMapOf<String,Long>()
     var downloads by mutableStateOf<List<Track>>(emptyList()); private set
     var downloading by mutableStateOf<Set<String>>(emptySet()); private set
     var server by mutableStateOf(prefs.getString("server", "") ?: ""); private set
@@ -78,21 +83,30 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     private var accountEpoch = 0
     private var owner = auth?.currentUser?.uid ?: "guest"
     private val authListener = FirebaseAuth.AuthStateListener { a ->
+        user = a.currentUser
         if (owner != (a.currentUser?.uid ?: "guest")) {
             accountEpoch++; libraryListener?.remove(); owner = a.currentUser?.uid ?: "guest"
             playlists = readPlaylists(); PlaybackAuthorization.token = null
+            if(owner!="guest" && !prefs.contains("guestImportedTo")) {
+                val guest=runCatching{JSONArray(prefs.getString("library.guest","[]")).let{a -> (0 until a.length()).map{Playlist.from(a.getJSONObject(it))}}}.getOrDefault(emptyList())
+                if(guest.isNotEmpty()){playlists=(playlists+guest).distinctBy{it.id};persistLibrary();guest.forEach{sync(it)};prefs.edit().putString("guestImportedTo",owner).apply()}
+            }
         }
         user = a.currentUser; bindCloud()
     }
     init {
         playlists = readPlaylists()
+        recentTracks=runCatching{readArray("recentTracks").let{a -> (0 until a.length()).map{Track.from(a.getJSONObject(it))}}}.getOrDefault(emptyList())
+        downloadFailures=runCatching{JSONObject(prefs.getString("downloadFailures","{}")!!).let{j -> j.keys().asSequence().associateWith{j.getString(it)}}}.getOrDefault(emptyMap())
         downloads = runCatching { readArray("downloads").let { a -> (0 until a.length()).map { Track.from(a.getJSONObject(it)) } } }.getOrDefault(emptyList())
             .filter { downloadedFile(it).exists() }
         controllerFuture.addListener({
             runCatching { controllerFuture.get() }.onSuccess { c ->
                 controller = c
                 c.addListener(object : Player.Listener {
-                    override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
+                    override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying
+                        if(isPlaying)current?.let{track -> recentTracks=(listOf(track)+recentTracks.filterNot{it.playableID==track.playableID}).take(40);prefs.edit().putString("recentTracks",JSONArray(recentTracks.map{it.json()}).toString()).apply()}
+                    }
                     override fun onPlaybackStateChanged(state: Int) {
                         loading = state == Player.STATE_BUFFERING
                         if (state == Player.STATE_ENDED) next()
@@ -199,8 +213,12 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun play(track: Track, following: List<Track>? = null, recovering: Boolean=false, resumeAt: Double=0.0, preferDirect: Boolean=false) {
+    fun play(track: Track, following: List<Track>? = null, recovering: Boolean=false, resumeAt: Double=0.0, preferDirect: Boolean=false, fromHistory: Boolean=false) {
         if(!recovering && current?.playableID==track.playableID && playJob?.isActive==true)return
+        if(!recovering && !fromHistory) {
+            if(following!=null)previousTracks=following.takeWhile{it.id!=track.id}
+            else current?.takeIf{it.playableID!=track.playableID}?.let{previousTracks=(previousTracks+it).takeLast(100)}
+        }
         playJob?.cancel(); lyricJob?.cancel(); lyricEpoch++; controller?.pause()
         recoveringPlayback=recovering;audioDetails="Resolving audio…";error=null;current = track; elapsed = resumeAt; duration = track.duration ?: 0.0; lyrics = emptyList(); loading = true
         if (following != null) queueEntries = following.dropWhile { it.id != track.id }.drop(1).map{QueueEntry(it)}
@@ -218,25 +236,37 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
             } catch (e: CancellationException) { throw e } catch (e: Exception) { error = e.message; loading = false }
         }
     }
-    private fun loadLyrics(track: Track) {
+    private fun loadLyrics(track: Track,force: Boolean=false) {
         lyricJob?.cancel();val epoch=++lyricEpoch;lyricsLoading=true;lyricsError=null
         lyricJob=viewModelScope.launch {
-            try { val found=fetchLyrics(track);ensureActive();if(epoch==lyricEpoch && current?.playableID==track.playableID)lyrics=found }
+            try { val found=fetchLyrics(track,force);ensureActive();if(epoch==lyricEpoch && current?.playableID==track.playableID)lyrics=found }
             catch(e: CancellationException){throw e} catch(e: Exception){if(epoch==lyricEpoch)lyricsError="Couldn’t load lyrics. Tap Retry."}
             finally { if(epoch==lyricEpoch)lyricsLoading=false }
         }
     }
-    fun retryLyrics(){current?.let{loadLyrics(it)}}
+    fun retryLyrics(){current?.let{loadLyrics(it,true)}}
     private fun lyricFile(track: Track)=File(getApplication<Application>().filesDir,"lyrics/${safeID(track.playableID)}.json")
-    private suspend fun fetchLyrics(track: Track): List<Lyric> {
-        val cached=withContext(Dispatchers.IO){runCatching{Catalog.decodeLyrics(lyricFile(track).readText())}.getOrDefault(emptyList())};if(cached.isNotEmpty())return cached
-        val manager=getApplication<Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val online=manager.getNetworkCapabilities(manager.activeNetwork)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)==true
-        if(!online)return emptyList()
-        val backend=try { val token=auth?.currentUser?.getIdToken(false)?.await()?.token;catalog.backendLyrics(track,base(),token?.let{mapOf("Authorization" to "Bearer $it")}.orEmpty()) } catch(e: CancellationException){throw e} catch(_: Exception){emptyList()}
-        val found=if(backend.isNotEmpty())backend else catalog.lyrics(track)
-        if(found.isNotEmpty())withContext(Dispatchers.IO){runCatching{synchronized(this@CapyModel){val file=lyricFile(track);file.parentFile!!.mkdirs();val temp=File(file.path+".tmp");temp.writeText(Catalog.encodeLyrics(found));check(temp.renameTo(file)){"Could not save lyrics"}}}}
-        return found
+    private suspend fun fetchLyrics(track: Track, force: Boolean=false): List<Lyric> {
+        val key=track.playableID;val lock=lyricLocks.getOrPut(key){kotlinx.coroutines.sync.Mutex()};lock.lock()
+        try {
+            val cached=withContext(Dispatchers.IO){runCatching{Catalog.decodeLyrics(lyricFile(track).readText())}.getOrDefault(emptyList())}
+            val manager=getApplication<Application>().getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val online=manager.getNetworkCapabilities(manager.activeNetwork)?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)==true
+            if(!online || (!force && cached.any{it.time!=null}))return cached
+            if(!force && cached.isNotEmpty() && System.currentTimeMillis()-(lyricRefreshAt[key] ?: 0)<6*3600000L)return cached
+            lyricRefreshAt[key]=System.currentTimeMillis()
+            suspend fun attempt(block:suspend ()->List<Lyric>): List<Lyric> = try{block()}catch(e: CancellationException){throw e}catch(_: Exception){emptyList()}
+            val backend=attempt{val token=auth?.currentUser?.getIdToken(false)?.await()?.token;catalog.backendLyrics(track,base(),token?.let{mapOf("Authorization" to "Bearer $it")}.orEmpty())}
+            val found=if(backend.any{it.time!=null})backend else {
+                val community=attempt{catalog.communityLyrics(track)}
+                if(community.any{it.time!=null})community else {
+                    val direct=attempt{catalog.lyrics(track)}
+                    listOf(direct,backend,cached,community).firstOrNull{it.any{line->line.time!=null}} ?: listOf(backend,direct,cached,community).firstOrNull{it.isNotEmpty()}.orEmpty()
+                }
+            }
+            if(found.isNotEmpty())withContext(Dispatchers.IO){runCatching{val file=lyricFile(track);file.parentFile!!.mkdirs();val temp=File(file.path+".tmp");temp.writeText(Catalog.encodeLyrics(found));check(temp.renameTo(file)){"Could not save lyrics"}}}
+            return found
+        } finally {lock.unlock()}
     }
     private fun artworkFile(track: Track)=File(getApplication<Application>().filesDir,"artwork/${safeID(track.artwork)}.jpg")
     private fun notificationArtwork(track: Track): Uri { val file=artworkFile(track);return if(file.exists())Uri.fromFile(file) else Uri.parse(Catalog.artworkForDisplay(track.artwork)) }
@@ -248,7 +278,12 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     fun toggle() { controller?.let { if (it.isPlaying) it.pause() else {if(it.playbackState==Player.STATE_IDLE)it.prepare();it.play()} } }
     fun seek(seconds: Double) { controller?.seekTo((seconds.coerceAtLeast(0.0) * 1000).toLong()) }
     fun next() { if (queue.isNotEmpty()) { val t = queue.first(); queueEntries = queueEntries.drop(1); play(t) } }
-    fun previous() { seek(0.0) }
+    fun previous() {
+        if(elapsed>3 || previousTracks.isEmpty()){seek(0.0);return}
+        val prior=previousTracks.last();previousTracks=previousTracks.dropLast(1)
+        current?.let{queueEntries=listOf(QueueEntry(it))+queueEntries}
+        play(prior,fromHistory=true)
+    }
     fun playNext(track: Track) { queueEntries = listOf(QueueEntry(track)) + queueEntries }
     fun enqueue(track: Track) { queueEntries = queueEntries + QueueEntry(track) }
     fun removeQueue(index: Int) { queueEntries = queueEntries.filterIndexed { i, _ -> i != index } }
@@ -256,36 +291,42 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     fun clearQueue() { queueEntries = emptyList() }
     private fun safeID(id: String) = MessageDigest.getInstance("SHA-256").digest(id.toByteArray()).joinToString("") { "%02x".format(it) }
     fun downloadedFile(track: Track) = File(getApplication<Application>().filesDir, "downloads/${safeID(track.playableID)}.audio")
+    private fun persistDownloadFailures(){prefs.edit().putString("downloadFailures",JSONObject(downloadFailures).toString()).apply()}
+    fun retryFailedDownloads(tracks: List<Track>){tracks.filter{it.playableID in downloadFailures}.forEach{download(it)}}
     fun download(track: Track) {
-        if (track.playableID in downloadingIDs || downloads.any { it.playableID == track.playableID && downloadedFile(it).exists() }) return
-        downloadingIDs.add(track.playableID)
-        downloading = downloading + track.id
+        if(track.playableID in downloadingIDs || hasDownload(track))return
+        downloadingIDs.add(track.playableID);downloading=downloading+track.playableID
+        downloadFailures=downloadFailures-track.playableID;persistDownloadFailures()
         viewModelScope.launch {
-            downloadSlots.acquire()
+            val destination=downloadedFile(track);val partial=File(destination.path+".part")
+            var acquired=false
             try {
-            val destination = downloadedFile(track); val partial = File(destination.path + ".part")
-            try {
-                val (url, headers) = resolve(track)
-                withContext(Dispatchers.IO) {
-                    destination.parentFile!!.mkdirs()
-                    val request = Request.Builder().url(url.replace("/audio/", "/download/")); headers.forEach { (k,v) -> request.header(k,v) }
-                    catalog.http.newCall(request.build()).execute().use { response ->
-                        check(response.isSuccessful) { "Download failed (${response.code})" }
-                        check(response.header("Content-Type")?.contains("json") != true) { "Server did not return audio" }
-                        val body=response.body ?: error("Empty download");val copied=body.byteStream().use { input -> partial.outputStream().use { input.copyTo(it) } };check(body.contentLength()<0 || copied==body.contentLength()){ "Audio download was interrupted" }
+                downloadSlots.acquire();acquired=true
+                retryAudioDownload { attempt ->
+                    val (url,headers)=resolve(track,preferDirect=attempt==2)
+                    withContext(Dispatchers.IO){
+                        destination.parentFile!!.mkdirs();partial.delete()
+                        val request=Request.Builder().url(url.replace("/audio/","/download/"));headers.forEach{(k,v)->request.header(k,v)}
+                        catalog.http.newCall(request.build()).execute().use{response ->
+                            if(!response.isSuccessful)throw DownloadHttpException(response.code)
+                            check(response.header("Content-Type")?.contains("json")!=true){"Server did not return audio"}
+                            val body=response.body ?: error("Empty download");val copied=body.byteStream().use{input -> partial.outputStream().use{input.copyTo(it)}}
+                            check(body.contentLength()<0 || copied==body.contentLength()){ "Audio download was interrupted" }
+                        }
+                        validateAudio(partial)
+                        check(partial.length()>0 && partial.renameTo(destination)){"Could not save download"}
                     }
-                    validateAudio(partial)
-                    check(partial.length() > 0 && partial.renameTo(destination)) { "Could not save download" }
                 }
-                downloads = downloads.filterNot { it.playableID == track.playableID } + track
-                persistDownloads()
-                prefs.edit().putString("downloadQuality.${safeID(track.playableID)}", "Offline · "+resolvedDownloads.remove(track.playableID).orEmpty()).apply()
+                downloads=downloads.filterNot{it.playableID==track.playableID}+track;persistDownloads()
+                prefs.edit().putString("downloadQuality.${safeID(track.playableID)}","Offline · "+resolvedDownloads.remove(track.playableID).orEmpty()).apply()
+                downloadFailures=downloadFailures-track.playableID;persistDownloadFailures()
+                // Audio slots are released before optional lyrics/artwork caching.
+                downloadSlots.release();acquired=false
                 try{fetchLyrics(track)}catch(e: CancellationException){throw e}catch(_: Exception){}
-                withContext(Dispatchers.IO) { runCatching { val file=artworkFile(track);file.parentFile!!.mkdirs();catalog.http.newCall(Request.Builder().url(Catalog.artworkForDisplay(track.artwork)).build()).also{it.timeout().timeout(15,java.util.concurrent.TimeUnit.SECONDS)}.execute().use { r -> if(r.isSuccessful && r.header("Content-Type")?.startsWith("image/")==true) { val temp=File(file.path+".tmp");temp.writeBytes(r.body!!.bytes());if(android.graphics.BitmapFactory.decodeFile(temp.path)!=null)temp.renameTo(file);temp.delete() } } } }
+                withContext(Dispatchers.IO){runCatching{val file=artworkFile(track);file.parentFile!!.mkdirs();catalog.http.newCall(Request.Builder().url(Catalog.artworkForDisplay(track.artwork)).build()).also{it.timeout().timeout(15,java.util.concurrent.TimeUnit.SECONDS)}.execute().use{response -> if(response.isSuccessful && response.header("Content-Type")?.startsWith("image/")==true){val temp=File(file.path+".tmp");temp.writeBytes(response.body!!.bytes());if(android.graphics.BitmapFactory.decodeFile(temp.path)!=null)temp.renameTo(file);temp.delete()}}}}
                 if(current?.playableID==track.playableID)loadLyrics(track)
-            } catch(e: CancellationException) { throw e } catch (e: Exception) { error = e.message }
-            finally { partial.delete(); downloadingIDs.remove(track.playableID);downloading = downloading - track.id }
-            } finally {downloadSlots.release()}
+            }catch(e: CancellationException){throw e}catch(e: Exception){downloadFailures=downloadFailures+(track.playableID to (e.message ?: "Couldn’t download"));persistDownloadFailures()}
+            finally{if(acquired)downloadSlots.release();partial.delete();downloadingIDs.remove(track.playableID);downloading=downloading-track.playableID;resolvedDownloads.remove(track.playableID)}
         }
     }
     fun downloadAll(tracks: List<Track>){tracks.distinctBy{it.playableID}.forEach{download(it)}}

@@ -91,6 +91,24 @@ class Catalog {
         val json=JSONObject(text(url.toString(),headers,12));if(json.optString("synchronization") !in setOf("plain","line","word","syllable"))return emptyList();val lines=json.optJSONArray("lines") ?: return emptyList()
         return (0 until lines.length()).mapNotNull { i -> val l=lines.getJSONObject(i);val t=l.optString("text").trim();if(t.isBlank())null else Lyric(if(l.isNull("time"))null else l.optDouble("time").takeIf{it.isFinite()},t) }
     }
+    suspend fun communityLyrics(track: Track): List<Lyric> {
+        // Match the exact media ID; never estimate timestamps for plain lyrics.
+        if(!Regex("[A-Za-z0-9_-]{11}").matches(track.playableID)) return emptyList()
+        val response=JSONObject(text("https://api-lyrics.simpmusic.org/v1/${track.playableID}",mapOf("User-Agent" to "CapyFlow-Android"),12))
+        if(!response.optBoolean("success")) return emptyList()
+        val records=response.optJSONArray("data") ?: return emptyList()
+        for(i in 0 until records.length()) {
+            val record=records.optJSONObject(i) ?: continue
+            val id=record.nullable("videoId")
+            if(id!=null && id!=track.playableID) continue
+            val duration=record.optDouble("duration")
+            if(track.duration!=null && duration.isFinite() && duration>0 && kotlin.math.abs(duration-track.duration)>12) continue
+            val synced=record.nullable("syncedLyrics")?.takeIf{it.isNotBlank()} ?: continue
+            val lines=parseLyrics(synced)
+            if(lines.any{it.time!=null}) return lines
+        }
+        return emptyList()
+    }
     suspend fun lyrics(track: Track): List<Lyric> {
         val url="https://lrclib.net/api/search".toHttpUrl().newBuilder().addQueryParameter("track_name",cleanTitle(track.title)).addQueryParameter("artist_name",track.artist).build()
         return selectLyrics(JSONArray(text(url.toString(),mapOf("User-Agent" to "CapyFlow-Android"),15)),track)
