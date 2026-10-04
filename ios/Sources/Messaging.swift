@@ -48,6 +48,23 @@ struct DirectMessage: Identifiable {
     }
 }
 
+
+enum DirectMessageStatus: String {
+    case sending = "Sending…"
+    case sent = "Sent"
+    case read = "Read"
+
+    static func resolve(messageID: String, pending: Bool, peerReadID: String?, orderedIDs: [String]) -> Self {
+        if pending { return .sending }
+        guard let peerReadID, !peerReadID.isEmpty else { return .sent }
+        if peerReadID == messageID { return .read }
+        guard let messageIndex = orderedIDs.firstIndex(of: messageID),
+              let readIndex = orderedIDs.firstIndex(of: peerReadID),
+              messageIndex <= readIndex else { return .sent }
+        return .read
+    }
+}
+
 struct MessageBannerEvent: Identifiable {
     let id: String
     let peerID: String
@@ -164,7 +181,13 @@ struct MessageArrivalTracker {
     private var lastReadAttempt: String?
     private var visible = false
     private var creationEstablished = false
-    private var conversation: DirectConversation?
+    @Published private(set) var conversation: DirectConversation?
+
+    func status(for message: DirectMessage) -> DirectMessageStatus {
+        DirectMessageStatus.resolve(messageID: message.id, pending: message.pending,
+                                    peerReadID: peerID.flatMap { conversation?.readMessageIDs[$0] },
+                                    orderedIDs: messages.map(\.id))
+    }
 
     func start(userID: String?, peerID: String) {
         stop(); epoch = UUID(); uid = userID; self.peerID = peerID

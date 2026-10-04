@@ -121,8 +121,15 @@ struct DirectChatView: View {
                                 if mine { Spacer(minLength: 40) }
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(message.text).font(.capyBody).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                                    Text(message.pending ? "Sending…" : message.createdAt.formatted(date: .omitted, time: .shortened))
-                                        .font(.caption2).opacity(0.6)
+                                    HStack(spacing: 6) {
+                                        Text(message.createdAt.formatted(date: .omitted, time: .shortened))
+                                        if mine {
+                                            let status = chat.status(for: message)
+                                            Image(systemName: status == .sending ? "clock" : (status == .read ? "checkmark.circle.fill" : "checkmark"))
+                                            Text(status.rawValue)
+                                        }
+                                    }
+                                    .font(.caption2).opacity(0.8)
                                 }
                                 .padding(12).foregroundStyle(mine ? Color.black : Color.white)
                                 .background(mine ? CapyColor.accent : CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 18))
@@ -195,7 +202,16 @@ private struct MessageBannerModifier: ViewModifier {
                         Button { messaging.dismissBanner() } label: { Image(systemName: "xmark").padding(8) }
                             .foregroundStyle(CapyColor.secondaryText).accessibilityLabel("Dismiss message notification")
                     }
-                    .padding(14).waveSurface(radius: 20).padding(.horizontal, 12).padding(.top, 8)
+                    .padding(14)
+                    .background(Color(red: 0.075, green: 0.08, blue: 0.105),
+                                in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .strokeBorder(CapyColor.accent.opacity(0.5), lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(0.45), radius: 16, y: 6)
+                    .padding(.horizontal, 12).padding(.top, 8)
+                    .zIndex(100)
                     .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
                     .task(id: event.id) {
                         do { try await Task.sleep(for: .seconds(6)); if messaging.banner?.id == event.id { messaging.dismissBanner() } } catch { }

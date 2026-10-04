@@ -17,6 +17,16 @@ final class MessagingTests: XCTestCase {
         var invalid = data; invalid["memberIDs"] = ["alice", "alice"]
         XCTAssertNil(DirectConversation(id: "invalid", data: invalid))
     }
+    func testOutgoingStatusUsesPeerReadWatermark() {
+        let ids = ["first", "second", "third"]
+        XCTAssertEqual(DirectMessageStatus.resolve(messageID: "first", pending: true, peerReadID: "third", orderedIDs: ids), .sending)
+        XCTAssertEqual(DirectMessageStatus.resolve(messageID: "first", pending: false, peerReadID: nil, orderedIDs: ids), .sent)
+        XCTAssertEqual(DirectMessageStatus.resolve(messageID: "first", pending: false, peerReadID: "second", orderedIDs: ids), .read)
+        XCTAssertEqual(DirectMessageStatus.resolve(messageID: "second", pending: false, peerReadID: "second", orderedIDs: ids), .read)
+        XCTAssertEqual(DirectMessageStatus.resolve(messageID: "third", pending: false, peerReadID: "second", orderedIDs: ids), .sent)
+        XCTAssertEqual(DirectMessageStatus.resolve(messageID: "third", pending: false, peerReadID: "unknown", orderedIDs: ids), .sent)
+    }
+
     func testMessageInputBoundsAndWhitespace() {
         XCTAssertEqual(DirectMessage.cleaned("  Hello\n"), "Hello")
         XCTAssertNil(DirectMessage.cleaned("\n  "))
