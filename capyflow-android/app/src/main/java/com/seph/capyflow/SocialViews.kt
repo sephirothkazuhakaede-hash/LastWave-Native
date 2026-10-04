@@ -81,7 +81,7 @@ import kotlinx.coroutines.*
 @Composable fun DrawerRow(title:String,icon:androidx.compose.ui.graphics.vector.ImageVector,onClick:()->Unit){
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Glass).border(1.dp,Color.White.copy(alpha=.07f),RoundedCornerShape(24.dp)).clickable(onClick=onClick).padding(20.dp),verticalAlignment=Alignment.CenterVertically){Icon(icon,null,tint=Violet);Text(title,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f).padding(start=16.dp));Icon(Icons.Default.ChevronRight,null,tint=Color.White.copy(alpha=.4f))}
 }
-@Composable fun AccountDrawer(vm:CapyModel,social:SocialModel,signIn:()->Unit,onClose:()->Unit,onProfile:(Profile)->Unit,onSocial:()->Unit){
+@Composable fun AccountDrawer(vm:CapyModel,social:SocialModel,signIn:()->Unit,onClose:()->Unit,onProfile:(Profile)->Unit,onSocial:()->Unit,onMessages:()->Unit){
     var page by remember{mutableStateOf("CapyFlow")};val scope=rememberCoroutineScope()
     BackHandler{if(page=="CapyFlow")onClose() else page="CapyFlow"}
     Column(Modifier.fillMaxHeight().fillMaxWidth(.88f).widthIn(max=420.dp).background(Night).statusBarsPadding().navigationBarsPadding().padding(18.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)){
@@ -90,19 +90,19 @@ import kotlinx.coroutines.*
             "CapyFlow"->{
                 val p=social.ownProfile
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Violet.copy(alpha=.12f)).border(1.dp,Violet.copy(alpha=.25f),RoundedCornerShape(28.dp)).clickable{if(p!=null)onProfile(p) else signIn()}.padding(18.dp),verticalAlignment=Alignment.CenterVertically){ProfileAvatar(p,68);Column(Modifier.padding(start=16.dp)){Text(p?.displayName ?: "Welcome",fontSize=23.sp,fontWeight=FontWeight.Bold);Text(p?.let{"@${it.username}"} ?: "Sign in to CapyFlow",color=Color.White.copy(alpha=.6f));Text("View profile",color=Violet,modifier=Modifier.padding(top=5.dp))}}
-                DrawerRow("Profile & friends",Icons.Default.People){onSocial()};DrawerRow("Messages",Icons.Default.Forum){onSocial()};DrawerRow("Settings",Icons.Default.Settings){page="Settings"};DrawerRow("Friend Activity privacy",Icons.Default.PrivacyTip){page="Friend Activity privacy"};DrawerRow("Updates",Icons.Default.SystemUpdate){page="Updates"}
+                DrawerRow("Profile & friends",Icons.Default.People){onSocial()};DrawerRow("Messages",Icons.Default.Forum){onMessages()};DrawerRow("Settings",Icons.Default.Settings){page="Settings"};DrawerRow("Friend Activity privacy",Icons.Default.PrivacyTip){page="Friend Activity privacy"};DrawerRow("Updates",Icons.Default.SystemUpdate){page="Updates"}
                 Section("Friend Activity")
                 var now by remember{mutableLongStateOf(System.currentTimeMillis())};LaunchedEffect(Unit){while(true){delay(30000);now=System.currentTimeMillis()}}
-                val active=social.activity.filterValues{it.expires>now && it.playing}
-                if(active.isEmpty())Text("No friends listening right now",fontSize=13.sp,color=Color.White.copy(alpha=.55f))
-                active.forEach{(id,a)->val friend=social.friends[id];Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable{friend?.let(onProfile)}.padding(8.dp),verticalAlignment=Alignment.CenterVertically){ProfileAvatar(friend,48);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(friend?.username ?: "Listener",fontWeight=FontWeight.Bold);Text(a.title,maxLines=2,overflow=TextOverflow.Ellipsis,fontSize=13.sp);Text(a.artist,color=Color.White.copy(alpha=.5f),fontSize=12.sp)};Artwork(a.artwork,42)}}
+                val active=social.activity.filterValues{it.title.isNotBlank()}.toList().sortedWith(compareByDescending<Pair<String,ListeningActivity>>{it.second.playing && it.second.expires>now}.thenByDescending{it.second.updated})
+                if(active.isEmpty())Text("No recent listening activity",fontSize=13.sp,color=Color.White.copy(alpha=.55f))
+                active.forEach{(id,a)->val friend=social.friends[id];Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable{friend?.let(onProfile)}.padding(8.dp),verticalAlignment=Alignment.CenterVertically){ProfileAvatar(friend,48);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(friend?.username ?: "Listener",fontWeight=FontWeight.Bold);Text(a.title,maxLines=2,overflow=TextOverflow.Ellipsis,fontSize=13.sp);Text(a.artist,color=Color.White.copy(alpha=.5f),fontSize=12.sp);Text(activityStatus(a.playing,a.updated,a.expires,now),fontSize=11.sp,color=if(a.playing && a.expires>now)Violet else Color.White.copy(alpha=.5f))};Artwork(a.artwork,42)}}
                 Text("Your music and downloads work even when social features are offline.",fontSize=12.sp,color=Color.White.copy(alpha=.4f),modifier=Modifier.padding(top=12.dp))
             }
             "Settings"->{DrawerRow("Profile",Icons.Default.Person){social.ownProfile?.let(onProfile) ?: signIn()};DrawerRow("Streaming settings",Icons.Default.Cloud){page="Streaming settings"};DrawerRow("Audio quality",Icons.Default.GraphicEq){page="Audio quality"};if(vm.user!=null)TextButton(onClick={vm.signOut();onClose()}){Text("Sign out")}else Button(onClick=signIn){Text("Continue with Google")}}
             "Streaming settings"->StreamingSettings(vm)
             "Audio quality"->{Text("Applies to the next stream or download. Saved tracks retain their downloaded quality.",fontSize=13.sp,color=Color.White.copy(alpha=.6f));listOf("automatic" to "Best available","dataSaver" to "Data saver").forEach{(value,label)->Row(Modifier.fillMaxWidth().clickable{vm.saveQuality(value)}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){RadioButton(vm.quality==value,{vm.saveQuality(value)});Text(label)}};Text(vm.audioDetails,fontSize=13.sp,color=Violet)}
             "Friend Activity privacy"->{Text("Share what you’re listening to with CapyFlow listeners on iOS and Android.");Row(verticalAlignment=Alignment.CenterVertically){Text("Share listening activity",modifier=Modifier.weight(1f));Switch(social.sharingActivity,{social.setActivitySharing(it)},enabled=vm.user!=null)};if(vm.user==null)Button(onClick=signIn){Text("Sign in")}}
-            "Updates"->{Text("CapyFlow Android ${BuildConfig.VERSION_NAME}");Text("Install newer previews from the GitHub build artifacts.",color=Color.White.copy(alpha=.6f));val context=LocalContext.current;TextButton(onClick={context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,android.net.Uri.parse("https://github.com/sephirothkazuhakaede-hash/LastWave-Native/actions/workflows/capyflow-android.yml")))}){Text("Open builds")}}
+            "Updates"->UpdateSettings()
         }
     }
 }

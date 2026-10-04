@@ -99,3 +99,14 @@ node capyflow-android/scripts/migrate-preview.mjs /path/to/app-debug.apk
 ```
 
 The helper creates a streaming local backup of preferences, playlist artwork and downloaded files, then attempts a normal update. Only if Android reports an incompatible signer does it ask you to type `MIGRATE` before replacing the old preview and restoring the backup. Keep the `.tar` backup until the restored app has been checked. Set `CAPYFLOW_ADB` to the absolute `adb` executable path if it is not on PATH. No data is uploaded.
+
+
+### Dev9 social navigation, output and updates
+
+Social is a dedicated people-search/following page; Messages is a separate inbox. Blank queries clear results, superseded requests cannot overwrite the latest query, and the authenticated account is excluded from discovery. Chats use a full-screen animated route with status/navigation/keyboard insets and both toolbar and system Back support. New unread inbox messages and errors appear in dismissible top banners for 4.5 seconds. Existing inbox snapshots do not generate a flood of historical notifications.
+
+Friend Activity displays genuine live presence only while the record is fresh, otherwise the time since the last published record. Paused playback does not keep refreshing the last-listened timestamp. The player has a themed output button: Android 14+ opens the system audio-output picker, and older versions open Bluetooth settings. Standard Bluetooth audio, headset transport controls and noisy-disconnect pause use the existing media session; device-specific routing needs real-device testing.
+
+Updates are published as Android prereleases after both build and security jobs succeed. Settings → Updates discovers only this repository’s Android releases, downloads the APK, checks its SHA-256, package, higher version and exact installed signing certificate, then opens Android’s installer. The user must permit CapyFlow as an update source and confirm installation. Updates preserve local app data when signed with the retained dev8 key. This does not bypass the dev7 migration requirement.
+
+Foreground message banners work with the current Firestore listeners. FCM receiving, private device registration and a trusted message-created server trigger are supplied. Background message pushes are NOT active until that trigger is deployed to an authorized server. See firebase/push/README.md; the current Spark billing plan is not changed automatically. iOS background receiving also requires its own APNs/FCM registration and Apple push entitlement.

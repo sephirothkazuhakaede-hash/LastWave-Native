@@ -4,7 +4,7 @@ if (firebaseConfigured) apply(plugin = "com.google.gms.google-services")
 android {
     namespace = "com.seph.capyflow"
     compileSdk = 36
-    defaultConfig { applicationId = "com.seph.capyflow"; minSdk = 26; targetSdk = 36; versionCode = 8; versionName = "0.1.0-dev8"; buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString()) }
+    defaultConfig { applicationId = "com.seph.capyflow"; minSdk = 26; targetSdk = 36; versionCode = 9; versionName = "0.1.0-dev9"; buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString()) }
     val ciSigning = System.getenv("CAPYFLOW_CI_KEYSTORE")
     if(ciSigning != null) signingConfigs { getByName("debug") { storeFile = file(ciSigning);storePassword="android";keyAlias="capyflow-ci";keyPassword="android" } }
     else if (rootProject.file("signing/capyflow-preview.jks").exists()) signingConfigs { getByName("debug") { storeFile = rootProject.file("signing/capyflow-preview.jks"); storePassword = "android"; keyAlias = "capyflow-preview"; keyPassword = "android" } }
@@ -30,6 +30,7 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.13.0"))
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
+    implementation("com.google.firebase:firebase-messaging")
     implementation("com.google.android.gms:play-services-auth:21.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.10.2")
     testImplementation("junit:junit:4.13.2")

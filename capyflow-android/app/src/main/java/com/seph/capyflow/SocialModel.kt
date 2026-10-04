@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.firestore.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.tasks.await
 import java.util.UUID
 import org.json.JSONObject
@@ -46,8 +48,14 @@ class SocialModel : ViewModel() {
     private var chatListener: ListenerRegistration? = null
     private var threadListener: ListenerRegistration? = null
     private var generation = 0
+    private val searchGate = PeopleSearchGate()
+    private var inboxSeeded = false
+    private val notifiedMessages = mutableMapOf<String,String>()
+    private val eventFlow = MutableSharedFlow<AppNotice>(extraBufferCapacity=16)
+    val notices = eventFlow.asSharedFlow()
     fun bind(database: FirebaseFirestore?, userID: String?) {
         if(db === database && uid == userID) return
+        searchGate.clear();inboxSeeded=false;notifiedMessages.clear()
         generation++; listeners.forEach { it.remove() }; listeners.clear(); closeChat(); db = database; uid = userID
         following = emptySet(); inbox = emptyList(); profiles = emptyList(); savingProfile=false;searching=false;error=null;ownProfile=null; sharedPlaylists=emptyList(); activity=emptyMap(); friends=emptyMap(); sharingActivity=false
         friendListeners.values.flatten().forEach{it.remove()};friendListeners.clear();acknowledged.clear()
@@ -77,16 +85,31 @@ class SocialModel : ViewModel() {
                 val reads = d.get("readMessageIDs") as? Map<*,*>
                 Conversation(d.id,p,d.getString("lastText") ?: "",d.getString("lastSenderID") != userID && reads?.get(userID) != d.getString("lastMessageID"),d.getTimestamp("updatedAt")?.toDate()?.time ?: 0)
             }.sortedByDescending { it.date }
-                if(!s.metadata.isFromCache) s.documents.forEach{d -> acknowledge(d)}
+                if(!s.metadata.isFromCache) {
+                    s.documents.forEach{d ->
+                        val messageID=d.getString("lastMessageID");val sender=d.getString("lastSenderID")
+                        val unread=(d.get("readMessageIDs") as? Map<*,*>)?.get(userID)!=messageID
+                        if(inboxSeeded && messageID!=null && notifiedMessages[d.id]!=messageID && sender!=null && sender!=userID && unread && peer!=sender)
+                            eventFlow.tryEmit(AppNotice("New message",d.getString("lastText") ?: "",sender))
+                        if(messageID!=null)notifiedMessages[d.id]=messageID
+                        acknowledge(d)
+                    };inboxSeeded=true
+                }
             }
         }
     }
+    fun clearPeopleSearch() { searchGate.clear();profiles=emptyList();searching=false }
     fun findPeople(raw: String) {
-        val database = db ?: return; val query = raw.trim().removePrefix("@").lowercase(); if(query.isBlank()) return
-        val epoch = generation
-        viewModelScope.launch { searching = true
-            try { val docs = database.collection("profiles").orderBy("username").startAt(query).endAt(query + "\uf8ff").limit(20).get().await(); if(epoch == generation) profiles = docs.documents.map { Profile.from(it) } }
-            catch(e: Exception) { if(epoch == generation) error = e.message } finally { if(epoch == generation) searching = false }
+        val query = PeopleSearchGate.normalize(raw); val request=searchGate.begin(query)
+        profiles=emptyList();searching=false
+        val database = db ?: return;val userID=uid ?: return
+        if(query.isBlank())return
+        val epoch=generation;searching=true
+        viewModelScope.launch {
+            try { val docs=database.collection("profiles").orderBy("username").startAt(query).endAt(query+"\uf8ff").limit(20).get().await()
+                if(epoch==generation && searchGate.accepts(request))profiles=docs.documents.map{Profile.from(it)}.filter{it.id!=userID}
+            } catch(e:Exception){if(epoch==generation && searchGate.accepts(request))error=e.message}
+            finally{if(epoch==generation && searchGate.accepts(request))searching=false}
         }
     }
     fun follow(profile: Profile, value: Boolean) {
@@ -128,6 +151,7 @@ class SocialModel : ViewModel() {
     fun send(raw: String, onSuccess: () -> Unit) {
         val text = raw.trim(); if(sending || text.isEmpty() || text.length > 4000) return
         val userID = uid ?: return; val peerID = peer ?: return; val ref = thread ?: return; val database = db ?: return
+        if(!threadExists && peerID !in following){error="Follow this person before starting a conversation.";return}
         val batch = database.batch(); val id = UUID.randomUUID().toString(); val time = FieldValue.serverTimestamp()
         batch.set(ref.collection("messages").document(id),mapOf("senderID" to userID,"text" to text,"createdAt" to time))
         if(threadExists) batch.update(ref,mapOf("lastMessageID" to id,"lastText" to text,"lastSenderID" to userID,"updatedAt" to time,"readMessageIDs.$userID" to id))
@@ -261,8 +285,8 @@ data class SharedCollection(val id:String,val sourceID:String,val name:String,va
         return SharedCollection(d.id,d.getString("sourceID") ?: d.id,name,owner,d.getString("ownerName") ?: "",(d.get("memberIDs") as? List<*>)?.filterIsInstance<String>().orEmpty(),tracks)
     }}
 }
-data class ListeningActivity(val title:String,val artist:String,val artwork:String?,val playing:Boolean,val expires:Long){
-    companion object{fun from(d:DocumentSnapshot):ListeningActivity?{if(!d.exists())return null;return ListeningActivity(d.getString("title") ?: "",d.getString("artist") ?: "",d.getString("artworkURL"),d.getBoolean("playing")==true,d.getTimestamp("expiresAt")?.toDate()?.time ?: 0)}}
+data class ListeningActivity(val title:String,val artist:String,val artwork:String?,val playing:Boolean,val expires:Long,val updated:Long=0){
+    companion object{fun from(d:DocumentSnapshot):ListeningActivity?{if(!d.exists())return null;return ListeningActivity(d.getString("title") ?: "",d.getString("artist") ?: "",d.getString("artworkURL"),d.getBoolean("playing")==true,d.getTimestamp("expiresAt")?.toDate()?.time ?: 0,d.getTimestamp("updatedAt")?.toDate()?.time ?: 0)}}
 }
 private fun jsonMap(json:JSONObject):Map<String,Any> = json.keys().asSequence().mapNotNull{key -> val value=json.opt(key);if(value==null || value==JSONObject.NULL)null else key to jsonValue(value)}.toMap()
 private fun jsonValue(value:Any):Any = when(value){is JSONObject->jsonMap(value);is org.json.JSONArray->(0 until value.length()).map{index -> val item=value.opt(index);if(item==null || item==JSONObject.NULL)null else jsonValue(item)};else->value}

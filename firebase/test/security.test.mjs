@@ -223,3 +223,17 @@ test('deleting shared access does not delete the account-private source playlist
   await assertSucceeds(getDoc(doc(alice,'users','alice','library','source')));
   await assertFails(getDoc(doc(bob,'users','alice','library','source')));
 });
+
+
+test('push tokens are account-private and reject oversized or extra fields', async () => {
+  const ref=doc(account('alice'), 'users/alice/devices/installation');
+  const data={token:'valid-token',platform:'android',updatedAt:serverTimestamp()};
+  await assertSucceeds(setDoc(ref,data));
+  await assertSucceeds(getDoc(ref));
+  await assertFails(getDoc(doc(account('bob'),'users/alice/devices/installation')));
+  await assertFails(setDoc(doc(account('bob'),'users/alice/devices/other'),data));
+  await assertFails(setDoc(ref,{...data,admin:true}));
+  await assertFails(setDoc(ref,{...data,token:'x'.repeat(4097)}));
+  await assertFails(setDoc(ref,{...data,platform:'ios'}));
+  await assertSucceeds(deleteDoc(ref));
+});

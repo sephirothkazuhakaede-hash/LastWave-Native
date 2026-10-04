@@ -64,7 +64,7 @@ jobs:
           ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: CapyFlow-Android-dev8
+          name: CapyFlow-Android-dev9
           path: capyflow-android/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         if: always()
@@ -89,7 +89,33 @@ jobs:
           cache-dependency-path: firebase/package-lock.json
       - name: Test preview migration safety
         working-directory: capyflow-android
-        run: node --test scripts/test-migrate-preview.mjs
+        run: node --test scripts/test-migrate-preview.mjs scripts/test-release-manifest.mjs ../firebase/push/test-plan.mjs
       - name: Test shared Firebase rules
         working-directory: firebase
         run: npm ci && npm test
+
+  publish:
+    needs: [build, security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: CapyFlow-Android-dev9
+          path: dist
+      - name: Publish verified Android preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node capyflow-android/scripts/release-manifest.mjs dist/app-debug.apk capyflow-android/app/build.gradle.kts dist
+          tag=$(node -p "'android-dev'+require('./dist/android-update.json').versionCode")
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/CapyFlow.apk dist/android-update.json --clobber
+          else
+            gh release create "$tag" dist/CapyFlow.apk dist/android-update.json --target "$GITHUB_SHA" --prerelease --title "CapyFlow Android $tag" --notes 'Android preview with full-screen chats, separate Messages, Friend Activity timestamps, audio output controls and verified in-app updates. Background message pushes require server deployment; foreground banners work now.'
+          fi

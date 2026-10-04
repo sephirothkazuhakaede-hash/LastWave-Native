@@ -60,6 +60,8 @@ val Glass = Color.White.copy(alpha = .075f)
 
 class MainActivity : ComponentActivity() {
     private var model: CapyModel? = null
+    private val messageIntent = mutableStateOf<String?>(null)
+    override fun onNewIntent(intent: android.content.Intent) {super.onNewIntent(intent);setIntent(intent);messageIntent.value=intent.getStringExtra("chatPeer")}
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     private val signInLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         runCatching { GoogleSignIn.getSignedInAccountFromIntent(result.data).getResult(com.google.android.gms.common.api.ApiException::class.java) }
@@ -68,6 +70,8 @@ class MainActivity : ComponentActivity() {
                 else model?.error = "Google sign-in did not return an identity token"
             }.onFailure { if((it as? com.google.android.gms.common.api.ApiException)?.statusCode != 12501) model?.error = "Google sign-in failed: ${it.message}" }
     }
+    override fun onResume(){super.onResume();PushNotices.foreground=true;if(BuildConfig.FIREBASE_CONFIGURED)PushRegistry.bind(this,com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid)}
+    override fun onPause(){PushNotices.foreground=false;super.onPause()}
     private fun signIn() {
         if(!BuildConfig.FIREBASE_CONFIGURED) { model?.error = "Account sign-in is not connected in this preview yet. You can still search, play music, download songs and use local playlists."; return }
         val res = resources.getIdentifier("default_web_client_id","string",packageName)
@@ -76,22 +80,22 @@ class MainActivity : ComponentActivity() {
         signInLauncher.launch(GoogleSignIn.getClient(this,options).signInIntent)
     }
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState); enableEdgeToEdge(statusBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),navigationBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
+        super.onCreate(savedInstanceState);messageIntent.value=intent.getStringExtra("chatPeer"); enableEdgeToEdge(statusBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),navigationBarStyle=SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         if(Build.VERSION.SDK_INT >= 33) permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         setContent {
             val vm: CapyModel = viewModel(); val social: SocialModel = viewModel(); model = vm
-            LaunchedEffect(vm.user?.uid) { vm.collaboration=social;social.bind(vm.db,vm.user?.uid) }
+            LaunchedEffect(vm.user?.uid) { vm.collaboration=social;social.bind(vm.db,vm.user?.uid);PushRegistry.bind(this@MainActivity,vm.user?.uid) }
             LaunchedEffect(social.sharedPlaylists,vm.user?.uid){vm.applySharedCollections(social.sharedPlaylists)}
-            LaunchedEffect(vm.current?.playableID,vm.playing,social.sharingActivity,vm.user?.uid){while(true){social.publishActivity(vm.current,vm.playing);kotlinx.coroutines.delay(60000)}}
+            LaunchedEffect(vm.current?.playableID,vm.playing,social.sharingActivity,vm.user?.uid){while(true){social.publishActivity(vm.current,vm.playing);if(!vm.playing)break;kotlinx.coroutines.delay(60000)}}
             MaterialTheme(colorScheme = darkColorScheme(primary=Violet,secondary=Color(0xFFD78FEE),background=Night,surface=Raised,onPrimary=Night)) {
-                CompositionLocalProvider(LocalContentColor provides Color.White) { CapyApp(vm,social,::signIn) }
+                CompositionLocalProvider(LocalContentColor provides Color.White) { CapyApp(vm,social,::signIn,messageIntent.value){messageIntent.value=null} }
             }
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable fun CapyApp(vm: CapyModel,social: SocialModel,signIn: () -> Unit) {
+@Composable fun CapyApp(vm: CapyModel,social: SocialModel,signIn: () -> Unit,requestedPeer:String?=null,onPeerConsumed:()->Unit={}) {
     var tab by remember { mutableStateOf("Home") }
     var query by rememberSaveable { mutableStateOf("") }
     var albumsOnly by rememberSaveable { mutableStateOf(false) }
@@ -105,13 +109,20 @@ class MainActivity : ComponentActivity() {
     var selectedProfile by remember { mutableStateOf<Profile?>(null) }
     var chatPeer by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    var notice by remember{mutableStateOf<AppNotice?>(null)}
+    LaunchedEffect(vm.user?.uid){chatPeer=null;selectedProfile=null;social.clearPeopleSearch()}
+    LaunchedEffect(requestedPeer,vm.user?.uid){if(requestedPeer!=null && vm.user!=null && requestedPeer!=vm.user?.uid){social.openChat(requestedPeer);chatPeer=requestedPeer;onPeerConsumed()}}
+    LaunchedEffect(social){social.notices.collect{notice=it}}
+    LaunchedEffect(Unit){PushNotices.events.collect{notice=it}}
+    LaunchedEffect(notice?.id){if(notice!=null){kotlinx.coroutines.delay(4500);notice=null}}
+    LaunchedEffect(vm.error,social.error){(vm.error ?: social.error)?.let{notice=AppNotice("CapyFlow",it);vm.error=null;social.error=null}}
     Box(Modifier.fillMaxSize().background(Night)) {
         AmbientBackground()
         Scaffold(containerColor=Color.Transparent,bottomBar={
             Column(Modifier.navigationBarsPadding().padding(horizontal=16.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
                 vm.current?.let { t -> MiniPlayer(t,vm,{showPlayer=true}) }
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(30.dp)).background(Glass).border(1.dp,Color.White.copy(alpha=.12f),RoundedCornerShape(30.dp)).padding(5.dp),horizontalArrangement=Arrangement.SpaceEvenly) {
-                    listOf("Home" to Icons.Default.Home,"Search" to Icons.Default.Search,"Library" to Icons.Default.LibraryMusic,"Social" to Icons.Default.People).forEach { (label,icon) ->
+                    listOf("Home" to Icons.Default.Home,"Search" to Icons.Default.Search,"Library" to Icons.Default.LibraryMusic,"Social" to Icons.Default.People,"Messages" to Icons.Default.Forum).forEach { (label,icon) ->
                         Column(Modifier.weight(1f).clip(RoundedCornerShape(24.dp)).background(if(tab==label)Violet.copy(alpha=.16f) else Color.Transparent).clickable { tab=label; selectedPlaylist=null }.padding(vertical=10.dp),horizontalAlignment=Alignment.CenterHorizontally) {
                             Icon(icon,label,tint=if(tab==label)Violet else Color.White.copy(alpha=.55f),modifier=Modifier.size(22.dp)); Text(label,color=if(tab==label)Violet else Color.White.copy(alpha=.6f),fontSize=11.sp,fontWeight=FontWeight.SemiBold)
                         }
@@ -129,7 +140,7 @@ class MainActivity : ComponentActivity() {
                         item { Surface(shape=RoundedCornerShape(30.dp),color=Violet.copy(alpha=.10f)) { Column(Modifier.fillMaxWidth().padding(24.dp)) { Text("YOUR NEXT FAVORITE",color=Violet,fontSize=11.sp,letterSpacing=2.sp);Text("Find your flow.",fontSize=32.sp,fontWeight=FontWeight.Bold); Text("Your music. Your people. All in one place.",color=Color.White.copy(alpha=.65f),modifier=Modifier.padding(top=8.dp)); Button(onClick={tab="Search"},modifier=Modifier.padding(top=16.dp)) { Icon(Icons.Default.Search,null); Spacer(Modifier.width(8.dp)); Text("Explore music") } } } }
                         if(vm.playlists.isNotEmpty()) {
                             item { Section("Your playlists") }
-                            item { LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp)) { items(vm.playlists,key={it.id}) { p -> Column(Modifier.width(145.dp).clickable { selectedPlaylist=p.id; tab="Library" }) { PlaylistCover(p,145); Text(p.name,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=10.dp)); Text("${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f)) } } } }
+                            item { LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp)) { items(vm.playlists,key={it.id}) { p -> Column(Modifier.width(145.dp).clickable { selectedPlaylist=p.id; tab="Library" }) { PlaylistCover(p,145,social.sharedFor(p)!=null); Text(p.name,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=10.dp)); Text("${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f)) } } } }
                         }
                         if(vm.recentTracks.isNotEmpty()){
                             item{Section("Recently played")}
@@ -167,9 +178,10 @@ class MainActivity : ComponentActivity() {
                         if(playlist!=null) PlaylistScreen(vm,social,playlist,{selectedPlaylist=null},{tab="Search";selectedPlaylist=null},{addTrack=it},{selectedProfile=it})
                         else LibraryScreen(vm,social,{selectedPlaylist=it},{showNewPlaylist=true},{showSettings=true},{addTrack=it})
                     }
+                    "Messages" -> {if(vm.user==null)Button(onClick=signIn){Text("Sign in to message")}else MessagesScreen(social){social.openChat(it);chatPeer=it}}
                     "Social" -> {
                         if(vm.user == null) Column { EmptyState("Listen together","Sign in with the same Google account you use on iOS.",Icons.Default.People); Button(onClick=signIn,modifier=Modifier.fillMaxWidth()) {Text("Continue with Google")} }
-                        else SocialScreen(social,vm,onProfile={selectedProfile=it},onChat={social.openChat(it);chatPeer=it})
+                        else SocialScreen(social,vm,onProfile={selectedProfile=it})
                     }
                 }
             }
@@ -178,9 +190,19 @@ class MainActivity : ComponentActivity() {
             BackHandler(enabled=showPlayer){showPlayer=false}
             PlayerScreen(vm,{showPlayer=false},{showQueue=true},{vm.current?.let{addTrack=it}})
         }
+        AnimatedContent(targetState=chatPeer,modifier=Modifier.fillMaxSize(),transitionSpec={
+            if(targetState!=null)(slideInHorizontally(tween(320),initialOffsetX={it})+fadeIn()) togetherWith fadeOut(tween(120))
+            else fadeIn(tween(120)) togetherWith (slideOutHorizontally(tween(280),targetOffsetX={it})+fadeOut())
+        },label="Chat navigation"){id->if(id!=null){
+            BackHandler{social.closeChat();chatPeer=null}
+            Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();ChatScreen(id,vm,social,{selectedProfile=it}){social.closeChat();chatPeer=null}}
+        }}
         AnimatedVisibility(showSettings,enter=fadeIn(tween(200)),exit=fadeOut(tween(200))){Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha=.55f)).clickable{showSettings=false})}
         AnimatedVisibility(showSettings,enter=slideInHorizontally(tween(300),initialOffsetX={-it}),exit=slideOutHorizontally(tween(260),targetOffsetX={-it})){
-            AccountDrawer(vm,social,signIn,{showSettings=false},{selectedProfile=it},{tab="Social";showSettings=false})
+            AccountDrawer(vm,social,signIn,{showSettings=false},{selectedProfile=it},{tab="Social";showSettings=false},{tab="Messages";showSettings=false})
+        }
+        AnimatedVisibility(notice!=null,modifier=Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp),enter=slideInVertically(initialOffsetY={-it})+fadeIn(),exit=slideOutVertically(targetOffsetY={-it})+fadeOut()){
+            notice?.let{n->Surface(shape=RoundedCornerShape(24.dp),color=Raised,tonalElevation=8.dp,shadowElevation=8.dp){Row(Modifier.fillMaxWidth().clickable{n.peerID?.let{if(vm.user!=null){social.openChat(it);chatPeer=it}};notice=null}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(if(n.peerID!=null)Icons.Default.Forum else Icons.Default.Info,null,tint=Violet);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(n.title,fontWeight=FontWeight.Bold);Text(n.body,maxLines=3,overflow=TextOverflow.Ellipsis,fontSize=13.sp)};IconButton(onClick={notice=null}){Icon(Icons.Default.Close,"Dismiss notification")}}}}
         }
     }
     if(showQueue) ModalBottomSheet(onDismissRequest={showQueue=false},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night) { QueueSheet(vm) }
@@ -191,10 +213,8 @@ class MainActivity : ComponentActivity() {
             LazyColumn(Modifier.heightIn(max=420.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){items(vm.playlists+social.sharedPlaylists.filter{it.ownerID!=vm.user?.uid}.map{it.imported()},key={it.id}){p -> val added=p.tracks.any{it.playableID==t.playableID};Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Glass).clickable(enabled=!added){vm.addToPlaylist(p.id,t);addTrack=null}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(p.tracks.firstOrNull()?.artwork,56);Column(Modifier.weight(1f).padding(start=12.dp)){Text(p.name,fontWeight=FontWeight.Bold);Text(if(added)"Already added" else "${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f))};Icon(if(added)Icons.Default.CheckCircle else Icons.Default.Add,null,tint=Violet)} } }
         }
     } }
-    chatPeer?.let { id -> ModalBottomSheet(onDismissRequest={social.closeChat();chatPeer=null},containerColor=Night,modifier=Modifier.fillMaxHeight(),dragHandle=null) {ChatScreen(id,vm,social,{selectedProfile=it}){social.closeChat();chatPeer=null}} }
     selectedProfile?.let { p -> ProfilePreview(social,vm.user?.uid,p,{selectedProfile=null}){id->social.openChat(id);chatPeer=id;selectedProfile=null} }
-    val error = vm.error ?: social.error
-    if(error != null) AlertDialog(onDismissRequest={vm.error=null;social.error=null},title={Text("CapyFlow")},text={Text(error)},confirmButton={TextButton(onClick={vm.error=null;social.error=null}) {Text("OK")}})
+
 }
 
 @Composable fun Section(title: String) {Text(title,fontSize=20.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(vertical=8.dp))}
@@ -229,7 +249,7 @@ class MainActivity : ComponentActivity() {
         BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
             val artSize=minOf(300f,maxWidth.value-48,maxHeight.value*.28f).coerceAtLeast(1f).toInt()
             Column(Modifier.fillMaxSize().widthIn(max=620.dp).align(Alignment.TopCenter).verticalScroll(rememberScrollState()).padding(horizontal=24.dp,vertical=8.dp),horizontalAlignment=Alignment.CenterHorizontally) {
-                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.Default.KeyboardArrowDown,"Close player")};Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally){Text("NOW PLAYING",fontSize=11.sp,letterSpacing=2.sp,fontWeight=FontWeight.Bold);Text("CapyFlow",fontSize=12.sp,color=Violet)};IconButton(onClick=onAdd){Icon(Icons.Default.PlaylistAdd,"Add to playlist")}}
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.Default.KeyboardArrowDown,"Close player")};Column(Modifier.weight(1f),horizontalAlignment=Alignment.CenterHorizontally){Text("NOW PLAYING",fontSize=11.sp,letterSpacing=2.sp,fontWeight=FontWeight.Bold);AudioOutputButton()};IconButton(onClick=onAdd){Icon(Icons.Default.PlaylistAdd,"Add to playlist")}}
                 Spacer(Modifier.height(12.dp));Artwork(track?.artwork,artSize)
                 Column(Modifier.fillMaxWidth().padding(top=16.dp,bottom=4.dp)){Text(track?.title ?: "CapyFlow",fontSize=26.sp,fontWeight=FontWeight.Bold,maxLines=2,overflow=TextOverflow.Ellipsis);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)){if(track?.isExplicit==true)ExplicitBadge();Text(track?.artist.orEmpty(),fontSize=16.sp,color=Color.White.copy(alpha=.66f),maxLines=1,overflow=TextOverflow.Ellipsis)}}
                 Slider(value=scrub.coerceIn(0f,maxOf(vm.duration.toFloat(),1f)),onValueChange={scrubbing=true;scrub=it},onValueChangeFinished={vm.seek(scrub.toDouble());scrubbing=false},valueRange=0f..maxOf(vm.duration.toFloat(),1f),thumb={Box(Modifier.size(12.dp).background(Violet,CircleShape))},track={state -> SliderDefaults.Track(state,modifier=Modifier.height(4.dp),colors=SliderDefaults.colors(activeTrackColor=Violet,inactiveTrackColor=Color.White.copy(alpha=.14f)),drawStopIndicator=null,thumbTrackGapSize=0.dp)})
@@ -329,22 +349,37 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
         Text("CapyFlow Android ${BuildConfig.VERSION_NAME}",color=Color.White.copy(alpha=.4f),fontSize=12.sp,modifier=Modifier.padding(top=24.dp))
     }
 }
-@Composable fun SocialScreen(social: SocialModel,vm: CapyModel,onProfile:(Profile)->Unit,onChat:(String)->Unit) {
-    var query by remember {mutableStateOf("")};val scope=rememberCoroutineScope()
+@Composable fun SocialScreen(social:SocialModel,vm:CapyModel,onProfile:(Profile)->Unit) {
+    var query by remember(vm.user?.uid){mutableStateOf("")}
+    DisposableEffect(Unit){onDispose{social.clearPeopleSearch()}}
+    LaunchedEffect(query){if(query.isNotBlank()){kotlinx.coroutines.delay(350);social.findPeople(query)}}
     Column {
-        OutlinedTextField(query,{query=it},label={Text("Find people by username")},singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(24.dp),trailingIcon={IconButton(onClick={social.findPeople(query)}){Icon(Icons.Default.Search,"Find people")}})
+        OutlinedTextField(query,{query=it;social.clearPeopleSearch()},label={Text("Find people by username")},singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(24.dp),trailingIcon={if(query.isNotEmpty())IconButton(onClick={query="";social.clearPeopleSearch()}){Icon(Icons.Default.Close,"Clear user search")}else Icon(Icons.Default.Search,null)})
         if(social.searching)LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical=8.dp))
-        LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp)) {
-            items(social.profiles,key={it.id}) {p -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Glass).clickable{onProfile(p)}.padding(14.dp),verticalAlignment=Alignment.CenterVertically){ProfileAvatar(p,48);Column(Modifier.weight(1f).padding(start=12.dp)){Text(p.displayName,fontWeight=FontWeight.Bold);Text("@${p.username}",fontSize=12.sp,color=Violet);if(p.bio.isNotBlank())Text(p.bio,fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis)};if(p.id!=vm.user?.uid)IconButton(onClick={social.follow(p,p.id !in social.following)}){Icon(if(p.id in social.following)Icons.Default.PersonRemove else Icons.Default.PersonAdd,"Follow or unfollow")}} }
-            item {Section("Messages")}
-            if(social.inbox.isEmpty())item{Text("Follow someone to start a conversation from their profile.",color=Color.White.copy(alpha=.6f))}
-            items(social.inbox,key={it.id}) {c -> var profile by remember(c.peer){mutableStateOf<Profile?>(null)};LaunchedEffect(c.peer){runCatching{social.profile(c.peer)}.onSuccess{profile=it}};Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Glass).clickable{onChat(c.peer)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(profile?.displayName ?: "CapyFlow listener",fontWeight=FontWeight.Bold);Text(c.text,maxLines=1,overflow=TextOverflow.Ellipsis,fontSize=13.sp,color=Color.White.copy(alpha=.6f))};if(c.unread)Box(Modifier.size(8.dp).background(Violet,CircleShape))} }
+        LazyColumn(Modifier.padding(top=14.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
+            if(query.isBlank()){
+                item{Section("Following")}
+                if(social.following.isEmpty())item{EmptyState("Find your people","Search for a CapyFlow username to follow someone.",Icons.Default.People)}
+                items(social.following.toList(),key={it}){id->ContactCard(social,id,onProfile)}
+            }else{
+                if(!social.searching && social.profiles.isEmpty())item{Text("No people found",color=Color.White.copy(alpha=.6f))}
+                items(social.profiles,key={it.id}){p->ContactCard(social,p.id,onProfile){person->IconButton(onClick={social.follow(person,person.id !in social.following)}){Icon(if(person.id in social.following)Icons.Default.PersonRemove else Icons.Default.PersonAdd,"Follow or unfollow",tint=Violet)}}}
+            }
+        }
+    }
+}
+@Composable fun MessagesScreen(social:SocialModel,onChat:(String)->Unit){
+    LazyColumn(verticalArrangement=Arrangement.spacedBy(12.dp)){
+        if(social.inbox.isEmpty())item{EmptyState("Your conversations","Open someone’s profile, follow them, then tap Message.",Icons.Default.Forum)}
+        items(social.inbox,key={it.id}){c->val p=liveProfile(social,c.peer)
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Glass).clickable{onChat(c.peer)}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){ProfileAvatar(p,52);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(p?.displayName ?: "CapyFlow listener",fontWeight=FontWeight.Bold);Text(c.text,maxLines=2,overflow=TextOverflow.Ellipsis,fontSize=13.sp,color=Color.White.copy(alpha=.6f));if(c.date>0)Text(java.text.SimpleDateFormat("MMM d · h:mm a",java.util.Locale.getDefault()).format(java.util.Date(c.date)),fontSize=11.sp,color=Violet)};if(c.unread)Box(Modifier.size(8.dp).background(Violet,CircleShape))}
         }
     }
 }
 @Composable fun ChatScreen(peer: String,vm: CapyModel,social: SocialModel,onProfile:(Profile)->Unit,onClose:()->Unit) {
     var draft by remember(peer){mutableStateOf("")};val profile=liveProfile(social,peer)
-    Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding().padding(16.dp)) {
+    DisposableEffect(peer){PushNotices.activePeer=peer;onDispose{if(PushNotices.activePeer==peer)PushNotices.activePeer=null}}
+    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().navigationBarsPadding().padding(16.dp)) {
         Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Row(Modifier.clickable{profile?.let(onProfile)},verticalAlignment=Alignment.CenterVertically){ProfileAvatar(profile,40);Text(profile?.displayName ?: "Messages",fontSize=22.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(start=10.dp))}}
         LazyColumn(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp),reverseLayout=true){items(social.messages.reversed(),key={it.id}){m -> Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.sender==vm.user?.uid)Arrangement.End else Arrangement.Start){Column(Modifier.widthIn(max=280.dp).clip(RoundedCornerShape(20.dp)).background(if(m.sender==vm.user?.uid)Violet.copy(alpha=.22f) else Glass).padding(14.dp)){Text(m.text);Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){if(m.date>0)Text(java.text.SimpleDateFormat("h:mm a",java.util.Locale.getDefault()).format(java.util.Date(m.date)),fontSize=10.sp,color=Color.White.copy(alpha=.5f));if(m.sender==vm.user?.uid)Text(social.messageStatus(m),fontSize=10.sp,color=Color.White.copy(alpha=.5f))}}}}}
         Row(Modifier.padding(top=12.dp),verticalAlignment=Alignment.CenterVertically){OutlinedTextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),maxLines=4);IconButton(onClick={val submitted=draft;social.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!social.sending){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Violet)}}
@@ -352,7 +387,16 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
 }
 
 @Composable fun ExplicitBadge(){Box(Modifier.size(14.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha=.65f)),contentAlignment=Alignment.Center){Text("E",fontSize=9.sp,lineHeight=9.sp,fontWeight=FontWeight.Bold,color=Night)}}
-@Composable fun PlaylistCover(playlist: Playlist,size: Int){val url=playlist.artworkURL ?: playlist.tracks.firstOrNull()?.artwork;if(url!=null)Artwork(url,size) else Box(Modifier.size(size.dp).clip(RoundedCornerShape(if(size>100)28.dp else 18.dp)).background(Violet.copy(alpha=.12f)),contentAlignment=Alignment.Center){Icon(Icons.AutoMirrored.Filled.QueueMusic,null,tint=Violet,modifier=Modifier.size((size*.38f).dp))}}
+@Composable fun SharedBadge(label:String="Shared"){
+    Row(Modifier.clip(CircleShape).background(Violet.copy(alpha=.16f)).padding(horizontal=8.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(4.dp)){Icon(Icons.Default.Group,"Shared playlist",tint=Violet,modifier=Modifier.size(13.dp));Text(label,fontSize=11.sp,color=Violet,fontWeight=FontWeight.SemiBold)}
+}
+@Composable fun PlaylistCover(playlist:Playlist,size:Int,shared:Boolean=false){
+    val url=playlist.artworkURL ?: playlist.tracks.firstOrNull()?.artwork
+    Box(Modifier.size(size.dp)){
+        if(url!=null)Artwork(url,size) else Box(Modifier.fillMaxSize().clip(RoundedCornerShape(if(size>100)28.dp else 18.dp)).background(Violet.copy(alpha=.12f)),contentAlignment=Alignment.Center){Icon(Icons.AutoMirrored.Filled.QueueMusic,null,tint=Violet,modifier=Modifier.size((size*.38f).dp))}
+        if(shared)Box(Modifier.align(Alignment.BottomEnd).padding(4.dp).size(26.dp).clip(CircleShape).background(Raised).border(1.dp,Violet.copy(alpha=.6f),CircleShape),contentAlignment=Alignment.Center){Icon(Icons.Default.Group,"Shared playlist",tint=Violet,modifier=Modifier.size(17.dp))}
+    }
+}
 @Composable fun LibraryScreen(vm: CapyModel,social:SocialModel,onOpen:(String)->Unit,onCreate:()->Unit,onProfile:()->Unit,onAdd:(Track)->Unit) {
     var filter by rememberSaveable{mutableStateOf("All")};var sort by rememberSaveable{mutableStateOf("Recently added")};var menu by remember{mutableStateOf(false)};var offline by rememberSaveable{mutableStateOf(false)}
     BackHandler(enabled=offline){offline=false}
@@ -370,7 +414,7 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
             items(vm.downloads,key={it.playableID}){t -> TrackRow(t,{vm.play(t,vm.downloads)},vm,{onAdd(t)},remove={vm.removeDownload(t)})}
         } else {
             item{Column{Section("Your collection");Text("${collections.size} saved",fontSize=12.sp,color=Color.White.copy(alpha=.55f))}}
-            items(collections,key={it.id}){p -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).clickable{onOpen(p.id)}.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){PlaylistCover(p,68);Column(Modifier.weight(1f).padding(horizontal=14.dp)){Text(p.name,fontSize=18.sp,fontWeight=FontWeight.SemiBold);Text("${if(p.albumID!=null)"Album" else "Playlist"} · ${p.tracks.size} songs",fontSize=13.sp,color=Color.White.copy(alpha=.55f))};Icon(Icons.Default.ChevronRight,null,tint=Color.White.copy(alpha=.4f))}}
+            items(collections,key={it.id}){p -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).clickable{onOpen(p.id)}.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){PlaylistCover(p,68,social.sharedFor(p)!=null);Column(Modifier.weight(1f).padding(horizontal=14.dp)){Text(p.name,fontSize=18.sp,fontWeight=FontWeight.SemiBold);Text("${if(p.albumID!=null)"Album" else "Playlist"} · ${p.tracks.size} songs",fontSize=13.sp,color=Color.White.copy(alpha=.55f));if(social.sharedFor(p)!=null)SharedBadge()};Icon(Icons.Default.ChevronRight,null,tint=Color.White.copy(alpha=.4f))}}
             if(collections.isEmpty())item{EmptyState("Make it yours","Create a playlist or save an album from Search.",Icons.AutoMirrored.Filled.QueueMusic)}
             if(filter=="All"){
                 item{Column{Section("Downloaded");Text("${vm.downloads.size} available offline",fontSize=12.sp,color=Color.White.copy(alpha=.55f))}}
@@ -393,7 +437,7 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
             if(shared!=null)DropdownMenuItem(text={Text(if(isOwner)"Delete shared playlist" else "Leave shared playlist")},onClick={menu=false;deleteShared=true})
             if(isOwner)DropdownMenuItem(text={Text("Delete playlist")},onClick={menu=false;delete=true})
         }}}}
-        item{Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){PlaylistCover(playlist,140);Column(Modifier.weight(1f).padding(start=18.dp)){Text(if(playlist.albumID!=null)"ALBUM" else "PLAYLIST",fontSize=11.sp,letterSpacing=3.sp,color=Violet,fontWeight=FontWeight.Bold);Text(playlist.name,fontSize=27.sp,fontWeight=FontWeight.Bold,maxLines=3,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(vertical=8.dp));Text(creator?.username?.let{"By @$it"} ?: if(vm.user==null && shared==null)"By you" else "Loading creator…",fontSize=13.sp,color=Color.White.copy(alpha=.65f));Text("${playlist.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.5f),modifier=Modifier.padding(top=6.dp))}}}
+        item{Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){PlaylistCover(playlist,140,shared!=null);Column(Modifier.weight(1f).padding(start=18.dp)){Text(if(playlist.albumID!=null)"ALBUM" else "PLAYLIST",fontSize=11.sp,letterSpacing=3.sp,color=Violet,fontWeight=FontWeight.Bold);Text(playlist.name,fontSize=27.sp,fontWeight=FontWeight.Bold,maxLines=3,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(vertical=8.dp));Text(creator?.username?.let{"By @$it"} ?: if(vm.user==null && shared==null)"By you" else "Loading creator…",fontSize=13.sp,color=Color.White.copy(alpha=.65f));Text("${playlist.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.5f),modifier=Modifier.padding(top=6.dp));if(shared!=null)Box(Modifier.padding(top=8.dp).clickable{collaborate=true}){SharedBadge("Shared playlist · ${shared.memberIDs.size} people")}}}}
         item{Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
             Button(onClick={playlist.tracks.firstOrNull()?.let{vm.play(it,playlist.tracks)}},enabled=playlist.tracks.isNotEmpty(),shape=CircleShape,modifier=Modifier.weight(1f).height(48.dp)){Icon(Icons.Default.PlayArrow,null);Text("Play",modifier=Modifier.padding(start=8.dp))}
             OutlinedButton(onClick={val shuffled=playlist.tracks.shuffled();shuffled.firstOrNull()?.let{vm.play(it,shuffled)}},enabled=playlist.tracks.isNotEmpty(),shape=CircleShape,modifier=Modifier.weight(1f).height(48.dp)){Icon(Icons.Default.Shuffle,null);Text("Shuffle",modifier=Modifier.padding(start=8.dp))}
@@ -402,7 +446,7 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
             PlayerAction("Add songs",Icons.Default.Add,false,Modifier.weight(1f)){songPicker=true}
             PlayerAction("Download",Icons.Default.DownloadForOffline,false,Modifier.weight(1f)){vm.downloadAll(playlist.tracks)}
             if(isOwner && !playlist.id.startsWith("cloud:"))PlayerAction("Artwork",Icons.Default.AddPhotoAlternate,false,Modifier.weight(1f)){artwork.launch("image/*")}
-            PlayerAction("Collaborate",Icons.Default.GroupAdd,false,Modifier.weight(1f)){collaborate=true}
+            PlayerAction(if(shared!=null)"Manage" else "Collaborate",if(shared!=null)Icons.Default.Group else Icons.Default.GroupAdd,shared!=null,Modifier.weight(1f)){collaborate=true}
         }}
         val failed=playlist.tracks.filter{it.playableID in vm.downloadFailures}
         if(failed.isNotEmpty())item{Column{Text("Couldn’t download: "+failed.joinToString{it.title},fontSize=12.sp,color=Violet);TextButton(onClick={vm.retryFailedDownloads(failed)}){Text("Retry failed songs")}}}

@@ -149,6 +149,15 @@ service cloud.firestore {
       allow delete: if owns(uid);
     }
 
+    // Installation-scoped FCM tokens stay private to their authenticated owner.
+    match /users/{uid}/devices/{deviceID} {
+      allow read, delete: if owns(uid);
+      allow create, update: if owns(uid) &&
+        request.resource.data.keys().hasOnly(['token', 'platform', 'updatedAt']) &&
+        request.resource.data.token is string && request.resource.data.token.size() > 0 && request.resource.data.token.size() <= 4096 &&
+        request.resource.data.platform == 'android' && request.resource.data.updatedAt == request.time;
+    }
+
     match /playlists/{playlistID} {
       function isMember(data) {
         return signedIn() && request.auth.uid in data.memberIDs;
