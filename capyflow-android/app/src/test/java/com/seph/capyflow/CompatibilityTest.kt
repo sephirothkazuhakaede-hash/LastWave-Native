@@ -107,4 +107,24 @@ class CompatibilityTest {
         assertEquals(3,type.getMethod("getCode").invoke(restored));assertEquals("Fixture",type.getMethod("getMessage").invoke(restored))
     }
 
+    @Test fun explicitMetadataSurvivesLibraryAndDownloadRoundTrips() {
+        val payload=JSONObject("""{"id":"song","title":"Song","artist":"Artist","isExplicit":true}""")
+        assertEquals(true,Track.from(Track.from(payload).json()).isExplicit)
+        assertNull(Track.from(JSONObject("""{"id":"old","title":"Old","artist":"Artist"}""")).isExplicit)
+        val row=JSONObject("""{"badges":[{"musicInlineBadgeRenderer":{"icon":{"iconType":"MUSIC_EXPLICIT_BADGE"}}}]}""")
+        assertTrue(Catalog.explicitBadge(row));assertFalse(Catalog.explicitBadge(JSONObject().put("title","Explicit lyrics")))
+    }
+    @Test fun customPlaylistMetadataAndAlbumKindSurviveCloudPayloadRoundTrip() {
+        val payload=JSONObject("""{"id":"album","name":"Album","tracks":[],"albumID":"MPRE123","artworkURL":"https://example.com/cover.jpg","customCoverData":"preserved"}""")
+        val playlist=Playlist.from(payload).copy(name="Renamed")
+        val restored=Playlist.from(playlist.json())
+        assertEquals("MPRE123",restored.albumID);assertEquals("https://example.com/cover.jpg",restored.artworkURL)
+        assertEquals("preserved",restored.json().getString("customCoverData"));assertEquals("Renamed",restored.name)
+    }
+    @Test fun repeatedSongsHaveDistinctStableQueueIdentities() {
+        val song=Track("same","Song","Artist");val first=QueueEntry(song);val second=QueueEntry(song)
+        assertNotEquals(first.key,second.key)
+        val reordered=listOf(second,first)
+        assertEquals(first.key,reordered[1].key);assertEquals(second.key,reordered[0].key)
+    }
 }

@@ -54,7 +54,9 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     var loading by mutableStateOf(false); private set
     var elapsed by mutableDoubleStateOf(0.0); private set
     var duration by mutableDoubleStateOf(0.0); private set
-    var queue by mutableStateOf<List<Track>>(emptyList()); private set
+    private var queueEntries by mutableStateOf<List<QueueEntry>>(emptyList())
+    val queue get() = queueEntries.map{it.track}
+    val queueKeys get() = queueEntries.map{it.key}
     var lyrics by mutableStateOf<List<Lyric>>(emptyList()); private set
     var lyricsLoading by mutableStateOf(false); private set
     var playlists by mutableStateOf<List<Playlist>>(emptyList()); private set
@@ -201,7 +203,7 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
         if(!recovering && current?.playableID==track.playableID && playJob?.isActive==true)return
         playJob?.cancel(); lyricJob?.cancel(); lyricEpoch++; controller?.pause()
         recoveringPlayback=recovering;audioDetails="Resolving audio…";error=null;current = track; elapsed = resumeAt; duration = track.duration ?: 0.0; lyrics = emptyList(); loading = true
-        if (following != null) queue = following.dropWhile { it.id != track.id }.drop(1)
+        if (following != null) queueEntries = following.dropWhile { it.id != track.id }.drop(1).map{QueueEntry(it)}
         playJob = viewModelScope.launch {
             try {
                 val file = downloadedFile(track)
@@ -245,12 +247,13 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     }
     fun toggle() { controller?.let { if (it.isPlaying) it.pause() else {if(it.playbackState==Player.STATE_IDLE)it.prepare();it.play()} } }
     fun seek(seconds: Double) { controller?.seekTo((seconds.coerceAtLeast(0.0) * 1000).toLong()) }
-    fun next() { if (queue.isNotEmpty()) { val t = queue.first(); queue = queue.drop(1); play(t) } }
+    fun next() { if (queue.isNotEmpty()) { val t = queue.first(); queueEntries = queueEntries.drop(1); play(t) } }
     fun previous() { seek(0.0) }
-    fun enqueue(track: Track) { queue = queue + track }
-    fun removeQueue(index: Int) { queue = queue.filterIndexed { i, _ -> i != index } }
-    fun moveQueue(index: Int, delta: Int) { val target = index + delta; if (target !in queue.indices) return; val list = queue.toMutableList(); val item = list.removeAt(index); list.add(target, item); queue = list }
-    fun clearQueue() { queue = emptyList() }
+    fun playNext(track: Track) { queueEntries = listOf(QueueEntry(track)) + queueEntries }
+    fun enqueue(track: Track) { queueEntries = queueEntries + QueueEntry(track) }
+    fun removeQueue(index: Int) { queueEntries = queueEntries.filterIndexed { i, _ -> i != index } }
+    fun moveQueue(index: Int, delta: Int) { val target = index + delta; if (target !in queue.indices) return; val list = queueEntries.toMutableList(); val item = list.removeAt(index); list.add(target, item); queueEntries = list }
+    fun clearQueue() { queueEntries = emptyList() }
     private fun safeID(id: String) = MessageDigest.getInstance("SHA-256").digest(id.toByteArray()).joinToString("") { "%02x".format(it) }
     fun downloadedFile(track: Track) = File(getApplication<Application>().filesDir, "downloads/${safeID(track.playableID)}.audio")
     fun download(track: Track) {
@@ -286,12 +289,16 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
         }
     }
     fun downloadAll(tracks: List<Track>){tracks.distinctBy{it.playableID}.forEach{download(it)}}
-    fun addAlbumToPlaylist(album: Album, tracks: List<Track>){val id=createPlaylist(album.title) ?: return;tracks.distinctBy{it.playableID}.forEach{addToPlaylist(id,it)}}
+    fun addAlbumToPlaylist(album: Album, tracks: List<Track>){val id=createPlaylist(album.title,album.id) ?: return;tracks.distinctBy{it.playableID}.forEach{addToPlaylist(id,it)}}
     fun removeDownload(track: Track) { if (downloadedFile(track).delete()) { downloads = downloads.filterNot { it.id == track.id }; prefs.edit().putString("downloads", JSONArray(downloads.map { it.json() }).toString()).apply() } }
-    fun createPlaylist(name: String): String? { if (name.trim().isEmpty()) return null; val p = Playlist(UUID.randomUUID().toString(), name.trim(), emptyList()); playlists = playlists + p; persistLibrary(); sync(p);return p.id }
+    fun createPlaylist(name: String, albumID: String?=null): String? { if (name.trim().isEmpty()) return null; val p = Playlist(UUID.randomUUID().toString(), name.trim(), emptyList(),albumID=albumID); playlists = playlists + p; persistLibrary(); sync(p);return p.id }
     fun addToPlaylist(id: String, track: Track) { val p = playlists.firstOrNull { it.id == id } ?: return; if (p.tracks.any { it.id == track.id }) return; val updated = p.copy(tracks = p.tracks + track); playlists = playlists.map { if (it.id == id) updated else it }; persistLibrary(); sync(updated) }
     fun removeFromPlaylist(id: String, trackID: String) { val p = playlists.firstOrNull { it.id == id } ?: return; val updated = p.copy(tracks = p.tracks.filterNot { it.id == trackID }); playlists = playlists.map { if(it.id == id) updated else it }; persistLibrary(); sync(updated) }
     fun deletePlaylist(id: String) { playlists = playlists.filterNot { it.id == id }; persistLibrary(); sync(null, id) }
+    fun hasDownload(track: Track)=downloads.any{it.playableID==track.playableID} && downloadedFile(track).isFile
+    fun renamePlaylist(id: String,name: String){if(name.isBlank())return;updatePlaylist(id){it.copy(name=name.trim())}}
+    private fun updatePlaylist(id: String,change:(Playlist)->Playlist){val p=playlists.firstOrNull{it.id==id} ?: return;val updated=change(p);playlists=playlists.map{if(it.id==id)updated else it};persistLibrary();sync(updated)}
+    fun setPlaylistArtwork(id: String,uri: Uri){viewModelScope.launch{try{val app=getApplication<Application>();val file=withContext(Dispatchers.IO){val directory=File(app.filesDir,"playlist-artwork");directory.mkdirs();val target=File(directory,"${safeID(id)}-${UUID.randomUUID()}.jpg");app.contentResolver.openInputStream(uri)?.use{input -> val bitmap=android.graphics.BitmapFactory.decodeStream(input) ?: error("Choose an image");val scaled=android.graphics.Bitmap.createScaledBitmap(bitmap,minOf(bitmap.width,1000),maxOf(1,(bitmap.height.toDouble()*minOf(bitmap.width,1000)/bitmap.width).toInt()),true);target.outputStream().use{scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG,88,it)};target} ?: error("Couldn’t open image")};updatePlaylist(id){it.copy(artworkURL=Uri.fromFile(file).toString())}}catch(e: CancellationException){throw e}catch(e: Exception){error=e.message}}}
     private fun sync(playlist: Playlist?, id: String = playlist!!.id) {
         if (user == null || db == null) return
         val fields = mutableMapOf<String,Any>("playlistID" to id, "deleted" to (playlist == null), "updatedAt" to FieldValue.serverTimestamp())
@@ -340,3 +347,5 @@ fun audioDescription(info: JSONObject?, mode: String): String {
     if(info.optInt("availableQualityCount")==1)parts+="Only one source quality"
     return parts.joinToString(" · ")
 }
+
+internal data class QueueEntry(val track: Track, val key: String = UUID.randomUUID().toString())

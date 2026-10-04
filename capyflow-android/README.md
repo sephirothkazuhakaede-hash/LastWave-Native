@@ -1,9 +1,9 @@
-# CapyFlow Android dev5
+# CapyFlow Android dev7
 
 Native Android preview for Android 8.0 and newer, on all phone brands. Open this
 folder in Android Studio; the repository root contains a different upstream app.
 
-## Included in dev5
+## Included in dev7
 
 - Full-screen Now Playing with slide-in/slide-out animation, fixed artwork and
   a compact lyrics panel beneath the controls. Timed lyrics follow playback;
@@ -74,10 +74,20 @@ MSI (CAPY_DIRECT_SMOKE=1). Regular tests skip this external-network check.
 
 UI gestures and long playback need emulator/real-device testing. The user reported that a real Android phone did not reproduce the static;
 the source review did not establish the exact emulator-side cause. No microphone capture
-or audio effects are enabled. Diagnostics record decoder, audio format, buffer
-underruns, codec/sink errors and audio-output release; Reset audio output restarts
-it while preserving the track and position. This is not a confirmed static fix.
+or audio effects are enabled. Emulator diagnostics and output resets are not included.
 
 Other iOS parity work remains: collaborative playlists, friend listening activity,
 profile editing, followers/following drill-down, related-song autoplay, full
 canonical recording matching, message pagination and in-app APK updating.
+
+
+## Dev7 changes
+
+Local file URIs use Media3 DefaultDataSource instead of the HTTP-only loader.
+Library has filters, sort, a Downloads entry and animated playlist/album detail
+navigation, Play/Shuffle, song picker, download-all and local cover selection.
+Song rows show explicit metadata and downloaded status across playlist/search views.
+Play next prepends an entry; Add to queue appends. Queue entries have stable unique
+identities, with viewport-preserving drag swaps and gradual edge scrolling.
+The lyrics viewport grows from 152dp to 196dp. Shared/collaborative playlists still
+require Android account integration. GitHub tests and lint run before APK upload.

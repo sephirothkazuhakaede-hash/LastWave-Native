@@ -8,9 +8,11 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -116,7 +118,7 @@ class MainActivity : ComponentActivity() {
             }
         }) { padding ->
             Column(Modifier.fillMaxSize().padding(padding).widthIn(max=652.dp).align(Alignment.TopCenter).padding(horizontal=16.dp)) {
-                Row(Modifier.fillMaxWidth().padding(top=12.dp,bottom=20.dp),verticalAlignment=Alignment.CenterVertically) {
+                if(tab!="Library") Row(Modifier.fillMaxWidth().padding(top=12.dp,bottom=20.dp),verticalAlignment=Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) { Text("CAPYFLOW",color=Violet,fontSize=11.sp,fontWeight=FontWeight.Black,letterSpacing=3.sp); Text(if(selectedPlaylist!=null)vm.playlists.firstOrNull{it.id==selectedPlaylist}?.name ?: "Playlist" else tab,fontSize=32.sp,fontWeight=FontWeight.Bold) }
                     IconButton(onClick={showSettings=true},modifier=Modifier.clip(CircleShape).background(Glass)) { Icon(Icons.Default.AccountCircle,"Profile and settings",tint=Violet) }
                 }
@@ -154,19 +156,14 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-                    "Library" -> {
-                        val playlist = vm.playlists.firstOrNull { it.id == selectedPlaylist }
-                        if(playlist != null) Column {
-                            Row(verticalAlignment=Alignment.CenterVertically) { TextButton(onClick={selectedPlaylist=null}) {Icon(Icons.AutoMirrored.Filled.ArrowBack,null); Text("Library")}; Spacer(Modifier.weight(1f)); IconButton(onClick={vm.deletePlaylist(playlist.id);selectedPlaylist=null}) {Icon(Icons.Default.Delete,"Delete playlist")} }
-                            Row(verticalAlignment=Alignment.CenterVertically){Text("${playlist.tracks.size} songs",color=Color.White.copy(alpha=.6f),modifier=Modifier.weight(1f));TextButton(onClick={vm.downloadAll(playlist.tracks)},enabled=playlist.tracks.isNotEmpty()){Icon(Icons.Default.Download,null);Text("Download all")}}
-                            LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)) { items(playlist.tracks,key={it.id}) {t -> TrackRow(t,{vm.play(t,playlist.tracks)},vm,{addTrack=t},remove={vm.removeFromPlaylist(playlist.id,t.id)})} }
-                        } else LazyColumn(verticalArrangement=Arrangement.spacedBy(12.dp)) {
-                            item { Row(verticalAlignment=Alignment.CenterVertically) { Text(vm.cloudStatus,color=Color.White.copy(alpha=.6f),fontSize=12.sp,modifier=Modifier.weight(1f)); TextButton(onClick={showNewPlaylist=true}) {Icon(Icons.Default.Add,null); Text("Create") } } }
-                            items(vm.playlists,key={it.id}) { p -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Glass).clickable{selectedPlaylist=p.id}.padding(14.dp),verticalAlignment=Alignment.CenterVertically) {Artwork(p.tracks.firstOrNull()?.artwork,56); Column(Modifier.padding(start=12.dp)) {Text(p.name,fontWeight=FontWeight.Bold);Text("${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f))} } }
-                            item { Section("Downloads · ${vm.downloads.size}") }
-                            if(vm.downloads.isEmpty()) item { EmptyState("Your music, anywhere","Download a song from its menu to listen offline.",Icons.Default.Download) }
-                            items(vm.downloads,key={"download-${it.id}"}) { t -> TrackRow(t,{vm.play(t,vm.downloads)},vm,{addTrack=t},remove={vm.removeDownload(t)}) }
-                        }
+                    "Library" -> AnimatedContent(targetState=selectedPlaylist,transitionSpec={
+                        if(targetState!=null) (slideInHorizontally(tween(340),initialOffsetX={it})+fadeIn(tween(220))) togetherWith (slideOutHorizontally(tween(340),targetOffsetX={-it/4})+fadeOut(tween(220)))
+                        else (slideInHorizontally(tween(320),initialOffsetX={-it/4})+fadeIn(tween(220))) togetherWith (slideOutHorizontally(tween(320),targetOffsetX={it})+fadeOut(tween(220)))
+                    },label="Playlist navigation") { id ->
+                        BackHandler(enabled=id!=null){selectedPlaylist=null}
+                        val playlist=vm.playlists.firstOrNull{it.id==id}
+                        if(playlist!=null) PlaylistScreen(vm,playlist,{selectedPlaylist=null},{tab="Search";selectedPlaylist=null},{addTrack=it})
+                        else LibraryScreen(vm,{selectedPlaylist=it},{showNewPlaylist=true},{showSettings=true},{addTrack=it})
                     }
                     "Social" -> {
                         if(vm.user == null) Column { EmptyState("Listen together","Sign in with the same Google account you use on iOS.",Icons.Default.People); Button(onClick=signIn,modifier=Modifier.fillMaxWidth()) {Text("Continue with Google")} }
@@ -206,9 +203,9 @@ class MainActivity : ComponentActivity() {
 @Composable fun TrackRow(track: Track,onPlay: ()->Unit,vm: CapyModel,onAdd: ()->Unit,remove: (() -> Unit)?=null) {
     var menu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(if(vm.current?.id==track.id)Violet.copy(alpha=.10f) else Color.Transparent).clickable(onClick=onPlay).padding(8.dp),verticalAlignment=Alignment.CenterVertically) {
-        Artwork(track.artwork,56);Column(Modifier.weight(1f).padding(horizontal=12.dp)) {Text(track.title,maxLines=2,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold,color=if(vm.current?.id==track.id)Violet else Color.White);Text(track.artist,maxLines=1,overflow=TextOverflow.Ellipsis,fontSize=12.sp,color=Color.White.copy(alpha=.6f))}
+        Artwork(track.artwork,56);Column(Modifier.weight(1f).padding(horizontal=12.dp)) {Text(track.title,maxLines=2,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold,color=if(vm.current?.id==track.id)Violet else Color.White);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){if(vm.hasDownload(track))Icon(Icons.Default.DownloadForOffline,"Downloaded",tint=Violet,modifier=Modifier.size(15.dp));if(track.isExplicit==true)ExplicitBadge();Text(track.artist,maxLines=1,overflow=TextOverflow.Ellipsis,fontSize=12.sp,color=Color.White.copy(alpha=.6f))}}
         if(track.id in vm.downloading)CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp)
-        Box {IconButton(onClick={menu=true}) {Icon(Icons.Default.MoreVert,"Song options")};DropdownMenu(menu,{menu=false}) {DropdownMenuItem(text={Text("Play next / add to queue")},onClick={vm.enqueue(track);menu=false});DropdownMenuItem(text={Text("Add to playlist")},onClick={onAdd();menu=false});DropdownMenuItem(text={Text(if(vm.downloads.any{it.id==track.id})"Downloaded" else "Download")},onClick={vm.download(track);menu=false});if(remove!=null)DropdownMenuItem(text={Text("Remove")},onClick={remove();menu=false})} }
+        Box {IconButton(onClick={menu=true}) {Icon(Icons.Default.MoreVert,"Song options")};DropdownMenu(menu,{menu=false}) {DropdownMenuItem(text={Text("Play next")},onClick={vm.playNext(track);menu=false});DropdownMenuItem(text={Text("Add to queue")},onClick={vm.enqueue(track);menu=false});DropdownMenuItem(text={Text("Add to playlist")},onClick={onAdd();menu=false});DropdownMenuItem(text={Text(if(vm.hasDownload(track))"Downloaded" else "Download")},onClick={vm.download(track);menu=false});if(remove!=null)DropdownMenuItem(text={Text("Remove")},onClick={remove();menu=false})} }
     }
 }
 @Composable fun MiniPlayer(track: Track,vm: CapyModel,onOpen: ()->Unit) {
@@ -251,7 +248,7 @@ class MainActivity : ComponentActivity() {
     LaunchedEffect(vm.current?.playableID,lines,active){if(synced && lines.isNotEmpty())state.animateScrollToItem(maxOf(0,active),-followOffset)}
     Column(Modifier.fillMaxWidth().padding(top=12.dp).clip(RoundedCornerShape(24.dp)).background(Glass).padding(horizontal=18.dp,vertical=12.dp)) {
         Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text(if(synced)"LIVE LYRICS" else "LYRICS",fontSize=10.sp,letterSpacing=2.sp,color=Violet,modifier=Modifier.weight(1f));if(!synced && lines.isNotEmpty())Text("Timing unavailable",fontSize=10.sp,color=Color.White.copy(alpha=.5f))}
-        Box(Modifier.fillMaxWidth().height(152.dp),contentAlignment=Alignment.CenterStart) {
+        Box(Modifier.fillMaxWidth().height(196.dp),contentAlignment=Alignment.CenterStart) {
             if(vm.lyricsLoading)CircularProgressIndicator(Modifier.size(24.dp))
             else if(vm.lyricsError!=null)Column{Text(vm.lyricsError.orEmpty(),fontSize=13.sp);TextButton(onClick={vm.retryLyrics()}){Text("Retry")}}
             else if(lines.isEmpty())Text("Lyrics aren’t available for this track yet.",color=Color.White.copy(alpha=.6f),fontSize=13.sp)
@@ -262,28 +259,55 @@ class MainActivity : ComponentActivity() {
     }
 }
 @Composable fun QueueSheet(vm: CapyModel) {
-    val listState=rememberLazyListState()
+    val state=rememberLazyListState();val scope=rememberCoroutineScope();val density=LocalDensity.current
+    val edge=with(density){56.dp.toPx()}
+    var dragging by remember{mutableStateOf<String?>(null)}
+    var top by remember{mutableFloatStateOf(0f)};var draggedHeight by remember{mutableIntStateOf(0)}
+    fun reorder() {
+        val key=dragging ?: return;val index=vm.queueKeys.indexOf(key);if(index<0)return
+        val center=top+draggedHeight/2
+        val target=state.layoutInfo.visibleItemsInfo.firstOrNull{it.key!=key && center>=it.offset && center<=it.offset+it.size} ?: return
+        if(target.index!=index) {
+            val first=state.firstVisibleItemIndex;val offset=state.firstVisibleItemScrollOffset
+            vm.moveQueue(index,target.index-index)
+            // Keep the numeric viewport position when the first visible key changes.
+            scope.launch{state.scrollToItem(first,offset)}
+        }
+    }
+    LaunchedEffect(dragging) {
+        while(dragging!=null) {
+            val layout=state.layoutInfo;val center=top+draggedHeight/2
+            val speed=when {center<layout.viewportStartOffset+edge -> -((layout.viewportStartOffset+edge-center)/edge).coerceIn(0f,1f)*12f;center>layout.viewportEndOffset-edge -> ((center-layout.viewportEndOffset+edge)/edge).coerceIn(0f,1f)*12f;else -> 0f}
+            if(speed!=0f){state.scrollBy(speed);reorder()}
+            kotlinx.coroutines.delay(16)
+        }
+    }
     Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=20.dp)) {
-        Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Section("Up next");Text("Drag the handle to reorder · swipe left to remove",fontSize=11.sp,color=Color.White.copy(alpha=.5f))};TextButton(onClick={vm.clearQueue()}){Text("Clear")}}
+        Row(verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Section("Up next");Text("Drag the handle to reorder · swipe left to remove",fontSize=11.sp,color=Color.White.copy(alpha=.5f))};TextButton(onClick={dragging=null;vm.clearQueue()}){Text("Clear")}}
         vm.current?.let{track -> Row(Modifier.fillMaxWidth().padding(vertical=16.dp),verticalAlignment=Alignment.CenterVertically){Artwork(track.artwork,48);Column(Modifier.padding(start=12.dp)){Text("NOW PLAYING",fontSize=10.sp,color=Violet,letterSpacing=1.sp);Text(track.title,maxLines=1,overflow=TextOverflow.Ellipsis)}}}
-        LazyColumn(Modifier.fillMaxWidth().heightIn(max=480.dp),state=listState,verticalArrangement=Arrangement.spacedBy(8.dp),contentPadding=PaddingValues(bottom=20.dp)) {
-            items(vm.queue.size,key={i -> vm.queue[i].id+":"+vm.queue.take(i).count{it.id==vm.queue[i].id}}){index -> QueueItem(vm,index,listState,Modifier.animateItem())}
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max=480.dp),state=state,verticalArrangement=Arrangement.spacedBy(8.dp),contentPadding=PaddingValues(bottom=20.dp)) {
+            items(vm.queue.size,key={vm.queueKeys[it]}){index ->
+                val key=vm.queueKeys[index];val moving=key==dragging
+                val targetOffset=if(moving)top-(state.layoutInfo.visibleItemsInfo.firstOrNull{it.key==key}?.offset ?: top.toInt()) else 0f
+                val offset by animateFloatAsState(targetOffset,animationSpec=if(moving)snap() else tween(180,easing=FastOutSlowInEasing),label="Queue drop")
+                QueueItem(vm,index,key,Modifier.animateItem(placementSpec=if(moving)null else tween(230,easing=FastOutSlowInEasing)).zIndex(if(moving)1f else 0f).offset{IntOffset(0,offset.toInt())},
+                    onStart={state.layoutInfo.visibleItemsInfo.firstOrNull{it.key==key}?.let{dragging=key;top=it.offset.toFloat();draggedHeight=it.size}},
+                    onDrag={top+=it;reorder()},onEnd={dragging=null})
+            }
             if(vm.queue.isEmpty())item{EmptyState("You’re all caught up","Add a song to your queue.",Icons.AutoMirrored.Filled.QueueMusic)}
         }
     }
 }
-@Composable fun QueueItem(vm: CapyModel,index: Int,listState: androidx.compose.foundation.lazy.LazyListState,modifier: Modifier=Modifier) {
-    val track=vm.queue.getOrNull(index) ?: return
-    val scope=rememberCoroutineScope()
-    val density=LocalDensity.current;val reveal=with(density){80.dp.toPx()};val step=with(density){80.dp.toPx()}
-    var swipe by remember(track.playableID){mutableFloatStateOf(0f)};var drag by remember(track.playableID){mutableFloatStateOf(0f)};var movingIndex by remember(track.playableID){mutableIntStateOf(index)}
-    val latestIndex by rememberUpdatedState(index)
+@Composable fun QueueItem(vm: CapyModel,index: Int,key: String,modifier: Modifier=Modifier,onStart:()->Unit,onDrag:(Float)->Unit,onEnd:()->Unit) {
+    val track=vm.queue.getOrNull(index) ?: return;val density=LocalDensity.current;val reveal=with(density){80.dp.toPx()}
+    var swipe by remember(key){mutableFloatStateOf(0f)}
+    val latestStart by rememberUpdatedState(onStart);val latestDrag by rememberUpdatedState(onDrag);val latestEnd by rememberUpdatedState(onEnd)
     val animatedSwipe by animateFloatAsState(swipe,tween(160),label="Queue swipe")
-    Box(modifier.zIndex(if(drag!=0f)1f else 0f).offset{IntOffset(0,drag.toInt())}.fillMaxWidth().height(72.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF652D42))) {
-        TextButton(onClick={vm.removeQueue(latestIndex)},modifier=Modifier.align(Alignment.CenterEnd).width(80.dp)){Text("Remove",color=Color.White,fontSize=12.sp)}
-        Row(Modifier.fillMaxSize().offset{IntOffset(animatedSwipe.toInt(),0)}.background(Raised).pointerInput(track.playableID){detectHorizontalDragGestures(onDragEnd={swipe=if(swipe < -reveal/2)-reveal else 0f},onDragCancel={swipe=0f}){change,amount -> change.consume();swipe=(swipe+amount).coerceIn(-reveal,0f)}}.padding(horizontal=10.dp),verticalAlignment=Alignment.CenterVertically) {
-            Artwork(track.artwork,48);Column(Modifier.weight(1f).padding(horizontal=12.dp).clickable{val i=latestIndex;vm.removeQueue(i);vm.play(track)}){Text(track.title,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis);Text(track.artist,fontSize=12.sp,color=Color.White.copy(alpha=.55f),maxLines=1,overflow=TextOverflow.Ellipsis)}
-            Icon(Icons.Default.DragHandle,"Drag to reorder",tint=Color.White.copy(alpha=.5f),modifier=Modifier.size(42.dp).pointerInput(track.playableID){detectDragGestures(onDragStart={movingIndex=latestIndex;drag=0f;swipe=0f},onDragEnd={drag=0f},onDragCancel={drag=0f}){change,amount -> change.consume();drag+=amount.y;if(kotlin.math.abs(drag)>=step*.65f){val delta=if(drag>0)1 else -1;val target=movingIndex+delta;if(target in vm.queue.indices){vm.moveQueue(movingIndex,delta);movingIndex=target;drag-=delta*step;val visible=listState.layoutInfo.visibleItemsInfo;if(visible.isNotEmpty() && (target>=visible.last().index || target<=visible.first().index))scope.launch{listState.animateScrollToItem(maxOf(0,target-1))}}}}})
+    Box(modifier.fillMaxWidth().height(72.dp).clip(RoundedCornerShape(20.dp)).background(Color(0xFF652D42))) {
+        TextButton(onClick={vm.queueKeys.indexOf(key).takeIf{it>=0}?.let{vm.removeQueue(it)}},modifier=Modifier.align(Alignment.CenterEnd).width(80.dp)){Text("Remove",color=Color.White,fontSize=12.sp)}
+        Row(Modifier.fillMaxSize().offset{IntOffset(animatedSwipe.toInt(),0)}.background(Raised).pointerInput(key){detectHorizontalDragGestures(onDragEnd={swipe=if(swipe < -reveal/2)-reveal else 0f},onDragCancel={swipe=0f}){change,amount -> change.consume();swipe=(swipe+amount).coerceIn(-reveal,0f)}}.padding(horizontal=10.dp),verticalAlignment=Alignment.CenterVertically) {
+            Artwork(track.artwork,48);Column(Modifier.weight(1f).padding(horizontal=12.dp).clickable{vm.queueKeys.indexOf(key).takeIf{it>=0}?.let{vm.removeQueue(it);vm.play(track)}}){Text(track.title,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis);Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){if(track.isExplicit==true)ExplicitBadge();Text(track.artist,fontSize=12.sp,color=Color.White.copy(alpha=.55f),maxLines=1,overflow=TextOverflow.Ellipsis)}}
+            Icon(Icons.Default.DragHandle,"Drag to reorder",tint=Color.White.copy(alpha=.5f),modifier=Modifier.size(42.dp).pointerInput(key){detectDragGestures(onDragStart={swipe=0f;latestStart()},onDragEnd={latestEnd()},onDragCancel={latestEnd()}){change,amount -> change.consume();latestDrag(amount.y)}})
         }
     }
 }
@@ -321,4 +345,75 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
         LazyColumn(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp),reverseLayout=true){items(social.messages.reversed(),key={it.id}){m -> Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.sender==vm.user?.uid)Arrangement.End else Arrangement.Start){Column(Modifier.widthIn(max=280.dp).clip(RoundedCornerShape(20.dp)).background(if(m.sender==vm.user?.uid)Violet.copy(alpha=.22f) else Glass).padding(14.dp)){Text(m.text);if(m.pending)Text("Sending…",fontSize=10.sp,color=Color.White.copy(alpha=.5f))}}}}
         Row(Modifier.padding(top=12.dp),verticalAlignment=Alignment.CenterVertically){OutlinedTextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),maxLines=4);IconButton(onClick={val submitted=draft;social.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!social.sending){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Violet)}}
     }
+}
+
+@Composable fun ExplicitBadge(){Text("E",fontSize=9.sp,fontWeight=FontWeight.Bold,color=Night,modifier=Modifier.clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha=.65f)).padding(horizontal=4.dp,vertical=1.dp))}
+@Composable fun PlaylistCover(playlist: Playlist,size: Int){val url=playlist.artworkURL ?: playlist.tracks.firstOrNull()?.artwork;if(url!=null)Artwork(url,size) else Box(Modifier.size(size.dp).clip(RoundedCornerShape(if(size>100)28.dp else 18.dp)).background(Violet.copy(alpha=.12f)),contentAlignment=Alignment.Center){Icon(Icons.AutoMirrored.Filled.QueueMusic,null,tint=Violet,modifier=Modifier.size((size*.38f).dp))}}
+@Composable fun LibraryScreen(vm: CapyModel,onOpen:(String)->Unit,onCreate:()->Unit,onProfile:()->Unit,onAdd:(Track)->Unit) {
+    var filter by rememberSaveable{mutableStateOf("All")};var sort by rememberSaveable{mutableStateOf("Recently added")};var menu by remember{mutableStateOf(false)};var offline by rememberSaveable{mutableStateOf(false)}
+    BackHandler(enabled=offline){offline=false}
+    val collections=vm.playlists.filter{when(filter){"Albums" -> it.albumID!=null;"Playlists" -> it.albumID==null;else -> true}}.let{if(sort=="Name")it.sortedBy{p->p.name.lowercase()} else it.reversed()}
+    LazyColumn(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(18.dp),contentPadding=PaddingValues(top=16.dp,bottom=24.dp)) {
+        item{Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+            IconButton(onClick=onProfile,modifier=Modifier.size(44.dp).clip(CircleShape).background(Violet.copy(alpha=.15f))){Icon(Icons.Default.AccountCircle,"Profile",tint=Violet)}
+            Column(Modifier.weight(1f)){Text(if(offline)"Downloads" else "Library",fontSize=30.sp,fontWeight=FontWeight.Bold);Text(if(offline)"${vm.downloads.size} available offline" else "Everything you made yours",fontSize=12.sp,color=Color.White.copy(alpha=.6f))}
+            if(offline)IconButton(onClick={offline=false}){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back to library")} else {Box{IconButton(onClick={menu=true},modifier=Modifier.clip(CircleShape).background(Glass)){Icon(Icons.Default.SwapVert,"Sort library")};DropdownMenu(menu,{menu=false}){listOf("Recently added","Name").forEach{label -> DropdownMenuItem(text={Text(label)},onClick={sort=label;menu=false})}}};FilledIconButton(onClick=onCreate){Icon(Icons.Default.Add,"Create playlist")}}
+        }}
+        if(!offline)item{LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){items(listOf("All","Playlists","Albums","Downloaded","Shared")){label -> FilterChip(selected=filter==label,onClick={filter=label},label={Text(label)},shape=CircleShape)}}}
+        if(!offline)item{Text(vm.cloudStatus,fontSize=12.sp,color=Color.White.copy(alpha=.55f))}
+        if(offline || filter=="Downloaded") {
+            if(vm.downloads.isEmpty())item{EmptyState("Your music, anywhere","Download a song from its menu to listen offline.",Icons.Default.DownloadForOffline)}
+            items(vm.downloads,key={it.playableID}){t -> TrackRow(t,{vm.play(t,vm.downloads)},vm,{onAdd(t)},remove={vm.removeDownload(t)})}
+        } else if(filter=="Shared")item{EmptyState("Listen together","Shared playlists need the Android account service, which isn’t configured yet.",Icons.Default.People)}
+        else {
+            item{Column{Section("Your collection");Text("${collections.size} saved",fontSize=12.sp,color=Color.White.copy(alpha=.55f))}}
+            items(collections,key={it.id}){p -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).clickable{onOpen(p.id)}.padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically){PlaylistCover(p,68);Column(Modifier.weight(1f).padding(horizontal=14.dp)){Text(p.name,fontSize=18.sp,fontWeight=FontWeight.SemiBold);Text("${if(p.albumID!=null)"Album" else "Playlist"} · ${p.tracks.size} songs",fontSize=13.sp,color=Color.White.copy(alpha=.55f))};Icon(Icons.Default.ChevronRight,null,tint=Color.White.copy(alpha=.4f))}}
+            if(collections.isEmpty())item{EmptyState("Make it yours","Create a playlist or save an album from Search.",Icons.AutoMirrored.Filled.QueueMusic)}
+            if(filter=="All"){
+                item{Column{Section("Downloaded");Text("${vm.downloads.size} available offline",fontSize=12.sp,color=Color.White.copy(alpha=.55f))}}
+                item{Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(26.dp)).background(Glass).border(1.dp,Color.White.copy(alpha=.08f),RoundedCornerShape(26.dp)).clickable{offline=true}.padding(18.dp),verticalAlignment=Alignment.CenterVertically){Box(Modifier.size(54.dp).clip(RoundedCornerShape(16.dp)).background(Violet.copy(alpha=.12f)),contentAlignment=Alignment.Center){Icon(Icons.Default.DownloadForOffline,null,tint=Violet)};Column(Modifier.weight(1f).padding(horizontal=14.dp)){Text("Offline music",fontSize=18.sp,fontWeight=FontWeight.Bold);Text("Download songs to listen anywhere",fontSize=12.sp,color=Color.White.copy(alpha=.55f))};Icon(Icons.Default.ChevronRight,null,tint=Color.White.copy(alpha=.4f))}}
+            }
+        }
+    }
+}
+@Composable fun PlaylistScreen(vm: CapyModel,playlist: Playlist,onClose:()->Unit,onSearch:()->Unit,onAdd:(Track)->Unit) {
+    var menu by remember{mutableStateOf(false)};var rename by remember{mutableStateOf(false)};var delete by remember{mutableStateOf(false)};var songPicker by remember{mutableStateOf(false)}
+    val context=LocalContext.current
+    val artwork=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri -> uri?.let{vm.setPlaylistArtwork(playlist.id,it)}}
+    LazyColumn(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(18.dp),contentPadding=PaddingValues(top=12.dp,bottom=24.dp)) {
+        item{Row(verticalAlignment=Alignment.CenterVertically){TextButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,null);Text("Back")};Text(playlist.name,fontSize=18.sp,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.weight(1f));Box{IconButton(onClick={menu=true}){Icon(Icons.Default.MoreHoriz,"Playlist options",tint=Violet)};DropdownMenu(menu,{menu=false}){
+            DropdownMenuItem(text={Text("Rename playlist")},onClick={menu=false;rename=true})
+            DropdownMenuItem(text={Text("Share playlist")},onClick={menu=false;val message="${playlist.name}\n"+playlist.tracks.joinToString("\n"){"${it.title} — ${it.artist}"};context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT,message),"Share playlist"))})
+            DropdownMenuItem(text={Text("Remove playlist downloads")},enabled=playlist.tracks.any{vm.hasDownload(it)},onClick={menu=false;playlist.tracks.forEach{vm.removeDownload(it)}})
+            DropdownMenuItem(text={Text("Delete playlist")},onClick={menu=false;delete=true})
+        }}}}
+        item{Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){PlaylistCover(playlist,140);Column(Modifier.weight(1f).padding(start=18.dp)){Text(if(playlist.albumID!=null)"ALBUM" else "PLAYLIST",fontSize=11.sp,letterSpacing=3.sp,color=Violet,fontWeight=FontWeight.Bold);Text(playlist.name,fontSize=27.sp,fontWeight=FontWeight.Bold,maxLines=3,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(vertical=8.dp));Text("By ${vm.user?.displayName ?: "You"}",fontSize=13.sp,color=Color.White.copy(alpha=.65f));Text("${playlist.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.5f),modifier=Modifier.padding(top=6.dp))}}}
+        item{Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){
+            Button(onClick={playlist.tracks.firstOrNull()?.let{vm.play(it,playlist.tracks)}},enabled=playlist.tracks.isNotEmpty(),shape=CircleShape,modifier=Modifier.weight(1f).height(48.dp)){Icon(Icons.Default.PlayArrow,null);Text("Play",modifier=Modifier.padding(start=8.dp))}
+            OutlinedButton(onClick={val shuffled=playlist.tracks.shuffled();shuffled.firstOrNull()?.let{vm.play(it,shuffled)}},enabled=playlist.tracks.isNotEmpty(),shape=CircleShape,modifier=Modifier.weight(1f).height(48.dp)){Icon(Icons.Default.Shuffle,null);Text("Shuffle",modifier=Modifier.padding(start=8.dp))}
+        }}
+        item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(6.dp)){
+            PlayerAction("Add songs",Icons.Default.Add,false,Modifier.weight(1f)){songPicker=true}
+            PlayerAction("Download",Icons.Default.DownloadForOffline,false,Modifier.weight(1f)){vm.downloadAll(playlist.tracks)}
+            PlayerAction("Artwork",Icons.Default.AddPhotoAlternate,false,Modifier.weight(1f)){artwork.launch("image/*")}
+            PlayerAction("Collaborate",Icons.Default.GroupAdd,false,Modifier.weight(1f)){vm.error="Collaborative playlists need the Android account service, which isn’t configured yet."}
+        }}
+        item{Column{Section("Songs");Text(if(playlist.tracks.isEmpty())"Add music from Search" else "Tap a row to play",fontSize=12.sp,color=Color.White.copy(alpha=.55f))}}
+        if(playlist.tracks.isEmpty())item{Surface(shape=RoundedCornerShape(28.dp),color=Glass){Column(Modifier.padding(20.dp)){EmptyState("This playlist is ready","Find a song in Search, open its menu, then choose Add to playlist.",Icons.AutoMirrored.Filled.QueueMusic);TextButton(onClick=onSearch,modifier=Modifier.align(Alignment.CenterHorizontally)){Text("Find songs")}}}}
+        items(playlist.tracks,key={it.id}){t -> TrackRow(t,{vm.play(t,playlist.tracks)},vm,{onAdd(t)},remove={vm.removeFromPlaylist(playlist.id,t.id)})}
+    }
+    if(rename){var name by remember{mutableStateOf(playlist.name)};AlertDialog(onDismissRequest={rename=false},title={Text("Rename playlist")},text={OutlinedTextField(name,{name=it},singleLine=true)},confirmButton={TextButton(onClick={vm.renamePlaylist(playlist.id,name);rename=false},enabled=name.isNotBlank()){Text("Save")}},dismissButton={TextButton(onClick={rename=false}){Text("Cancel")}})}
+    if(delete)AlertDialog(onDismissRequest={delete=false},title={Text("Delete playlist?")},text={Text("Downloaded songs will stay on this device.")},confirmButton={TextButton(onClick={vm.deletePlaylist(playlist.id);delete=false;onClose()}){Text("Delete")}},dismissButton={TextButton(onClick={delete=false}){Text("Cancel")}})
+    if(songPicker) PlaylistSongPicker(vm,playlist,{songPicker=false},onSearch)
+}
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable fun PlaylistSongPicker(vm: CapyModel,playlist: Playlist,onClose:()->Unit,onSearch:()->Unit){
+    var query by remember{mutableStateOf("")}
+    LaunchedEffect(query){kotlinx.coroutines.delay(400);vm.search(query)}
+    ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night){Column(Modifier.fillMaxWidth().padding(20.dp).navigationBarsPadding()){
+        Section("Add songs");OutlinedTextField(query,{query=it},placeholder={Text("Search songs or artists")},singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(24.dp))
+        if(vm.searching)LinearProgressIndicator(Modifier.fillMaxWidth())
+        LazyColumn(Modifier.heightIn(max=420.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){items(if(query.isBlank())vm.downloads else vm.results,key={it.id}){t -> val added=playlist.tracks.any{it.playableID==t.playableID};Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Glass).padding(12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(t.artwork,48);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(t.title,maxLines=1,overflow=TextOverflow.Ellipsis);Text(t.artist,color=Color.White.copy(alpha=.6f),fontSize=12.sp)};IconButton(onClick={vm.addToPlaylist(playlist.id,t)},enabled=!added){Icon(if(added)Icons.Default.CheckCircle else Icons.Default.Add,if(added)"Added" else "Add song",tint=Violet)}}}}
+        TextButton(onClick={onClose();onSearch()}){Text("Open Search")}
+    }}
 }

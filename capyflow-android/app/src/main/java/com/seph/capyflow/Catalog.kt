@@ -12,22 +12,22 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 data class Track(val id: String, val title: String, val artist: String, val duration: Double? = null,
-    val artworkURL: String? = null, val mediaID: String? = null, val albumTitle: String? = null, val originalPayload: String? = null) {
+    val artworkURL: String? = null, val mediaID: String? = null, val albumTitle: String? = null, val originalPayload: String? = null, val isExplicit: Boolean? = null) {
     val playableID get() = mediaID ?: id
     val artwork get() = artworkURL ?: "https://i.ytimg.com/vi/$playableID/hqdefault.jpg"
     fun json() = (originalPayload?.let { JSONObject(it) } ?: JSONObject()).put("id", id).put("title", title).put("artist", artist)
-        .put("duration", duration).put("artworkURL", artworkURL).put("mediaID", mediaID).put("albumTitle", albumTitle)
+        .put("duration", duration).put("artworkURL", artworkURL).put("mediaID", mediaID).put("albumTitle", albumTitle).put("isExplicit", isExplicit ?: JSONObject.NULL)
     companion object {
         fun from(j: JSONObject) = Track(j.getString("id"), j.getString("title"), j.optString("artist", "Unknown artist"),
             if (j.has("duration") && !j.isNull("duration")) j.optDouble("duration") else null,
-            j.nullable("artworkURL"), j.nullable("mediaID"), j.nullable("albumTitle"), j.toString())
+            j.nullable("artworkURL"), j.nullable("mediaID"), j.nullable("albumTitle"), j.toString(), if(j.isNull("isExplicit"))null else j.optBoolean("isExplicit"))
     }
 }
 fun JSONObject.nullable(key: String): String? = if (has(key) && !isNull(key)) getString(key) else null
 
-data class Playlist(val id: String, val name: String, val tracks: List<Track>) {
-    fun json() = JSONObject().put("id", id).put("name", name).put("tracks", JSONArray(tracks.map { it.json() }))
-    companion object { fun from(j: JSONObject) = Playlist(j.getString("id"), j.getString("name"), j.getJSONArray("tracks").let { a -> (0 until a.length()).map { Track.from(a.getJSONObject(it)) } }) }
+data class Playlist(val id: String, val name: String, val tracks: List<Track>, val artworkURL: String? = null, val albumID: String? = null, val originalPayload: String? = null) {
+    fun json() = (originalPayload?.let{JSONObject(it)} ?: JSONObject()).put("id", id).put("name", name).put("tracks", JSONArray(tracks.map { it.json() })).put("artworkURL",artworkURL).put("albumID",albumID)
+    companion object { fun from(j: JSONObject) = Playlist(j.getString("id"), j.getString("name"), j.getJSONArray("tracks").let { a -> (0 until a.length()).map { Track.from(a.getJSONObject(it)) } },j.nullable("artworkURL"),j.nullable("albumID"),j.toString()) }
 }
 data class Album(val id: String, val title: String, val artist: String, val artwork: String?, val year: String? = null)
 data class Lyric(val time: Double?, val text: String)
@@ -120,6 +120,11 @@ class Catalog {
         private fun rendered(text: JSONObject?): String = text?.optString("simpleText")?.takeIf{it.isNotBlank()} ?: text?.optJSONArray("runs")?.let { a -> (0 until a.length()).joinToString("") { a.getJSONObject(it).optString("text") } }.orEmpty()
         private fun columns(row: JSONObject): List<JSONObject?> = row.optJSONArray("flexColumns")?.let { a -> (0 until a.length()).map { a.getJSONObject(it).optJSONObject("musicResponsiveListItemFlexColumnRenderer")?.optJSONObject("text") } }.orEmpty()
         private fun rowArtwork(row: JSONObject): String? { val a=row.optJSONObject("thumbnail")?.optJSONObject("musicThumbnailRenderer")?.optJSONObject("thumbnail")?.optJSONArray("thumbnails") ?: return null;return (0 until a.length()).map { a.getJSONObject(it) }.maxByOrNull { it.optLong("width")*it.optLong("height") }?.nullable("url") }
+        fun explicitBadge(row: JSONObject): Boolean {
+            var explicit=false
+            walkObjects(row.opt("badges")){node -> if(node.optJSONObject("icon")?.optString("iconType")=="MUSIC_EXPLICIT_BADGE")explicit=true}
+            return explicit
+        }
         fun parseAlbums(root: JSONObject): List<Album> {
             val albums=linkedMapOf<String,Album>();walkObjects(root) { node -> node.optJSONObject("musicResponsiveListItemRenderer")?.let { row ->
                 val c=columns(row);var id=row.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")?.nullable("browseId");var artist="Unknown artist"
@@ -130,7 +135,7 @@ class Catalog {
         fun parseAlbumTracks(root: JSONObject, album: Album): List<Track> {
             val tracks=linkedMapOf<String,Track>();walkObjects(root) { node -> node.optJSONObject("musicResponsiveListItemRenderer")?.let { row ->
                 val id=row.optJSONObject("playlistItemData")?.nullable("videoId");val c=columns(row);val title=rendered(c.getOrNull(0))
-                if(id!=null && row.has("index") && title.isNotBlank()) { val fixed=row.optJSONArray("fixedColumns")?.optJSONObject(0)?.optJSONObject("musicResponsiveListItemFixedColumnRenderer")?.optJSONObject("text");val payload=JSONObject().put("id",id).put("albumID",album.id).put("trackNumber",rendered(row.optJSONObject("index")).toIntOrNull());tracks.putIfAbsent(id,Track(id,title,rendered(c.getOrNull(1)).ifBlank { album.artist },duration(rendered(fixed)),rowArtwork(row) ?: album.artwork,albumTitle=album.title,originalPayload=payload.toString())) }
+                if(id!=null && row.has("index") && title.isNotBlank()) { val fixed=row.optJSONArray("fixedColumns")?.optJSONObject(0)?.optJSONObject("musicResponsiveListItemFixedColumnRenderer")?.optJSONObject("text");val payload=JSONObject().put("id",id).put("albumID",album.id).put("trackNumber",rendered(row.optJSONObject("index")).toIntOrNull());tracks.putIfAbsent(id,Track(id,title,rendered(c.getOrNull(1)).ifBlank { album.artist },duration(rendered(fixed)),rowArtwork(row) ?: album.artwork,albumTitle=album.title,originalPayload=payload.toString(),isExplicit=explicitBadge(row))) }
             } };return tracks.values.toList()
         }
         fun duration(raw: String): Double? {
@@ -165,7 +170,7 @@ class Catalog {
                                 val texts = (0 until (columns?.length() ?: 0)).flatMap { i -> val r = runs(i); (0 until r.length()).map { r.getJSONObject(it).optString("text") } }
                                 val images = row.optJSONObject("thumbnail")?.optJSONObject("musicThumbnailRenderer")?.optJSONObject("thumbnail")?.optJSONArray("thumbnails")
                                 val art = images?.optJSONObject(images.length() - 1)?.nullable("url")
-                                tracks[id] = Track(id, title, artist, texts.firstNotNullOfOrNull { duration(it) }, art)
+                                tracks[id] = Track(id, title, artist, texts.firstNotNullOfOrNull { duration(it) }, art,isExplicit=explicitBadge(row))
                             }
                         }
                         node.keys().forEach { walk(node.opt(it)) }
