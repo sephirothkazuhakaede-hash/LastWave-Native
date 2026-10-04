@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive layers use a 108dp canvas; this keeps the capybara inside the safe area. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android" android:inset="9%">
+    <bitmap android:src="@drawable/capyflow_artwork" android:gravity="fill" android:filter="true" />
+</inset>
