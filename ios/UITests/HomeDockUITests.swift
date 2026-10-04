@@ -23,7 +23,7 @@ final class HomeDockUITests: XCTestCase {
         XCTAssertGreaterThan(footer.frame.height, 0)
         XCTAssertGreaterThanOrEqual(footer.frame.minY, home.frame.minY - 1)
         XCTAssertLessThanOrEqual(footer.frame.maxY, dock.frame.minY + 1)
-        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 18"))
+        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 19"))
         XCTAssertTrue(footer.label.contains("by Seph"))
         friends.tap()
         XCTAssertTrue(app.staticTexts["Find people"].waitForExistence(timeout: 4))

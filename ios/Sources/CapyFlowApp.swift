@@ -503,11 +503,7 @@ private struct HomeDashboardView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                CapyAmbientBackdrop(
-                    seed: player.current?.id ?? "capyflow-home",
-                    artworkURL: player.current?.artwork,
-                    intensity: player.current == nil ? 0.7 : 1
-                )
+                WaveBackdrop()
                 ScrollView {
                     CapyScreenContainer {
                         VStack(alignment: .leading, spacing: 30) {
@@ -750,7 +746,7 @@ private struct SearchHomeView: View {
         }.scrollIndicators(.hidden)
         // NavigationStack owns an opaque hosting surface. Put the decorative
         // backdrop inside that surface so its safe areas share the ambience.
-        .background { CapyAmbientBackdrop(seed: "capyflow-search", intensity: 0.85) }
+        .background { WaveBackdrop() }
         .toolbar(.hidden, for: .navigationBar)
         .task(id: query) {
             let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1376,7 +1372,7 @@ private struct PlaylistLibraryView: View {
     var body: some View {
       NavigationStack {
        ZStack {
-         CapyAmbientBackdrop(seed: "capyflow-library", artworkURL: visiblePlaylists.first?.tracks.first?.artwork, intensity: 0.78)
+         WaveBackdrop()
          ScrollView {
             CapyScreenContainer {
                 LazyVStack(alignment: .leading, spacing: 18) {
