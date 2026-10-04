@@ -28,6 +28,11 @@ async function backup(destination){
   const hash=createHash('sha256');for await(const chunk of createReadStream(destination))hash.update(chunk);
   writeFileSync(destination+'.sha256',hash.digest('hex')+'\n');
 }
+async function verifyArchive(source){
+  const child=spawn(adb,['shell','-T','run-as',pkg,'tar','-tf','-'],{stdio:['pipe','ignore','inherit']});
+  const closed=once(child,'close');await pipeline(createReadStream(source),child.stdin);
+  const [code]=await closed;if(code!==0)throw Error('Backup archive could not be verified; the old app has not been removed.');
+}
 async function restore(source){
   const child=spawn(adb,['shell','-T','run-as',pkg,'tar','-xf','-'],{stdio:['pipe','inherit','inherit']});
   const closed=once(child,'close');await pipeline(createReadStream(source),child.stdin);
@@ -39,7 +44,7 @@ try{
   const directory=resolve(process.argv[3]||'capyflow-backups');mkdirSync(directory,{recursive:true});
   const archive=join(directory,`capyflow-${new Date().toISOString().replace(/[:.]/g,'-')}.tar`);
   console.log('Backing up playlists, artwork, account preferences and downloaded audio…');
-  await backup(archive);console.log(`Backup saved: ${archive}`);
+  await backup(archive);await verifyArchive(archive);console.log(`Backup saved: ${archive}`);
   const attempt=run(['install','-r',apk],true);
   if(attempt.status===0){console.log('Updated successfully. Existing data was retained.');process.exit(0);}
   if(!attempt.output.includes('INSTALL_FAILED_UPDATE_INCOMPATIBLE'))throw Error(attempt.output);

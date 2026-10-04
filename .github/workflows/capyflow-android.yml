@@ -87,6 +87,9 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: firebase/package-lock.json
+      - name: Test preview migration safety
+        working-directory: capyflow-android
+        run: node --test scripts/test-migrate-preview.mjs
       - name: Test shared Firebase rules
         working-directory: firebase
         run: npm ci && npm test
