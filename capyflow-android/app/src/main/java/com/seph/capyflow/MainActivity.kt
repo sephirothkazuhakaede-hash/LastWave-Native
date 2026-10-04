@@ -423,7 +423,7 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
     ModalBottomSheet(onDismissRequest={vm.closeAlbum();onClose()},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night){Column(Modifier.fillMaxWidth().padding(20.dp).navigationBarsPadding()){
         Section("Add songs")
         Row(horizontalArrangement=Arrangement.spacedBy(10.dp)){FilterChip(!albums,{albums=false;selected=null},label={Text("Songs")});FilterChip(albums,{albums=true;selected=null},label={Text("Albums")})}
-        if(selected!=null){Row(verticalAlignment=Alignment.CenterVertically){TextButton(onClick={selected=null;vm.closeAlbum()}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null);Text("Albums")};Text(selected!!.title,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));TextButton(onClick={vm.albumTracks.forEach{vm.addToPlaylist(playlist.id,it)}}){Text("Add all")}}}
+        if(selected!=null){Row(verticalAlignment=Alignment.CenterVertically){TextButton(onClick={selected=null;vm.closeAlbum()}){Icon(Icons.AutoMirrored.Filled.ArrowBack,null);Text("Albums")};Text(selected!!.title,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));TextButton(onClick={vm.addTracksToPlaylist(playlist.id,vm.albumTracks)}){Text("Add all")}}}
         else OutlinedTextField(query,{query=it},placeholder={Text(if(albums)"Search albums or artists" else "Search songs or artists")},singleLine=true,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(24.dp))
         if(vm.searching||vm.albumLoading)LinearProgressIndicator(Modifier.fillMaxWidth())
         LazyColumn(Modifier.heightIn(max=420.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){

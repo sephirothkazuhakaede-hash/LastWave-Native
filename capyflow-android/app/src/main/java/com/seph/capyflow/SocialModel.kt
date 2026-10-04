@@ -49,7 +49,7 @@ class SocialModel : ViewModel() {
     fun bind(database: FirebaseFirestore?, userID: String?) {
         if(db === database && uid == userID) return
         generation++; listeners.forEach { it.remove() }; listeners.clear(); closeChat(); db = database; uid = userID
-        following = emptySet(); inbox = emptyList(); profiles = emptyList(); ownProfile=null; sharedPlaylists=emptyList(); activity=emptyMap(); friends=emptyMap(); sharingActivity=false
+        following = emptySet(); inbox = emptyList(); profiles = emptyList(); savingProfile=false;searching=false;error=null;ownProfile=null; sharedPlaylists=emptyList(); activity=emptyMap(); friends=emptyMap(); sharingActivity=false
         friendListeners.values.flatten().forEach{it.remove()};friendListeners.clear();acknowledged.clear()
         if(database == null || userID == null) return
         val epoch = generation
