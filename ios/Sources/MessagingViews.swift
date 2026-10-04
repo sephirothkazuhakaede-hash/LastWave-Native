@@ -158,7 +158,8 @@ struct DirectChatView: View {
                         let outgoing = draft
                         Task { if await chat.send(outgoing), draft == outgoing { draft = "" } }
                     } label: {
-                        Group { if chat.sending { ProgressView() } else { Image(systemName: "arrow.up") } }
+                        Group { if chat.sending { ProgressView() } else { Image(systemName: "paperplane.fill")
+                                .rotationEffect(.degrees(45)) } }
                             .frame(width: 44, height: 44)
                     }.buttonStyle(.borderedProminent).tint(CapyColor.accent).foregroundStyle(Color.black)
                         .accessibilityLabel("Send message")
