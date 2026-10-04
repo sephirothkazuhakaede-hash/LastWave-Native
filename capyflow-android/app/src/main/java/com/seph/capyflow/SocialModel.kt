@@ -27,6 +27,8 @@ class SocialModel : ViewModel() {
     private var thread: DocumentReference? = null
     private var lastMessageID: String? = null
     private var threadExists = false
+    private var ownReadID: String? = null
+    private var readingID: String? = null
     private val listeners = mutableListOf<ListenerRegistration>()
     private var chatListener: ListenerRegistration? = null
     private var threadListener: ListenerRegistration? = null
@@ -77,6 +79,7 @@ class SocialModel : ViewModel() {
             if(e != null) { error = e.message; return@addSnapshotListener }
             threadExists = s?.exists() == true
             lastMessageID = s?.getString("lastMessageID")
+            ownReadID = (s?.get("readMessageIDs") as? Map<*, *>)?.get(userID) as? String
             if(threadExists && chatListener == null) chatListener = ref.collection("messages").orderBy("createdAt",Query.Direction.DESCENDING).limit(50).addSnapshotListener(MetadataChanges.INCLUDE) { ms, failure ->
                 if(thread != ref) return@addSnapshotListener
                 if(failure != null) error = failure.message
@@ -87,7 +90,11 @@ class SocialModel : ViewModel() {
     }
     private fun markRead() {
         val id = lastMessageID ?: return; val userID = uid ?: return
-        if(messages.any { it.id == id && it.sender != userID }) thread?.update("readMessageIDs.$userID",id)?.addOnFailureListener { error = it.message }
+        if(ownReadID == id || readingID == id) return
+        if(messages.any { it.id == id && it.sender != userID }) {
+            readingID = id
+            thread?.update("readMessageIDs.$userID",id)?.addOnFailureListener { readingID = null; error = it.message }
+        }
     }
     fun send(raw: String, onSuccess: () -> Unit) {
         val text = raw.trim(); if(sending || text.isEmpty() || text.length > 4000) return
@@ -99,7 +106,7 @@ class SocialModel : ViewModel() {
         sending = true; error = null
         batch.commit().addOnSuccessListener { if(thread == ref) { sending = false; onSuccess() } }.addOnFailureListener { if(thread == ref) { sending = false; error = it.message } }
     }
-    fun closeChat() { chatListener?.remove(); threadListener?.remove(); chatListener = null; threadListener = null; thread = null; peer = null; messages = emptyList(); lastMessageID = null; threadExists = false; sending = false }
+    fun closeChat() { chatListener?.remove(); threadListener?.remove(); chatListener = null; threadListener = null; thread = null; peer = null; messages = emptyList(); lastMessageID = null; ownReadID = null; readingID = null; threadExists = false; sending = false }
     override fun onCleared() { listeners.forEach { it.remove() }; closeChat() }
     companion object { fun conversationID(a: String,b: String) = listOf(a,b).sorted().joinToString("_") }
 }

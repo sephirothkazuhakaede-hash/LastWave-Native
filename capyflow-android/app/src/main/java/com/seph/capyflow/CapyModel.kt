@@ -180,10 +180,11 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
         val fields = mutableMapOf<String,Any>("playlistID" to id, "deleted" to (playlist == null), "updatedAt" to FieldValue.serverTimestamp())
         playlist?.let { val bytes = it.json().toString().toByteArray(); if(bytes.size > 750000) { error = "Playlist is too large for cloud backup"; return }; fields["payload"] = Blob.fromBytes(bytes) }
         // Durable pending records survive offline edits and process restarts.
-        prefs.edit().putString("pending.$owner.$id", playlist?.json()?.toString() ?: "deleted").commit()
+        val pendingValue = playlist?.json()?.toString() ?: "deleted"
+        prefs.edit().putString("pending.$owner.$id", pendingValue).commit()
         val epoch = accountEpoch; val uid = owner
         db.collection("users").document(uid).collection("library").document(safeID(id)).set(fields)
-            .addOnSuccessListener { prefs.edit().remove("pending.$uid.$id").apply(); if(epoch == accountEpoch) cloudStatus = "Playlists backed up" }
+            .addOnSuccessListener { if(prefs.getString("pending.$uid.$id", null) == pendingValue) prefs.edit().remove("pending.$uid.$id").apply(); if(epoch == accountEpoch) cloudStatus = "Playlists backed up" }
             .addOnFailureListener { if(epoch == accountEpoch) { cloudStatus = "Backup pending"; error = it.message } }
     }
     private fun bindCloud() {
