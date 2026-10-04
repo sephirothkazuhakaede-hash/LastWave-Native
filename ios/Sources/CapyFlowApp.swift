@@ -45,6 +45,7 @@ import GoogleSignIn
         WindowGroup {
             appContent
                 .background { WaveBackdrop() }
+                .messageBanners(messaging)
                 .environmentObject(player)
                 .environmentObject(auth)
                 .environmentObject(social)
@@ -52,7 +53,6 @@ import GoogleSignIn
                 .environmentObject(updates)
                 .environmentObject(playlistSync)
                 .environmentObject(messaging)
-                .messageBanners(messaging)
                 .preferredColorScheme(.dark)
                 .onOpenURL { GIDSignIn.sharedInstance.handle($0) }
                 .task(id: auth.user?.uid) { activity.bind(userID: auth.user?.uid); activity.watchFriends(social.following) }
@@ -197,6 +197,7 @@ private enum ProfileDrawerDestination: String, Identifiable {
 }
 
 struct RootView: View {
+    @EnvironmentObject private var messaging: MessagingStore
     @EnvironmentObject var player: WavePlayer
     @EnvironmentObject var auth: AuthSession
     @EnvironmentObject var social: SocialStore
@@ -270,7 +271,7 @@ struct RootView: View {
         }
         .sheet(isPresented: $showPlayer) {
             PlayerView()
-                .messageBanners()
+                .messageBanners(messaging)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
                 .presentationCornerRadius(30)
@@ -294,7 +295,7 @@ struct RootView: View {
                         }
                     }
             }
-            .messageBanners()
+            .messageBanners(messaging)
             .presentationDetents([.large])
         }
         .overlay {

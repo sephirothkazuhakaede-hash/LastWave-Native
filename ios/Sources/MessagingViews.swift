@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MessagesInboxView: View {
-    @ObservedObject var messaging: MessagingStore
+    @EnvironmentObject private var messaging: MessagingStore
     @EnvironmentObject private var social: SocialStore
     var body: some View {
         ZStack {
@@ -170,7 +170,7 @@ struct DirectChatView: View {
 }
 
 private struct MessageBannerModifier: ViewModifier {
-    @EnvironmentObject private var messaging: MessagingStore
+    @ObservedObject var messaging: MessagingStore
     @Environment(\.scenePhase) private var phase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedPerson: SocialProfile?
