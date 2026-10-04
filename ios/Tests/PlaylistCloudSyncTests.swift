@@ -6,7 +6,7 @@ final class PlaylistCloudSyncTests: XCTestCase {
         let track = Track(id: "abcdefghijk", title: "Collaborator song", artist: "Artist")
         let shared = try XCTUnwrap(SharedPlaylist(id: "shared-id", data: [
             "sourceID": "original-id", "name": "Together", "ownerID": "owner",
-            "memberIDs": ["owner", "friend"], "tracks": [track.firestoreData]
+            "memberIDs": ["owner", "friend"], "tracks": [["id": track.id, "title": track.title, "artist": track.artist]]
         ]))
         let source = try XCTUnwrap(shared.sourcePlaylist(for: "owner"))
         XCTAssertEqual(source.id, "original-id")
