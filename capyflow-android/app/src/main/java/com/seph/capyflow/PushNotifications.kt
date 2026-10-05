@@ -1,5 +1,7 @@
 package com.seph.capyflow
 
+import androidx.compose.runtime.*
+import kotlinx.coroutines.tasks.await
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -26,18 +28,28 @@ object PushNotices {
 }
 object PushRegistry {
     private var registeredUID:String?=null
+    var status by mutableStateOf("Sign in to register this device for messages.");private set
+    suspend fun unregister(context:Context,uid:String){
+        registeredUID=null
+        val device=context.getSharedPreferences("capyflow-push",Context.MODE_PRIVATE).getString("deviceID",null) ?: return
+        FirebaseFirestore.getInstance().collection("users").document(uid).collection("devices").document(device).delete().await()
+        status="Sign in to register this device for messages."
+    }
     fun bind(context:Context,uid:String?){
-        if(!BuildConfig.FIREBASE_CONFIGURED)return
+        if(!BuildConfig.FIREBASE_CONFIGURED){status="Notifications aren’t connected in this build.";return}
         val prefs=context.getSharedPreferences("capyflow-push",Context.MODE_PRIVATE)
         val device=prefs.getString("deviceID",null) ?: UUID.randomUUID().toString().also{prefs.edit().putString("deviceID",it).apply()}
         val previous=registeredUID
         if(previous!=null && previous!=uid)FirebaseFirestore.getInstance().collection("users").document(previous).collection("devices").document(device).delete()
         registeredUID=uid
-        if(uid==null)return
-        if(Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
+        if(uid==null){status="Sign in to register this device for messages.";return}
+        if(Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){status="Allow notifications to receive messages in the background.";return}
+        status="Registering this device…"
         FirebaseMessaging.getInstance().token.addOnSuccessListener{token->if(FirebaseAuth.getInstance().currentUser?.uid==uid && registeredUID==uid){
             FirebaseFirestore.getInstance().collection("users").document(uid).collection("devices").document(device).set(mapOf("token" to token,"platform" to "android","updatedAt" to FieldValue.serverTimestamp()))
-        }}
+                .addOnSuccessListener{if(registeredUID==uid)status="This device is registered for message notifications."}
+                .addOnFailureListener{if(registeredUID==uid)status="Device registration failed: ${it.message}"}
+        }}.addOnFailureListener{if(registeredUID==uid)status="Couldn’t obtain a notification token: ${it.message}"}
     }
 }
 class CapyMessagingService:FirebaseMessagingService(){

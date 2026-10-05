@@ -20,7 +20,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
-data class AndroidUpdate(val code:Int,val name:String,val url:String,val sha256:String)
+data class AndroidUpdate(val code:Int,val name:String,val url:String,val sha256:String,val notes:String="")
 object UpdatePolicy {
     const val RELEASES="https://api.github.com/repos/sephirothkazuhakaede-hash/LastWave-Native/releases?per_page=30"
     const val ASSET_PREFIX="https://github.com/sephirothkazuhakaede-hash/LastWave-Native/releases/download/android-dev"
@@ -29,8 +29,12 @@ object UpdatePolicy {
         val code=json.getInt("versionCode");val url=json.getString("apkURL");val hash=json.getString("sha256").lowercase()
         require(trustedURL(url) && url.endsWith(".apk")){"Update download is not from CapyFlow’s repository"}
         require(hash.matches(Regex("[0-9a-f]{64}"))){"Update checksum is invalid"}
-        return if(code>current)AndroidUpdate(code,json.getString("versionName"),url,hash) else null
+        return if(code>current)AndroidUpdate(code,json.getString("versionName"),url,hash,json.optString("releaseNotes").take(6000)) else null
     }
+}
+object UpdateReminderPolicy {
+    fun shouldCheck(last:Long,now:Long)=last<=0 || now<last || now-last>=4*3600000L
+    fun shouldPrompt(code:Int,deferred:Int,until:Long,now:Long)=code!=deferred || until<=now
 }
 class AppUpdater(app:Application):AndroidViewModel(app){
     var available by mutableStateOf<AndroidUpdate?>(null);private set
@@ -38,25 +42,38 @@ class AppUpdater(app:Application):AndroidViewModel(app){
     var status by mutableStateOf("");private set
     var progress by mutableStateOf<Float?>(null);private set
     var ready by mutableStateOf<File?>(null);private set
+    var announcement by mutableStateOf<AndroidUpdate?>(null);private set
+    private val preferences=app.getSharedPreferences("capyflow-updates",Context.MODE_PRIVATE)
+    fun checkAutomatically(){
+        val now=System.currentTimeMillis()
+        if(busy || !UpdateReminderPolicy.shouldCheck(preferences.getLong("lastCheck",0),now))return
+        preferences.edit().putLong("lastCheck",now).apply();check(true)
+    }
+    fun later(){announcement?.let{preferences.edit().putInt("deferredCode",it.code).putLong("deferredUntil",System.currentTimeMillis()+86400000L).apply()};announcement=null}
+    fun acceptAnnouncement(){announcement=null}
     private val client=OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(90,TimeUnit.SECONDS).build()
     private fun text(url:String)=client.newCall(Request.Builder().url(url).header("User-Agent","CapyFlow-Android").build()).execute().use{r->check(r.isSuccessful){"Update server returned ${r.code}"};val body=r.body ?: error("Empty update response");check(body.contentLength()<=2_000_000){"Update response is too large"};body.byteStream().use{input->val output=java.io.ByteArrayOutputStream();val bytes=ByteArray(8192);while(true){val count=input.read(bytes);if(count<0)break;check(output.size()+count<=2_000_000){"Update response is too large"};output.write(bytes,0,count)};output.toString("UTF-8")}}
-    fun check(){if(busy)return;busy=true;status="Checking GitHub…";available=null
+    fun check(automatic:Boolean=false){if(busy)return;busy=true;status="Checking GitHub…";available=null
         viewModelScope.launch{try{
             val latest=withContext(Dispatchers.IO){
                 val releases=JSONArray(text(UpdatePolicy.RELEASES));var found:AndroidUpdate?=null
                 for(i in 0 until releases.length()){
                     val release=releases.getJSONObject(i);if(release.optBoolean("draft") || !release.optString("tag_name").matches(Regex("android-dev[0-9]+")))continue
+                    if(release.getString("tag_name").removePrefix("android-dev").toIntOrNull()?.let{it<=BuildConfig.VERSION_CODE}!=false)continue
                     val assets=release.getJSONArray("assets")
                     for(j in 0 until assets.length()){val asset=assets.getJSONObject(j);if(asset.getString("name")!="android-update.json")continue
                         val url=asset.getString("browser_download_url");if(!UpdatePolicy.trustedURL(url))continue
-                        val candidate=UpdatePolicy.parse(JSONObject(text(url)),BuildConfig.VERSION_CODE)
+                        val parsed=UpdatePolicy.parse(JSONObject(text(url)),BuildConfig.VERSION_CODE)
+                        val candidate=parsed?.let{if(it.notes.isBlank())it.copy(notes=release.optString("body").take(6000)) else it}
                         if(candidate!=null && candidate.code>(found?.code ?: 0))found=candidate
                     }
                 };found
-            };available=latest;status=if(latest==null)"You’re using the latest published build." else "${latest.name} is available."
+            };available=latest
+            if(automatic && latest!=null && UpdateReminderPolicy.shouldPrompt(latest.code,preferences.getInt("deferredCode",0),preferences.getLong("deferredUntil",0),System.currentTimeMillis()))announcement=latest
+            status=if(latest==null)"You’re using the latest published build." else "${latest.name} is available."
         }catch(e:Exception){status="Couldn’t check updates: ${e.message}"}finally{busy=false}}
     }
-    fun download(){val update=available ?: return;if(busy)return;busy=true;ready=null;progress=0f;status="Downloading ${update.name}…"
+    fun download(context:Context?=null){val update=available ?: return;if(busy)return;busy=true;ready=null;progress=0f;status="Downloading ${update.name}…"
         viewModelScope.launch{try{val file=withContext(Dispatchers.IO){
             val directory=File(getApplication<Application>().cacheDir,"updates").apply{mkdirs()};val part=File(directory,"preview.apk.part");val destination=File(directory,"preview.apk")
             try{
@@ -68,7 +85,7 @@ class AppUpdater(app:Application):AndroidViewModel(app){
                 }
                 verify(part,update.code);destination.delete();check(part.renameTo(destination)){"Couldn’t save APK"};destination
             }finally{part.delete()}
-        };ready=file;available=null;status="Update verified. Tap Install update."}catch(e:Exception){status="Update wasn’t installed: ${e.message}"}finally{busy=false;progress=null}}
+        };ready=file;available=null;status="Update verified. Tap Install update.";if(context!=null)install(context)}catch(e:Exception){status="Update wasn’t installed: ${e.message}"}finally{busy=false;progress=null}}
     }
     private fun verify(file:File,code:Int){
         val app=getApplication<Application>();val pm=app.packageManager;val flags=if(Build.VERSION.SDK_INT>=28)PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES

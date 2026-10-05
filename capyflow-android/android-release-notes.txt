@@ -1,0 +1,8 @@
+• Fix conversation listeners starting before a new chat finishes saving.
+• Prevent stale read receipts from targeting an older message.
+• Ask for confirmation before signing out.
+• Show new-update notices with What’s new, Update now and Later.
+• Add live/recent listening cards to profile previews.
+• Show notification permission and device-registration status.
+
+Background push still requires the Firebase message sender to be deployed.

@@ -1,7 +1,26 @@
 {
-  "emulators": { "firestore": { "port": 8088 }, "ui": { "enabled": false } },
+  "emulators": {
+    "firestore": {
+      "port": 8088
+    },
+    "ui": {
+      "enabled": false
+    }
+  },
   "firestore": {
     "rules": "firebase/firestore.rules",
     "indexes": "firebase/firestore.indexes.json"
-  }
+  },
+  "functions": [
+    {
+      "source": "firebase/push",
+      "codebase": "capyflow-push",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log"
+      ]
+    }
+  ]
 }

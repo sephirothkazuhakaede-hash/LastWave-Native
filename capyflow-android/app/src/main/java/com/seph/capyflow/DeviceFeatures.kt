@@ -43,7 +43,23 @@ import androidx.lifecycle.viewmodel.compose.viewModel
     Text("Download a verified update, then confirm installation with Android. Your account and local data stay in place.",color=androidx.compose.ui.graphics.Color.White.copy(alpha=.6f))
     Button(onClick={updater.check()},enabled=!updater.busy){Icon(Icons.Default.SystemUpdate,null);Spacer(Modifier.width(8.dp));Text(if(updater.busy)"Working…" else "Check for updates")}
     if(updater.progress!=null)LinearProgressIndicator(progress={updater.progress ?: 0f},modifier=Modifier.fillMaxWidth())
-    updater.available?.let{update->Text(update.name,color=Violet);Button(onClick={updater.download()},enabled=!updater.busy){Icon(Icons.Default.Download,null);Text("Download update",modifier=Modifier.padding(start=8.dp))}}
+    updater.available?.let{update->Text(update.name,color=Violet);if(update.notes.isNotBlank()){Text("What’s new",fontSize=16.sp);Text(update.notes,fontSize=13.sp)};Button(onClick={updater.download(context)},enabled=!updater.busy){Icon(Icons.Default.Download,null);Text("Update now",modifier=Modifier.padding(start=8.dp))}}
     if(updater.ready!=null)Button(onClick={updater.install(context)},enabled=!updater.busy){Text("Install update")}
     if(updater.status.isNotBlank())Text(updater.status,fontSize=13.sp,color=Violet)
+}
+
+@Composable fun NotificationSettings(){
+    val context=LocalContext.current
+    val permission=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()){granted->
+        if(granted && BuildConfig.FIREBASE_CONFIGURED)PushRegistry.bind(context,com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid)
+    }
+    Text("Message notifications")
+    Text(PushRegistry.status,color=Violet,fontSize=13.sp)
+    Text("Background messages require the CapyFlow notification server. Device registration alone doesn’t activate server delivery.",fontSize=13.sp,color=androidx.compose.ui.graphics.Color.White.copy(alpha=.6f))
+    Button(onClick={
+        if(Build.VERSION.SDK_INT>=33 && androidx.core.content.ContextCompat.checkSelfPermission(context,android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
+            permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        else if(BuildConfig.FIREBASE_CONFIGURED)PushRegistry.bind(context,com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid)
+    }){Text("Enable notifications")}
+    TextButton(onClick={context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.packageName))}){Text("Android notification settings")}
 }

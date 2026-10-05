@@ -406,7 +406,14 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
-    fun signOut() { auth?.signOut() }
+    private var signingOut=false
+    fun signOut() {
+        if(signingOut)return;signingOut=true
+        viewModelScope.launch {
+            try { user?.uid?.let { id -> withTimeoutOrNull(4000) { runCatching { PushRegistry.unregister(getApplication(),id) } } } }
+            finally { auth?.signOut();signingOut=false }
+        }
+    }
     override fun onCleared() { libraryListener?.remove(); auth?.removeAuthStateListener(authListener); MediaController.releaseFuture(controllerFuture); super.onCleared() }
 }
 

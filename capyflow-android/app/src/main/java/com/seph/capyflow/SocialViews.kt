@@ -59,6 +59,7 @@ import kotlinx.coroutines.*
                 items(people,key={it}){id->ContactCard(social,id,{selectedID=it.id;relationship=null})}
             }else{
                 item{Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally){ProfileAvatar(p,96);Text(p?.displayName ?: "Loading profile…",fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=14.dp));p?.let{Text("@${it.username}",color=Violet);if(it.bio.isNotBlank())Text(it.bio,modifier=Modifier.padding(top=14.dp))}}}
+                item{ProfileListeningCard(social,selectedID)}
                 item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){TextButton(onClick={relationship="Followers"}){Text("${followers.size} Followers")};TextButton(onClick={relationship="Following"}){Text("${following.size} Following")}}}
                 p?.let{person->item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.Center){if(person.id==userID)Button(onClick={editing=true}){Text("Edit profile")}else{Button(onClick={social.follow(person,person.id !in social.following)}){Text(if(person.id in social.following)"Unfollow" else "Follow")};Spacer(Modifier.width(12.dp));OutlinedButton(onClick={onChat(person.id)}){Text("Message")}}}}}
             }
@@ -81,8 +82,10 @@ import kotlinx.coroutines.*
 @Composable fun DrawerRow(title:String,icon:androidx.compose.ui.graphics.vector.ImageVector,onClick:()->Unit){
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Glass).border(1.dp,Color.White.copy(alpha=.07f),RoundedCornerShape(24.dp)).clickable(onClick=onClick).padding(20.dp),verticalAlignment=Alignment.CenterVertically){Icon(icon,null,tint=Violet);Text(title,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f).padding(start=16.dp));Icon(Icons.Default.ChevronRight,null,tint=Color.White.copy(alpha=.4f))}
 }
-@Composable fun AccountDrawer(vm:CapyModel,social:SocialModel,signIn:()->Unit,onClose:()->Unit,onProfile:(Profile)->Unit,onSocial:()->Unit,onMessages:()->Unit){
-    var page by remember{mutableStateOf("CapyFlow")};val scope=rememberCoroutineScope()
+@Composable fun AccountDrawer(vm:CapyModel,social:SocialModel,signIn:()->Unit,onClose:()->Unit,onProfile:(Profile)->Unit,onSocial:()->Unit,onMessages:()->Unit,initialPage:String="CapyFlow"){
+    var page by remember(initialPage){mutableStateOf(initialPage)};val scope=rememberCoroutineScope()
+    var confirmSignOut by remember { mutableStateOf(false) }
+    if(confirmSignOut) AlertDialog(onDismissRequest={confirmSignOut=false},title={Text("Sign out?")},text={Text("Your playlists stay saved to your account. You can sign in again anytime.")},confirmButton={TextButton(onClick={confirmSignOut=false;social.bind(null,null);vm.signOut();onClose()}){Text("Sign out")}},dismissButton={TextButton(onClick={confirmSignOut=false}){Text("Cancel")}})
     BackHandler{if(page=="CapyFlow")onClose() else page="CapyFlow"}
     Column(Modifier.fillMaxHeight().fillMaxWidth(.88f).widthIn(max=420.dp).background(Night).statusBarsPadding().navigationBarsPadding().padding(18.dp).verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)){
         Row(verticalAlignment=Alignment.CenterVertically){if(page!="CapyFlow")IconButton(onClick={page="CapyFlow"}){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Text(page,fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));IconButton(onClick=onClose){Icon(Icons.Default.Close,"Close settings")}}
@@ -98,11 +101,12 @@ import kotlinx.coroutines.*
                 active.forEach{(id,a)->val friend=social.friends[id];Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable{friend?.let(onProfile)}.padding(8.dp),verticalAlignment=Alignment.CenterVertically){ProfileAvatar(friend,48);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(friend?.username ?: "Listener",fontWeight=FontWeight.Bold);Text(a.title,maxLines=2,overflow=TextOverflow.Ellipsis,fontSize=13.sp);Text(a.artist,color=Color.White.copy(alpha=.5f),fontSize=12.sp);Text(activityStatus(a.playing,a.updated,a.expires,now),fontSize=11.sp,color=if(a.playing && a.expires>now)Violet else Color.White.copy(alpha=.5f))};Artwork(a.artwork,42)}}
                 Text("Your music and downloads work even when social features are offline.",fontSize=12.sp,color=Color.White.copy(alpha=.4f),modifier=Modifier.padding(top=12.dp))
             }
-            "Settings"->{DrawerRow("Profile",Icons.Default.Person){social.ownProfile?.let(onProfile) ?: signIn()};DrawerRow("Streaming settings",Icons.Default.Cloud){page="Streaming settings"};DrawerRow("Audio quality",Icons.Default.GraphicEq){page="Audio quality"};if(vm.user!=null)TextButton(onClick={vm.signOut();onClose()}){Text("Sign out")}else Button(onClick=signIn){Text("Continue with Google")}}
+            "Settings"->{DrawerRow("Profile",Icons.Default.Person){social.ownProfile?.let(onProfile) ?: signIn()};DrawerRow("Streaming settings",Icons.Default.Cloud){page="Streaming settings"};DrawerRow("Audio quality",Icons.Default.GraphicEq){page="Audio quality"};DrawerRow("Notifications",Icons.Default.Notifications){page="Notifications"};if(vm.user!=null)TextButton(onClick={confirmSignOut=true}){Text("Sign out")}else Button(onClick=signIn){Text("Continue with Google")}}
             "Streaming settings"->StreamingSettings(vm)
             "Audio quality"->{Text("Applies to the next stream or download. Saved tracks retain their downloaded quality.",fontSize=13.sp,color=Color.White.copy(alpha=.6f));listOf("automatic" to "Best available","dataSaver" to "Data saver").forEach{(value,label)->Row(Modifier.fillMaxWidth().clickable{vm.saveQuality(value)}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){RadioButton(vm.quality==value,{vm.saveQuality(value)});Text(label)}};Text(vm.audioDetails,fontSize=13.sp,color=Violet)}
             "Friend Activity privacy"->{Text("Share what you’re listening to with CapyFlow listeners on iOS and Android.");Row(verticalAlignment=Alignment.CenterVertically){Text("Share listening activity",modifier=Modifier.weight(1f));Switch(social.sharingActivity,{social.setActivitySharing(it)},enabled=vm.user!=null)};if(vm.user==null)Button(onClick=signIn){Text("Sign in")}}
             "Updates"->UpdateSettings()
+            "Notifications"->NotificationSettings()
         }
     }
 }
@@ -119,4 +123,23 @@ import kotlinx.coroutines.*
         item{Section("People")}
         items(shared?.memberIDs?.sortedBy{it!=shared.ownerID}.orEmpty(),key={it}){person->ContactCard(social,person,onProfile){if(person==shared?.ownerID)SuggestionChip(onClick={},label={Text("Owner")}) else if(owner)TextButton(onClick={shared?.let{social.removeMember(it,person)}}){Text("Remove")}}}
     }}
+}
+
+@Composable fun ProfileListeningCard(social:SocialModel,id:String){
+    var activity by remember(id){mutableStateOf<ListeningActivity?>(null)}
+    var now by remember{mutableLongStateOf(System.currentTimeMillis())}
+    DisposableEffect(social,id){val listener=social.watchActivity(id){activity=it};onDispose{listener?.remove()}}
+    LaunchedEffect(id){while(true){now=System.currentTimeMillis();delay(30000)}}
+    activity?.takeIf{it.title.isNotBlank()}?.let{track->
+        val status=activityStatus(track.playing,track.updated,track.expires,now)
+        val live=status=="Listening now"
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Violet.copy(alpha=.09f)).border(1.dp,Violet.copy(alpha=.18f),RoundedCornerShape(24.dp)).padding(16.dp),verticalAlignment=Alignment.CenterVertically){
+            Artwork(track.artwork,64)
+            Column(Modifier.weight(1f).padding(start=14.dp)){
+                Row(verticalAlignment=Alignment.CenterVertically){Icon(if(live)Icons.Default.GraphicEq else Icons.Default.History,null,modifier=Modifier.size(16.dp),tint=Violet);Spacer(Modifier.width(6.dp));Text(status,fontSize=12.sp,color=Violet)}
+                Text(track.title,fontWeight=FontWeight.SemiBold,maxLines=2,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=6.dp))
+                Text(track.artist,fontSize=12.sp,color=Color.White.copy(alpha=.6f),maxLines=1,overflow=TextOverflow.Ellipsis)
+            }
+        }
+    }
 }

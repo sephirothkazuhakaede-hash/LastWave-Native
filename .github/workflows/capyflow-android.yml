@@ -64,7 +64,7 @@ jobs:
           ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: CapyFlow-Android-dev9
+          name: CapyFlow-Android-dev10
           path: capyflow-android/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         if: always()
@@ -106,16 +106,16 @@ jobs:
           node-version: '22'
       - uses: actions/download-artifact@v4
         with:
-          name: CapyFlow-Android-dev9
+          name: CapyFlow-Android-dev10
           path: dist
       - name: Publish verified Android preview
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node capyflow-android/scripts/release-manifest.mjs dist/app-debug.apk capyflow-android/app/build.gradle.kts dist
+          node capyflow-android/scripts/release-manifest.mjs dist/app-debug.apk capyflow-android/app/build.gradle.kts dist capyflow-android/android-release-notes.txt
           tag=$(node -p "'android-dev'+require('./dist/android-update.json').versionCode")
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/CapyFlow.apk dist/android-update.json --clobber
           else
-            gh release create "$tag" dist/CapyFlow.apk dist/android-update.json --target "$GITHUB_SHA" --prerelease --title "CapyFlow Android $tag" --notes 'Android preview with full-screen chats, separate Messages, Friend Activity timestamps, audio output controls and verified in-app updates. Background message pushes require server deployment; foreground banners work now.'
+            gh release create "$tag" dist/CapyFlow.apk dist/android-update.json --target "$GITHUB_SHA" --prerelease --title "CapyFlow Android $tag" --notes-file capyflow-android/android-release-notes.txt
           fi

@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
     private var model: CapyModel? = null
     private val messageIntent = mutableStateOf<String?>(null)
     override fun onNewIntent(intent: android.content.Intent) {super.onNewIntent(intent);setIntent(intent);messageIntent.value=intent.getStringExtra("chatPeer")}
-    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if(granted && BuildConfig.FIREBASE_CONFIGURED)PushRegistry.bind(this,com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid) }
     private val signInLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         runCatching { GoogleSignIn.getSignedInAccountFromIntent(result.data).getResult(com.google.android.gms.common.api.ApiException::class.java) }
             .onSuccess { account -> val token = account.idToken
@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
                 else model?.error = "Google sign-in did not return an identity token"
             }.onFailure { if((it as? com.google.android.gms.common.api.ApiException)?.statusCode != 12501) model?.error = "Google sign-in failed: ${it.message}" }
     }
-    override fun onResume(){super.onResume();PushNotices.foreground=true;if(BuildConfig.FIREBASE_CONFIGURED)PushRegistry.bind(this,com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid)}
+    override fun onResume(){super.onResume();androidx.lifecycle.ViewModelProvider(this)[AppUpdater::class.java].checkAutomatically();PushNotices.foreground=true;if(BuildConfig.FIREBASE_CONFIGURED)PushRegistry.bind(this,com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid)}
     override fun onPause(){PushNotices.foreground=false;super.onPause()}
     private fun signIn() {
         if(!BuildConfig.FIREBASE_CONFIGURED) { model?.error = "Account sign-in is not connected in this preview yet. You can still search, play music, download songs and use local playlists."; return }
@@ -102,6 +102,9 @@ class MainActivity : ComponentActivity() {
     var selectedAlbum by remember { mutableStateOf<Album?>(null) }
     var showPlayer by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var settingsStartPage by remember { mutableStateOf("CapyFlow") }
+    val updater:AppUpdater=viewModel();val updateContext=LocalContext.current
+    updater.announcement?.let{update->AlertDialog(onDismissRequest={updater.later()},title={Text("Update available · ${update.name}")},text={Column(Modifier.heightIn(max=300.dp).verticalScroll(rememberScrollState())){Text("What’s new",fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Text(update.notes.ifBlank{"A new CapyFlow update is ready."})}},confirmButton={TextButton(onClick={updater.acceptAnnouncement();settingsStartPage="Updates";showSettings=true;updater.download(updateContext)}){Text("Update now")}},dismissButton={TextButton(onClick={updater.later()}){Text("Later")}})}
     var showQueue by remember { mutableStateOf(false) }
     var showNewPlaylist by remember { mutableStateOf(false) }
     var selectedPlaylist by remember { mutableStateOf<String?>(null) }
@@ -199,7 +202,7 @@ class MainActivity : ComponentActivity() {
         }}
         AnimatedVisibility(showSettings,enter=fadeIn(tween(200)),exit=fadeOut(tween(200))){Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha=.55f)).clickable{showSettings=false})}
         AnimatedVisibility(showSettings,enter=slideInHorizontally(tween(300),initialOffsetX={-it}),exit=slideOutHorizontally(tween(260),targetOffsetX={-it})){
-            AccountDrawer(vm,social,signIn,{showSettings=false},{selectedProfile=it},{tab="Social";showSettings=false},{tab="Messages";showSettings=false})
+            AccountDrawer(vm,social,signIn,{showSettings=false;settingsStartPage="CapyFlow"},{selectedProfile=it},{tab="Social";showSettings=false},{tab="Messages";showSettings=false},settingsStartPage)
         }
         AnimatedVisibility(notice!=null,modifier=Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp),enter=slideInVertically(initialOffsetY={-it})+fadeIn(),exit=slideOutVertically(targetOffsetY={-it})+fadeOut()){
             notice?.let{n->Surface(shape=RoundedCornerShape(24.dp),color=Raised,tonalElevation=8.dp,shadowElevation=8.dp){Row(Modifier.fillMaxWidth().clickable{n.peerID?.let{if(vm.user!=null){social.openChat(it);chatPeer=it}};notice=null}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(if(n.peerID!=null)Icons.Default.Forum else Icons.Default.Info,null,tint=Violet);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(n.title,fontWeight=FontWeight.Bold);Text(n.body,maxLines=3,overflow=TextOverflow.Ellipsis,fontSize=13.sp)};IconButton(onClick={notice=null}){Icon(Icons.Default.Close,"Dismiss notification")}}}}
@@ -338,10 +341,12 @@ class MainActivity : ComponentActivity() {
 }
 fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toInt().coerceAtLeast(0) else 0;return "%d:%02d".format(value/60,value%60)}
 @Composable fun Settings(vm: CapyModel,signIn: ()->Unit) {
+    var confirmSignOut by remember { mutableStateOf(false) }
+    if(confirmSignOut) AlertDialog(onDismissRequest={confirmSignOut=false},title={Text("Sign out?")},text={Text("Your playlists stay saved to your account. You can sign in again anytime.")},confirmButton={TextButton(onClick={confirmSignOut=false;vm.signOut()}){Text("Sign out")}},dismissButton={TextButton(onClick={confirmSignOut=false}){Text("Cancel")}})
     var server by remember(vm.server){mutableStateOf(vm.server)}
     Column(Modifier.fillMaxWidth().padding(24.dp).navigationBarsPadding().verticalScroll(rememberScrollState())) {
         Section("Your CapyFlow")
-        vm.user?.let{Text(it.displayName ?: "Signed in",fontSize=22.sp,fontWeight=FontWeight.Bold);Text(it.email ?: "",color=Violet);TextButton(onClick={vm.signOut()}){Text("Sign out")}} ?: Button(onClick=signIn,modifier=Modifier.fillMaxWidth()){Text("Continue with Google")}
+        vm.user?.let{Text(it.displayName ?: "Signed in",fontSize=22.sp,fontWeight=FontWeight.Bold);Text(it.email ?: "",color=Violet);TextButton(onClick={confirmSignOut=true}){Text("Sign out")}} ?: Button(onClick=signIn,modifier=Modifier.fillMaxWidth()){Text("Continue with Google")}
         Section("Streaming server");Text(if(vm.automaticServer)"Automatic · follows your backend after restarts" else "Manual · uses the address you saved",color=Color.White.copy(alpha=.6f),fontSize=13.sp)
         OutlinedTextField(server,{server=it},label={Text("HTTPS server address")},modifier=Modifier.fillMaxWidth().padding(top=12.dp),singleLine=true,shape=RoundedCornerShape(18.dp));Row {TextButton(onClick={vm.saveServer(server)}){Text("Save manual address")};TextButton(onClick={vm.useAutomaticServer()}){Text("Use automatic")}}
         if(vm.serverStatus.isNotBlank())Text(vm.serverStatus,color=Violet,fontSize=12.sp)

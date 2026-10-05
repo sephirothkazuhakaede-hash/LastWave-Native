@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { before, after, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, collection, query, limit, where, documentId, writeBatch, serverTimestamp, Bytes, Timestamp } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, collection, query, limit, where, documentId, writeBatch, runTransaction, serverTimestamp, Bytes, Timestamp } from 'firebase/firestore';
 
 let env;
 before(async () => {
@@ -236,4 +236,22 @@ test('push tokens are account-private and reject oversized or extra fields', asy
   await assertFails(setDoc(ref,{...data,token:'x'.repeat(4097)}));
   await assertFails(setDoc(ref,{...data,platform:'ios'}));
   await assertSucceeds(deleteDoc(ref));
+});
+
+test('stale read is rejected but transaction skips old message and reads the latest safely', async () => {
+  const alice=account('alice'),bob=account('bob');
+  await setDoc(doc(alice,'follows','alice_bob'),{followerID:'alice',followingID:'bob'});
+  await assertSucceeds(message('alice','alice_bob','first',{first:true}));
+  await assertSucceeds(message('alice','alice_bob','second'));
+  const ref=doc(bob,'conversations','alice_bob');
+  await assertFails(updateDoc(ref,{'readMessageIDs.bob':'first'}));
+  const mark=displayed=>runTransaction(bob,async tx=>{
+    const d=await tx.get(ref);
+    if(d.get('lastMessageID')===displayed && d.get('lastSenderID')!=='bob')
+      tx.update(ref,{'readMessageIDs.bob':displayed});
+  });
+  await assertSucceeds(mark('first'));
+  if((await getDoc(ref)).get('readMessageIDs.bob')!=='')throw new Error('Old callback changed read state');
+  await assertSucceeds(mark('second'));
+  if((await getDoc(ref)).get('readMessageIDs.bob')!=='second')throw new Error('Latest message was not read');
 });

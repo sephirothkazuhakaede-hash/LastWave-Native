@@ -130,9 +130,9 @@ class SocialModel : ViewModel() {
             lastMessageID = s?.getString("lastMessageID")
             ownReadID = (s?.get("readMessageIDs") as? Map<*, *>)?.get(userID) as? String
             peerReadID=(s?.get("readMessageIDs") as? Map<*, *>)?.get(peerID) as? String
-            if(threadExists && receiptListener==null)receiptListener=ref.collection("receipts").document(peerID).addSnapshotListener{d,failure -> if(thread==ref){if(failure!=null)error=failure.message;peerDeliveredID=d?.getString("messageID")}}
+            if(ChatReadPolicy.canObserveThread(threadExists,s?.metadata?.hasPendingWrites()!=false) && receiptListener==null)receiptListener=ref.collection("receipts").document(peerID).addSnapshotListener{d,failure -> if(thread==ref){if(failure!=null)error=failure.message;peerDeliveredID=d?.getString("messageID")}}
             if(s!=null && !s.metadata.isFromCache)acknowledge(s)
-            if(threadExists && chatListener == null) chatListener = ref.collection("messages").orderBy("createdAt",Query.Direction.DESCENDING).limit(50).addSnapshotListener(MetadataChanges.INCLUDE) { ms, failure ->
+            if(threadExists && s?.metadata?.hasPendingWrites()==false && chatListener == null) chatListener = ref.collection("messages").orderBy("createdAt",Query.Direction.DESCENDING).limit(50).addSnapshotListener(MetadataChanges.INCLUDE) { ms, failure ->
                 if(thread != ref) return@addSnapshotListener
                 if(failure != null) error = failure.message
                 if(ms != null) { messages = ms.documents.reversed().map { Message(it.id,it.getString("senderID") ?: "",it.getString("text") ?: "",it.metadata.hasPendingWrites(),it.getTimestamp("createdAt")?.toDate()?.time ?: 0) }; markRead() }
@@ -141,11 +141,20 @@ class SocialModel : ViewModel() {
         }
     }
     private fun markRead() {
-        val id = lastMessageID ?: return; val userID = uid ?: return
-        if(ownReadID == id || readingID == id) return
-        if(messages.any { it.id == id && it.sender != userID }) {
-            readingID = id
-            thread?.update("readMessageIDs.$userID",id)?.addOnFailureListener { readingID = null; error = it.message }
+        val id = lastMessageID ?: return; val userID = uid ?: return; val ref=thread ?: return
+        if(ownReadID == id || readingID == id || messages.none { it.id == id && it.sender != userID }) return
+        val epoch=generation;readingID=id
+        ref.firestore.runTransaction { tx ->
+            val current=tx.get(ref)
+            val latest=current.getString("lastMessageID")
+            val read=(current.get("readMessageIDs") as? Map<*, *>)?.get(userID)
+            if(ChatReadPolicy.shouldMarkRead(id,latest,current.getString("lastSenderID"),userID,read as? String))
+                tx.update(ref,"readMessageIDs.$userID",id)
+            null
+        }.addOnSuccessListener {
+            if(epoch==generation && thread==ref && readingID==id){readingID=null;if(lastMessageID!=id)markRead()}
+        }.addOnFailureListener {
+            if(epoch==generation && thread==ref && readingID==id){readingID=null;error="Couldn’t mark this conversation as read: ${it.message}"}
         }
     }
     fun send(raw: String, onSuccess: () -> Unit) {
@@ -161,6 +170,7 @@ class SocialModel : ViewModel() {
     }
     fun closeChat() { receiptListener?.remove();receiptListener=null;peerReadID=null;peerDeliveredID=null; chatListener?.remove(); threadListener?.remove(); chatListener = null; threadListener = null; thread = null; peer = null; messages = emptyList(); lastMessageID = null; ownReadID = null; readingID = null; threadExists = false; sending = false }
     override fun onCleared() { listeners.forEach { it.remove() };friendListeners.values.flatten().forEach{it.remove()}; closeChat() }
+    fun watchActivity(id:String,onChange:(ListeningActivity?)->Unit):ListenerRegistration? = db?.collection("listeningActivity")?.document(id)?.addSnapshotListener{d,_ -> onChange(d?.takeIf{it.exists()}?.let{ListeningActivity.from(it)})}
     fun watchProfile(id: String,onChange:(Profile?)->Unit): ListenerRegistration? = db?.collection("profiles")?.document(id)?.addSnapshotListener{d,e -> if(e!=null)error=e.message;onChange(d?.takeIf{it.exists()}?.let{Profile.from(it)})}
     fun watchRelationships(id: String,followers: Boolean,onChange:(List<String>)->Unit): ListenerRegistration? = db?.collection("follows")?.whereEqualTo(if(followers)"followingID" else "followerID",id)?.addSnapshotListener{s,e -> if(e!=null)error=e.message;if(s!=null)onChange(s.documents.mapNotNull{it.getString(if(followers)"followerID" else "followingID")}.distinct())}
     private fun ensureProfile(userID: String){
