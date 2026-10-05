@@ -104,7 +104,7 @@ jobs:
           node-version: '24'
       - name: Test music backend and integrated message sender
         working-directory: backend
-        run: npm install --omit=dev && npm test
+        run: npm install --omit=dev && npm audit --omit=dev && npm test
       - name: Package tracked backend source
         run: |
           mkdir -p dist
