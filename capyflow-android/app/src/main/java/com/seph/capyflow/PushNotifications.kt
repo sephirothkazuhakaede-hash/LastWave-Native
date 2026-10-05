@@ -28,14 +28,24 @@ object PushNotices {
 }
 object PushRegistry {
     private var registeredUID:String?=null
+    private var generation=0
+    var registered by mutableStateOf(false);private set
+    var registering by mutableStateOf(false);private set
+    fun allowed(context:Context):Boolean {
+        if(!androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled())return false
+        val channel=context.getSystemService(NotificationManager::class.java).getNotificationChannel("messages")
+        return channel==null || channel.importance!=NotificationManager.IMPORTANCE_NONE
+    }
     var status by mutableStateOf("Sign in to receive message notifications.");private set
     suspend fun unregister(context:Context,uid:String){
-        registeredUID=null
+        generation++;registeredUID=null;registered=false;registering=false
+        status="Sign in to receive message notifications."
         val device=context.getSharedPreferences("capyflow-push",Context.MODE_PRIVATE).getString("deviceID",null) ?: return
         FirebaseFirestore.getInstance().collection("users").document(uid).collection("devices").document(device).delete().await()
         status="Sign in to receive message notifications."
     }
     fun bind(context:Context,uid:String?){
+        val epoch=++generation;registered=false;registering=false
         if(!BuildConfig.FIREBASE_CONFIGURED){status="Message notifications are temporarily unavailable.";return}
         val prefs=context.getSharedPreferences("capyflow-push",Context.MODE_PRIVATE)
         val device=prefs.getString("deviceID",null) ?: UUID.randomUUID().toString().also{prefs.edit().putString("deviceID",it).apply()}
@@ -43,13 +53,14 @@ object PushRegistry {
         if(previous!=null && previous!=uid)FirebaseFirestore.getInstance().collection("users").document(previous).collection("devices").document(device).delete()
         registeredUID=uid
         if(uid==null){status="Sign in to receive message notifications.";return}
-        if(Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(context,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){status="Allow notifications to receive messages in the background.";return}
+        if(!allowed(context)){status="Allow notifications to receive messages in the background.";return}
+        registering=true
         status="Turning on message notifications…"
-        FirebaseMessaging.getInstance().token.addOnSuccessListener{token->if(FirebaseAuth.getInstance().currentUser?.uid==uid && registeredUID==uid){
+        FirebaseMessaging.getInstance().token.addOnSuccessListener{token->if(FirebaseAuth.getInstance().currentUser?.uid==uid && registeredUID==uid && epoch==generation){
             FirebaseFirestore.getInstance().collection("users").document(uid).collection("devices").document(device).set(mapOf("token" to token,"platform" to "android","updatedAt" to FieldValue.serverTimestamp()))
-                .addOnSuccessListener{if(registeredUID==uid)status="Ready to receive message notifications."}
-                .addOnFailureListener{if(registeredUID==uid)status="Couldn’t enable notifications. Please try again."}
-        }}.addOnFailureListener{if(registeredUID==uid)status="Couldn’t enable notifications. Check your connection and try again."}
+                .addOnSuccessListener{if(registeredUID==uid && epoch==generation){registered=true;registering=false;status="Ready to receive message notifications."}}
+                .addOnFailureListener{if(registeredUID==uid && epoch==generation){registered=false;registering=false;status="Couldn’t enable notifications. Please try again."}}
+        }}.addOnFailureListener{if(registeredUID==uid && epoch==generation){registered=false;registering=false;status="Couldn’t enable notifications. Check your connection and try again."}}
     }
 }
 class CapyMessagingService:FirebaseMessagingService(){

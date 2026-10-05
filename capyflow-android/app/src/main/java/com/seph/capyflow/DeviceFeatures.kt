@@ -50,16 +50,39 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable fun NotificationSettings(){
     val context=LocalContext.current
-    val permission=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()){granted->
-        if(granted && BuildConfig.FIREBASE_CONFIGURED)PushRegistry.bind(context,com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid)
+    val lifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    var allowed by remember{mutableStateOf(PushRegistry.allowed(context))}
+    fun bind(){
+        if(BuildConfig.FIREBASE_CONFIGURED)PushRegistry.bind(context,com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid)
     }
+    DisposableEffect(lifecycle,context){
+        val observer=androidx.lifecycle.LifecycleEventObserver{_,event->
+            if(event==androidx.lifecycle.Lifecycle.Event.ON_RESUME){
+                allowed=PushRegistry.allowed(context)
+                if(allowed && !PushRegistry.registered && !PushRegistry.registering)bind()
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose{lifecycle.removeObserver(observer)}
+    }
+    val permission=androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()){granted->
+        allowed=PushRegistry.allowed(context)
+        if(granted)bind()
+    }
+    val state=notificationButtonState(allowed,PushRegistry.registered,PushRegistry.registering)
     Text("Message notifications")
     Text(PushRegistry.status,color=Violet,fontSize=13.sp)
     Text("Get alerts for new messages while CapyFlow is in the background.",fontSize=13.sp,color=androidx.compose.ui.graphics.Color.White.copy(alpha=.6f))
     Button(onClick={
         if(Build.VERSION.SDK_INT>=33 && androidx.core.content.ContextCompat.checkSelfPermission(context,android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
             permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        else if(BuildConfig.FIREBASE_CONFIGURED)PushRegistry.bind(context,com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid)
-    }){Text("Enable notifications")}
+        else if(!PushRegistry.allowed(context))context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.packageName))
+        else bind()
+    },enabled=state==NotificationButtonState.NEEDS_SETUP){
+        if(state==NotificationButtonState.ENABLED)Icon(Icons.Default.CheckCircle,null)
+        if(state==NotificationButtonState.REGISTERING)CircularProgressIndicator(Modifier.size(16.dp),strokeWidth=2.dp)
+        if(state!=NotificationButtonState.NEEDS_SETUP)Spacer(Modifier.width(8.dp))
+        Text(state.label)
+    }
     TextButton(onClick={context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,context.packageName))}){Text("Android notification settings")}
 }
