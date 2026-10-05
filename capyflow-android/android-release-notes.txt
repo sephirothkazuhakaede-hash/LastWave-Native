@@ -1,4 +1,5 @@
 CapyFlow 1.0.0
+• Refreshing your automatic connection now updates the displayed address.
 • Notification settings now show when notifications are enabled and refresh after changes in Android settings.
 
 • Your profile picture now appears on Home and in your Library.

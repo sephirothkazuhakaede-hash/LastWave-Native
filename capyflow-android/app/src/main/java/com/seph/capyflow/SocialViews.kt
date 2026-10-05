@@ -111,10 +111,11 @@ import kotlinx.coroutines.*
     }
 }
 @Composable fun StreamingSettings(vm:CapyModel){
-    var address by remember(vm.server){mutableStateOf(vm.server)}
+    var address by remember{mutableStateOf(vm.server)}
+    LaunchedEffect(vm.server,vm.automaticServer,vm.serverBusy){if(!vm.serverBusy)address=vm.server}
     var custom by remember{mutableStateOf(!vm.automaticServer)}
     Text(if(vm.automaticServer)"Automatically connects you to music." else "Using your custom connection.",fontSize=13.sp,color=Color.White.copy(alpha=.6f))
-    Button(onClick={vm.useAutomaticServer()},enabled=!vm.serverBusy){
+    Button(onClick={address=vm.server;vm.useAutomaticServer()},enabled=!vm.serverBusy){
         if(vm.serverBusy){CircularProgressIndicator(Modifier.size(16.dp),strokeWidth=2.dp);Spacer(Modifier.width(8.dp))}
         Text(if(vm.serverBusy)"Connecting…" else "Use automatic")
     }

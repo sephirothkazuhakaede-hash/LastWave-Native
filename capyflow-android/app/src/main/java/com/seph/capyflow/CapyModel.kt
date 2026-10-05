@@ -182,10 +182,11 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
         serverStatus="Connecting…"
         connectionJob=viewModelScope.launch {
             try {
-                refreshDiscoveredServer(epoch,{serverEpoch},{automaticServer},{catalog.discover()}){found ->
+                refreshDiscoveredServer(epoch,{serverEpoch},{automaticServer},{catalog.discover(fresh=true)}){found ->
                     server=found;lastDiscoveryMs=android.os.SystemClock.elapsedRealtime()
                     prefs.edit().putString("server",found).apply()
                     serverStatus="Automatic connection is ready."
+                    serverEpoch++;serverBusy=false // Reject older discoveries still in flight.
                 }
             } catch(e:CancellationException){throw e}
             catch(e:Exception){if(automaticServer && epoch==serverEpoch)serverStatus=UserMessages.failure(e,"Couldn’t connect. Check your internet and try again.")}

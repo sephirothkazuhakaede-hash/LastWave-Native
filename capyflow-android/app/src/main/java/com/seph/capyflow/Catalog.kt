@@ -69,10 +69,12 @@ class Catalog {
             JSONObject(response.body!!.string())
         }
     }
-    suspend fun discover():String = discoverWithRetry {
-        val url="https://raw.githubusercontent.com/sephirothkazuhakaede-hash/LastWave-Native/runtime/backend-discovery/backend.json".toHttpUrl().newBuilder()
+    suspend fun discover(fresh:Boolean=false):String = discoverWithRetry {
+        val endpoint=if(fresh)"https://api.github.com/repos/sephirothkazuhakaede-hash/LastWave-Native/contents/backend-discovery/backend.json?ref=runtime" else "https://raw.githubusercontent.com/sephirothkazuhakaede-hash/LastWave-Native/runtime/backend-discovery/backend.json"
+        val url=endpoint.toHttpUrl().newBuilder()
             .addQueryParameter("refresh",java.util.UUID.randomUUID().toString()).build()
-        val payload=JSONObject(text(url.toString(),mapOf("Cache-Control" to "no-cache, no-store","Pragma" to "no-cache"),8))
+        val response=text(url.toString(),mapOf("Cache-Control" to "no-cache, no-store","Pragma" to "no-cache"),8)
+        val payload=discoveryDocument(response,fresh)
         val address=payload.getString("url").trimEnd('/');val parsed=address.toHttpUrl()
         require(parsed.isHttps && parsed.host.endsWith(".trycloudflare.com") && parsed.username.isEmpty() && parsed.password.isEmpty() && parsed.query==null && parsed.fragment==null && parsed.port==443){"Invalid discovery address"}
         address
