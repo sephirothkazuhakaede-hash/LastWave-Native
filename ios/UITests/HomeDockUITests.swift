@@ -1,6 +1,21 @@
 import XCTest
 
 final class HomeDockUITests: XCTestCase {
+    func testMessagesIsAvailableInMainNavigation() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--layout-fixture", "root"]
+        app.launch()
+        let dock = app.otherElements["capy-dock"]
+        XCTAssertTrue(dock.waitForExistence(timeout: 8))
+        let messages = dock.buttons["Messages"]
+        XCTAssertTrue(messages.isHittable)
+        messages.tap()
+        XCTAssertTrue(app.navigationBars["Messages"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["Sign in to message friends"].exists)
+        dock.buttons["Home"].tap()
+        XCTAssertTrue(app.scrollViews["home-scroll"].isHittable)
+    }
+
     func testHomeFriendsAndAppInfoRemainAbovePlayingDock() {
         let app = XCUIApplication()
         app.launchArguments = ["--layout-fixture", "root"]
@@ -23,7 +38,7 @@ final class HomeDockUITests: XCTestCase {
         XCTAssertGreaterThan(footer.frame.height, 0)
         XCTAssertGreaterThanOrEqual(footer.frame.minY, home.frame.minY - 1)
         XCTAssertLessThanOrEqual(footer.frame.maxY, dock.frame.minY + 1)
-        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 20"))
+        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 22"))
         XCTAssertTrue(footer.label.contains("by Seph"))
         friends.tap()
         XCTAssertTrue(app.staticTexts["Find people"].waitForExistence(timeout: 4))

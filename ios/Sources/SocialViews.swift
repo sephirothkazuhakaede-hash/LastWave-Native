@@ -562,12 +562,9 @@ struct SharedPlaylistDetailView: View {
                                 .buttonStyle(CapySecondaryButtonStyle())
                             CapySectionHeader("Songs", subtitle: "Everyone in this playlist sees shared changes")
                             ForEach(playlist.tracks) { track in
-                                SocialTrackRow(track: track)
-                                    .contextMenu {
-                                        Button("Remove from shared playlist", role: .destructive) {
-                                            Task { await social.remove(track, from: playlist) }
-                                        }
-                                    }
+                                SocialTrackRow(track: track, removeFromSharedPlaylist: {
+                                    Task { await social.remove(track, from: playlist) }
+                                })
                             }
                             if let error = social.error { Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning) }
                         } else { ProgressView().padding(50) }
@@ -694,6 +691,8 @@ private struct SharedCover: View {
 private struct SocialTrackRow: View {
     @EnvironmentObject private var player: WavePlayer
     let track: Track
+    var removeFromSharedPlaylist: (() -> Void)? = nil
+    @State private var confirmRemoval = false
     var body: some View {
         HStack(spacing: 12) {
             Button { Task { await player.play(track) } } label: {
@@ -708,8 +707,20 @@ private struct SocialTrackRow: View {
             Menu {
                 Button { player.queue.append(track) } label: { Label("Add to queue", systemImage: "text.append") }
                 Button { Task { await player.download(track) } } label: { Label("Download", systemImage: "arrow.down.circle") }
+                if removeFromSharedPlaylist != nil {
+                    Button(role: .destructive) { confirmRemoval = true } label: {
+                        Label("Remove from shared playlist", systemImage: "minus.circle")
+                    }
+                }
             } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+            .accessibilityLabel("Options for " + track.title)
         }.padding(10).waveSurface(radius: 20, highlighted: player.current?.id == track.id)
+        .alert("Remove song from shared playlist?", isPresented: $confirmRemoval) {
+            Button("Remove", role: .destructive) { removeFromSharedPlaylist?() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Remove \(track.title) for everyone in this playlist. Downloaded audio stays on this device.")
+        }
     }
 }
 

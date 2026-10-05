@@ -19,7 +19,7 @@ struct BackendSettingsView: View {
                         Label("Faster streaming", systemImage: "bolt.horizontal.circle.fill")
                             .font(.title2.bold())
                             .foregroundStyle(Color.waveBlue)
-                        Text("CapyFlow can try your private streaming server first. If it is unavailable, playback and downloads automatically return to the built-in YouTube connection.")
+                        Text("Use a custom streaming server for faster playback and downloads. If it is unavailable, CapyFlow automatically switches to its usual connection.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -31,7 +31,7 @@ struct BackendSettingsView: View {
                         Toggle(isOn: $enabled) {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Use custom server").font(.headline)
-                                Text("Built-in fallback always stays available")
+                                Text("Music keeps working if the server is unavailable")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -79,7 +79,7 @@ struct BackendSettingsView: View {
                     statusCard
 
                     Label {
-                        Text("Only use a server you trust. On HTTPS, CapyFlow sends a short-lived Firebase identity token so the server can recognize your account. Identity tokens are never sent to local HTTP servers, and your Google password is never shared.")
+                        Text("Only use a server you trust. A secure server can verify your CapyFlow account. Your Google password is never shared.")
                     } icon: {
                         Image(systemName: "lock.shield.fill")
                     }
@@ -125,7 +125,7 @@ struct BackendSettingsView: View {
     private var connectionMessage: String {
         switch connection.state {
         case .disabled:
-            return "Using CapyFlow’s built-in YouTube connection."
+            return "Using the standard streaming connection."
         case .checking:
             return "The custom server has not been checked yet."
         case .connected(let message), .fallback(let message):

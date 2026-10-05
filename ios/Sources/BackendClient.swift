@@ -471,16 +471,16 @@ actor BackendClient {
         if let backendError = error as? BackendClientError {
             switch backendError {
             case .httpStatus(401), .httpStatus(403), .missingAuthenticationToken:
-                return "The custom server did not accept your account. Using direct YouTube."
-            case .httpStatus(let code):
-                return "The custom server returned HTTP \(code). Using direct YouTube."
-            case .network(let detail):
-                return "The custom server is unavailable (\(detail)). Using direct YouTube."
+                return "The streaming server could not verify your account. Using the standard connection."
+            case .httpStatus:
+                return "The streaming server is having trouble. Using the standard connection."
+            case .network:
+                return "The streaming server is unavailable. Using the standard connection."
             default:
-                return "The custom server is unavailable. Using direct YouTube."
+                return "The streaming server is unavailable. Using the standard connection."
             }
         }
-        return "The custom server is unavailable. Using direct YouTube."
+        return "The streaming server is unavailable. Using the standard connection."
     }
 
     private static func shouldQuarantineBackend(after error: Error) -> Bool {
@@ -509,15 +509,15 @@ enum BackendClientError: LocalizedError {
         case .invalidAddress:
             return "Enter a complete server address, such as https://music.example.com."
         case .secureAddressRequired:
-            return "Use HTTPS for public servers. HTTP is allowed only for localhost or a private home-network address."
+            return "Use an address starting with https://. Addresses starting with http:// work only on your home network."
         case .invalidResponse:
             return "The server returned an invalid response."
-        case .httpStatus(let code):
-            return "The server returned HTTP \(code)."
+        case .httpStatus:
+            return "The streaming server could not complete the request. Please try again."
         case .missingAuthenticationToken:
-            return "CapyFlow could not authenticate with the server."
-        case .network(let detail):
-            return detail
+            return "The streaming server could not verify your account. Please sign in again."
+        case .network:
+            return "Could not connect. Check your internet connection and try again."
         }
     }
 }

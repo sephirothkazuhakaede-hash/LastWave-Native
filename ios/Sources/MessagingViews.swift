@@ -12,7 +12,7 @@ struct MessagesInboxView: View {
                         if social.currentUserID == nil {
                             ContentUnavailableView("Sign in to message friends", systemImage: "bubble.left.and.bubble.right")
                         } else {
-                            if messaging.fromCache { Text("Showing saved conversations").font(.capyCaption).foregroundStyle(CapyColor.secondaryText) }
+                            if messaging.fromCache { Text("You’re viewing saved messages.").font(.capyCaption).foregroundStyle(CapyColor.secondaryText) }
                             if messaging.loading { ProgressView("Loading messages…").padding(20) }
                             if let error = messaging.error {
                                 Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning)
@@ -36,7 +36,7 @@ struct MessagesInboxView: View {
                             }
                             if messaging.hasMore { Button("Load more conversations") { messaging.loadMore() }.buttonStyle(CapySecondaryButtonStyle()) }
                         }
-                    }.padding(.vertical, 18)
+                    }.padding(.top, 18).padding(.bottom, 100)
                 }
             }
         }

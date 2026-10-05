@@ -182,12 +182,13 @@ private struct LayoutFixtureView: View {
 #endif
 
 private enum WaveTab: String, CaseIterable {
-    case home = "Home", search = "Search", library = "Library"
+    case home = "Home", search = "Search", library = "Library", messages = "Messages"
     var icon: String {
         switch self {
         case .home: "house.fill"
         case .search: "magnifyingglass"
         case .library: "square.stack.fill"
+        case .messages: "bubble.left.and.bubble.right.fill"
         }
     }
 }
@@ -229,6 +230,16 @@ struct RootView: View {
                 .opacity(tab == .library ? 1 : 0)
                 .allowsHitTesting(tab == .library)
                 .accessibilityHidden(tab != .library)
+            if tab == .messages {
+                NavigationStack {
+                    MessagesInboxView()
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                CapyProfileButton(action: openDrawer)
+                            }
+                        }
+                }
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 5) {
             CapyDock(selection: $tab) { showPlayer = true }
@@ -723,7 +734,7 @@ private struct SearchHomeView: View {
                         ForEach(SearchMode.allCases) { Text($0.rawValue).tag($0) }
                     }.pickerStyle(.segmented)
                     if searching {
-                        HStack(spacing: 12) { ProgressView(); Text("Searching YouTube Music…").foregroundStyle(.secondary) }
+                        HStack(spacing: 12) { ProgressView(); Text("Searching for music…").foregroundStyle(.secondary) }
                             .frame(maxWidth: .infinity).padding(28).waveGlass(radius: 24)
                     } else if results.isEmpty && albums.isEmpty {
                         discoveryHero
@@ -810,7 +821,7 @@ private struct SearchHomeView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Songs").font(.system(size: 31, weight: .black, design: .rounded))
-                Text("YouTube Music results").font(.subheadline).foregroundStyle(.secondary)
+                Text("Search results").font(.subheadline).foregroundStyle(.secondary)
             }
             Spacer()
             Text("\(results.count)").font(.headline).foregroundStyle(Color.waveBlue).padding(.horizontal, 14).padding(.vertical, 8).waveGlass(radius: 16)
@@ -2180,6 +2191,7 @@ private struct FeatureChip: View {
 }
 
 private struct CapyDock: View {
+    @EnvironmentObject private var messaging: MessagingStore
     @EnvironmentObject var player: WavePlayer
     @Binding var selection: WaveTab
     let expand: () -> Void
@@ -2223,6 +2235,11 @@ private struct CapyDock: View {
                         VStack(spacing: 4) {
                             Image(systemName: item.icon)
                                 .font(.system(size: 16, weight: selection == item ? .bold : .semibold))
+                                .overlay(alignment: .topTrailing) {
+                                    if item == .messages && messaging.unreadCount > 0 {
+                                        Circle().fill(CapyColor.accent).frame(width: 7, height: 7).offset(x: 5, y: -3)
+                                    }
+                                }
                             Text(item.rawValue).font(.caption2.weight(selection == item ? .bold : .semibold)).lineLimit(1)
                         }
                         .frame(maxWidth: .infinity).frame(height: 52).contentShape(Rectangle())

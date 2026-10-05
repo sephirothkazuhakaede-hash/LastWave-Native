@@ -98,7 +98,8 @@ struct GitHubStableRelease: Decodable {
                 presented = candidate
             }
         } catch {
-            if manual { self.error = "Couldn't check for stable updates: " + error.localizedDescription }
+            print("CapyFlow update check failed: \(error.localizedDescription)")
+            if manual { self.error = "Couldn't check for updates. Check your internet connection and try again." }
         }
     }
     func later(_ manifest: StableUpdateManifest) {
@@ -110,7 +111,7 @@ struct GitHubStableRelease: Decodable {
             if manifestSource {
                 let data = try await fetch(Self.manifestURL)
                 let manifest = try JSONDecoder().decode(StableUpdateManifest.self, from: data)
-                guard manifest.isStable else { throw WaveError.message("The update manifest is not a valid stable release.") }
+                guard manifest.isStable else { throw WaveError.message("This update is unavailable. Please try again later.") }
                 return .success(manifest)
             }
             return .success(try await githubCandidate())
@@ -176,8 +177,8 @@ struct StableUpdatesView: View {
         ZStack {
             WaveBackdrop()
             VStack(spacing: 18) {
-                Text("Stable updates").font(.capyTitle)
-                Text("Only published stable CapyFlow releases appear here.").font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                Text("App updates").font(.capyTitle)
+                Text("Get the latest version of CapyFlow.").font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
                 if let manifest = updates.available {
                     Text("Version \(manifest.version) · Build \(manifest.build)").foregroundStyle(CapyColor.accent)
                     Button("View update") { updates.presented = manifest }.buttonStyle(CapyPrimaryButtonStyle())

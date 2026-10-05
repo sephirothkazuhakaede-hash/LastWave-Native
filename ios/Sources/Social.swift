@@ -161,13 +161,13 @@ enum SocialConnectionState: Equatable {
         case .signedOut:
             return "Sign in to follow friends and share playlists. Music works without an account."
         case .connecting:
-            return "Your music, downloads, and offline playback are independent from this connection."
+            return "Connecting to your friends and shared playlists…"
         case .ready:
             return "Profiles, follows, and shared playlists are up to date."
         case .offline:
             return "Saved social information may still appear. Music and downloads keep working normally."
         case .setupRequired:
-            return "The app owner still needs to enable the CapyFlow social database. Music and downloads are unaffected."
+            return "Friends are unavailable right now. Please try again later. Your music and downloads still work."
         }
     }
 
