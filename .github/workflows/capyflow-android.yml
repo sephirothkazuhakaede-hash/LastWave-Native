@@ -2,7 +2,7 @@ name: Build CapyFlow Android
 on:
   push:
     branches: [feature/capyflow-android]
-    paths: ['capyflow-android/**', '.github/workflows/capyflow-android.yml', 'firebase/**', 'firebase.json']
+    paths: ['backend/**', 'capyflow-android/**', '.github/workflows/capyflow-android.yml', 'firebase/**', 'firebase.json']
   workflow_dispatch:
 jobs:
   build:
@@ -64,7 +64,7 @@ jobs:
           ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: CapyFlow-Android-dev10
+          name: CapyFlow-Android-dev11
           path: capyflow-android/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         if: always()
@@ -94,8 +94,28 @@ jobs:
         working-directory: firebase
         run: npm ci && npm test
 
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test music backend and integrated message sender
+        working-directory: backend
+        run: npm install --omit=dev && npm test
+      - name: Package tracked backend source
+        run: |
+          mkdir -p dist
+          git archive --format=zip --output=dist/CapyFlow-Backend.zip HEAD backend
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CapyFlow-Backend-dev11
+          path: dist/CapyFlow-Backend.zip
+
   publish:
-    needs: [build, security]
+    needs: [build, security, backend]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -106,7 +126,11 @@ jobs:
           node-version: '22'
       - uses: actions/download-artifact@v4
         with:
-          name: CapyFlow-Android-dev10
+          name: CapyFlow-Android-dev11
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: CapyFlow-Backend-dev11
           path: dist
       - name: Publish verified Android preview
         env:
@@ -115,7 +139,9 @@ jobs:
           node capyflow-android/scripts/release-manifest.mjs dist/app-debug.apk capyflow-android/app/build.gradle.kts dist capyflow-android/android-release-notes.txt
           tag=$(node -p "'android-dev'+require('./dist/android-update.json').versionCode")
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/CapyFlow.apk dist/android-update.json --clobber
+            gh release upload "$tag" dist/CapyFlow.apk dist/android-update.json dist/CapyFlow-Backend.zip --clobber
           else
-            gh release create "$tag" dist/CapyFlow.apk dist/android-update.json --target "$GITHUB_SHA" --prerelease --title "CapyFlow Android $tag" --notes-file capyflow-android/android-release-notes.txt
+            gh release create "$tag" dist/CapyFlow.apk dist/android-update.json dist/CapyFlow-Backend.zip --target "$GITHUB_SHA" --prerelease --title "CapyFlow Android $tag" --notes-file capyflow-android/android-release-notes.txt
           fi
+      - name: Verify public in-app update download
+        run: node backend/scripts/verify-android-update.mjs

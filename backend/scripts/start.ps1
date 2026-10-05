@@ -10,6 +10,10 @@ if (-not (Test-Path -LiteralPath $binaryPath)) {
 
 Push-Location $backendRoot
 try {
+    if (-not (Test-Path -LiteralPath '.\node_modules\firebase-admin\package.json')) {
+        & npm.cmd install --omit=dev
+        if ($LASTEXITCODE -ne 0) { throw 'Backend dependency installation failed.' }
+    }
     & node '.\src\index.js'
     exit $LASTEXITCODE
 }

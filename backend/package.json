@@ -15,5 +15,8 @@
     "test": "node --test --test-isolation=none --test-force-exit",
     "benchmark": "node ./scripts/benchmark.mjs"
   },
-  "license": "GPL-3.0-only"
+  "license": "GPL-3.0-only",
+  "dependencies": {
+    "firebase-admin": "13.5.0"
+  }
 }

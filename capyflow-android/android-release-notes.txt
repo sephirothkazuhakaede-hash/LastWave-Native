@@ -1,8 +1,5 @@
-• Fix conversation listeners starting before a new chat finishes saving.
-• Prevent stale read receipts from targeting an older message.
-• Ask for confirmation before signing out.
-• Show new-update notices with What’s new, Update now and Later.
-• Add live/recent listening cards to profile previews.
-• Show notification permission and device-registration status.
+• Replace the long Recently played list with a compact horizontal row.
+• Show more opens your latest 20 songs on a separate page.
+• Include the MSI message sender in the main music backend and Cloudflare launcher.
 
-Background push still requires the Firebase message sender to be deployed.
+Includes dev10’s messaging race fixes, sign-out confirmation, update notices and profile listening cards. Background push requires enabling the MSI sender with a private Firebase credential; your MSI must stay online.

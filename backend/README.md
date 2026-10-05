@@ -80,3 +80,26 @@ docker compose up --build
 ```
 
 The Compose port is published to host loopback only. Change authentication and tunnel routing deliberately before remote use.
+
+## Message notifications in the same MSI backend
+
+The main backend now includes an optional outbound Firebase message sender. Start your existing `start-cloudflare.cmd` or `start.cmd`: one Node process runs streaming and push. Cloudflare continues to expose music only; no notification HTTP endpoint, extra port or second tunnel is created. Firebase Cloud Functions and Blaze are not needed for this self-hosted worker. Firestore reads still use your project's normal quotas.
+
+Requirements for push: Node.js 22 or newer, an Android device with Google Play services and notification permission, the published private device-token rules, and a server credential for **capyflow-aa6c5**. Use a dedicated service account limited to **Cloud Datastore Viewer** (`roles/datastore.viewer`) and **Firebase Cloud Messaging API Admin** (`roles/firebasecloudmessaging.admin`). The worker reads conversations/profiles/device tokens and sends FCM; it does not need permission to modify messages, accounts or playlists.
+
+Keep the private JSON credential on the MSI, outside the repository/download folder, for example `C:/Users/Seph/.capyflow/private/message-sender.json`. Never upload it to GitHub, put it in an APK, share it in chat, or use Android's google-services.json as a server credential.
+
+Add to your existing backend `.env`:
+
+```dotenv
+FIREBASE_PROJECT_ID=capyflow-aa6c5
+PUSH_NOTIFICATIONS=true
+PUSH_SERVICE_ACCOUNT=C:/Users/Seph/.capyflow/private/message-sender.json
+PUSH_STATE_FILE=./state/message-push.json
+```
+
+The launcher installs the official Firebase Admin dependency when missing. On startup it prints `Message push worker started`. If credentials/configuration fail, it reports that push is unavailable and keeps music streaming online. Firestore reconnects are retried. Recent unread conversations from the last 24 hours are checked at startup/reconnect; already-read messages are skipped. Accepted device tokens are deduplicated and remembered privately under `state`, including partial-send retries. Keep that state directory when updating the backend.
+
+FCM acceptance is not proof a phone displayed a notification. After starting the sender, background CapyFlow Android and send a real message from your other account. It should show a notification, and tapping it should open the correct conversation. A force-stopped app must be reopened before Android permits delivery again. Your MSI must remain running with Internet access. This sender targets Android FCM registrations; iOS background receiving still requires its own Apple push setup.
+
+Updating an existing MSI backend: replace only source/scripts/package files from the backend ZIP, retain your `.env`, `cache`, `bin`, private credential and `state`, then restart the normal Cloudflare launcher. Music resolver/authentication settings remain yours.

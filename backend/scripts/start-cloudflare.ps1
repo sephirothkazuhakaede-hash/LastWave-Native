@@ -9,32 +9,28 @@ function Publish-TunnelUrl([string]$Url) {
     if (-not $gh) {
         Write-Warning "GitHub CLI (gh) is not installed. Tunnel works, but CapyFlow discovery cannot update automatically."
         Write-Host "Install once with: winget install --id GitHub.cli"
-        return $false
+        return
     }
     & $gh.Source auth status *> $null
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "GitHub CLI is not signed in. Run 'gh auth login' once, then restart this launcher."
-        return $false
+        return
     }
     $repo = 'sephirothkazuhakaede-hash/LastWave-Native'
     $branch = 'runtime/backend-discovery'
     $path = 'backend.json'
     $payload = @{ url = $Url; updatedAt = [DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json
     $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
-    $shaOutput = & $gh.Source api -X GET "repos/$repo/contents/$path" -f "ref=$branch" --jq '.sha'
-    $readSucceeded = $LASTEXITCODE -eq 0
-    $sha = ([string]$shaOutput).Trim()
-    if (-not $readSucceeded -or -not $sha) {
+    $sha = (& $gh.Source api -X GET "repos/$repo/contents/$path" -f "ref=$branch" --jq '.sha').Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $sha) {
         Write-Warning "Could not read the discovery file from GitHub."
-        return $false
+        return
     }
     & $gh.Source api --method PUT "repos/$repo/contents/$path" -f "message=Update active CapyFlow tunnel" -f "content=$encoded" -f "branch=$branch" -f "sha=$sha" --silent
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "[CapyFlow] Published tunnel for iOS and Android apps: $Url" -ForegroundColor Green
-        return $true
+        Write-Host "[CapyFlow] Published tunnel for the iOS app: $Url" -ForegroundColor Green
     } else {
         Write-Warning "Tunnel is live, but publishing its URL to GitHub failed."
-        return $false
     }
 }
 
@@ -42,6 +38,10 @@ $backendProcess = $null
 $tunnelProcess = $null
 Push-Location $backendRoot
 try {
+    if (-not (Test-Path -LiteralPath '.\node_modules\firebase-admin\package.json')) {
+        & npm.cmd install --omit=dev
+        if ($LASTEXITCODE -ne 0) { throw 'Backend dependency installation failed.' }
+    }
     Write-Host "[CapyFlow] Starting backend on port 8787..."
     $backendProcess = Start-Process -FilePath $node -ArgumentList '.\src\index.js' -WorkingDirectory $backendRoot -PassThru -NoNewWindow
     $healthy = $false
@@ -75,11 +75,8 @@ try {
         if (-not $published -and $line -match 'https://[a-z0-9-]+\.trycloudflare\.com') {
             $url = $Matches[0]
             Write-Host "[CapyFlow] Public backend: $url" -ForegroundColor Cyan
-            for ($attempt = 1; $attempt -le 5; $attempt++) {
-                if (Publish-TunnelUrl $url) { $published = $true; break }
-                if ($attempt -lt 5) { Write-Warning "Discovery publication failed; retrying in 5 seconds..."; Start-Sleep -Seconds 5 }
-            }
-            if (-not $published) { Write-Warning "Apps have not received this address. Set the manual server to $url, or fix gh sign-in and restart this launcher." }
+            Publish-TunnelUrl $url
+            $published = $true
         }
     }
     throw "cloudflared exited with code $($tunnelProcess.ExitCode)."

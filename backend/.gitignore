@@ -4,3 +4,7 @@ bin/*.tmp
 cache/
 coverage/
 node_modules/
+state/
+secrets/
+*service-account*.json
+*adminsdk*.json

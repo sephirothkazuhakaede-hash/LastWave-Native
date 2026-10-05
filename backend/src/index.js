@@ -1,5 +1,6 @@
 import process from 'node:process';
 import os from 'node:os';
+import { startMessagePush } from './message-push.js';
 import { CacheStore } from './cache-store.js';
 import { loadConfig } from './config.js';
 import { FirebaseTokenVerifier } from './firebase-auth.js';
@@ -57,15 +58,19 @@ async function main() {
     if (addresses.length > 0) console.log(`Private-network addresses: ${addresses.join(', ')}`);
   }
 
+  let push={close:async()=>{}};
+  try{push=await startMessagePush(config);}catch(error){console.warn("Message push is unavailable ("+(typeof error.code==="string"?error.code:"setup required")+"). Music streaming stays online. Check the message push setup in backend/README.md.");}
+
   let stopping = false;
-  const stop = (signal) => {
+  const stop = async (signal) => {
     if (stopping) return;
     stopping = true;
     console.log(`Received ${signal}; stopping...`);
+    setTimeout(() => process.exit(1), 10_000).unref();
+    try{await push.close();}catch{console.warn("Message push shutdown did not finish cleanly.");}
     cache.close();
     server.closeIdleConnections?.();
     server.close(() => process.exit(0));
-    setTimeout(() => process.exit(1), 10_000).unref();
   };
   process.once('SIGINT', () => stop('SIGINT'));
   process.once('SIGTERM', () => stop('SIGTERM'));

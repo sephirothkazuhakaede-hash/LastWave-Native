@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
     var albumsOnly by rememberSaveable { mutableStateOf(false) }
     var selectedAlbum by remember { mutableStateOf<Album?>(null) }
     var showPlayer by remember { mutableStateOf(false) }
+    var showRecent by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var settingsStartPage by remember { mutableStateOf("CapyFlow") }
     val updater:AppUpdater=viewModel();val updateContext=LocalContext.current
@@ -146,8 +147,14 @@ class MainActivity : ComponentActivity() {
                             item { LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp)) { items(vm.playlists,key={it.id}) { p -> Column(Modifier.width(145.dp).clickable { selectedPlaylist=p.id; tab="Library" }) { PlaylistCover(p,145,social.sharedFor(p)!=null); Text(p.name,fontWeight=FontWeight.Bold,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.padding(top=10.dp)); Text("${p.tracks.size} songs",fontSize=12.sp,color=Color.White.copy(alpha=.6f));PlaylistDownloadBadge(p,vm) } } } }
                         }
                         if(vm.recentTracks.isNotEmpty()){
-                            item{Section("Recently played")}
-                            items(vm.recentTracks.take(8),key={it.playableID}){t -> TrackRow(t,{vm.play(t,vm.recentTracks)},vm,{addTrack=t})}
+                            item{Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Text("Recently played",fontSize=23.sp,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));TextButton(onClick={showRecent=true}){Text("Show more")}}}
+                            item{LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp)){items(vm.recentTracks.take(6),key={it.playableID}){t->
+                                Column(Modifier.width(124.dp).clickable{vm.play(t,vm.recentTracks.take(20))}){
+                                    Artwork(t.artwork,124)
+                                    Text(t.title,fontWeight=FontWeight.SemiBold,maxLines=2,overflow=TextOverflow.Ellipsis,fontSize=14.sp,modifier=Modifier.padding(top=8.dp))
+                                    Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){if(vm.hasDownload(t))Icon(Icons.Default.DownloadForOffline,"Downloaded",tint=Violet,modifier=Modifier.size(14.dp));if(t.isExplicit==true)ExplicitBadge();Text(t.artist,fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis,color=Color.White.copy(alpha=.6f))}
+                                }
+                            }}}
                         }
                         item { Spacer(Modifier.height(12.dp)) }
                     }
@@ -188,6 +195,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+        AnimatedVisibility(showRecent,enter=slideInHorizontally(tween(300),initialOffsetX={it}),exit=slideOutHorizontally(tween(260),targetOffsetX={it})){
+            BackHandler{showRecent=false}
+            Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(16.dp)){
+                Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick={showRecent=false}){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Text("Recently played",fontSize=25.sp,fontWeight=FontWeight.Bold)}
+                Text("Your latest 20 songs",color=Color.White.copy(alpha=.55f),fontSize=12.sp,modifier=Modifier.padding(start=12.dp,bottom=12.dp))
+                LazyColumn(Modifier.weight(1f)){items(vm.recentTracks.take(20),key={it.playableID}){t->TrackRow(t,{vm.play(t,vm.recentTracks.take(20))},vm,{addTrack=t})}}
+            }}
         }
         AnimatedVisibility(showPlayer,enter=slideInVertically(tween(320),initialOffsetY={it})+fadeIn(tween(180)),exit=slideOutVertically(tween(280),targetOffsetY={it})+fadeOut(tween(240))) {
             BackHandler(enabled=showPlayer){showPlayer=false}

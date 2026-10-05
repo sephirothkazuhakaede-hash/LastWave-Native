@@ -4,3 +4,8 @@ cache
 node_modules
 test
 *.log
+
+state/
+secrets/
+*service-account*.json
+*adminsdk*.json

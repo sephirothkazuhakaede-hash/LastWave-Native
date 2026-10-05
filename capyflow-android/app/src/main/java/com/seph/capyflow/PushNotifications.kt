@@ -61,6 +61,12 @@ class CapyMessagingService:FirebaseMessagingService(){
         if(peer==uid || (PushNotices.foreground && PushNotices.activePeer==peer))return
         val title=message.data["title"]?.take(120) ?: "New message"
         val body=message.data["body"]?.take(300) ?: "Open CapyFlow to read it."
+        val deliveredID=message.data["messageID"]
+        if(!PushNotices.foreground && deliveredID!=null && deliveredID.length<=128){
+            FirebaseFirestore.getInstance().collection("conversations").document(SocialModel.conversationID(uid,peer)).collection("receipts").document(uid)
+                .set(mapOf("messageID" to deliveredID,"receivedAt" to FieldValue.serverTimestamp()))
+                .addOnFailureListener { /* A newer message may supersede this receipt; the inbox catches up on resume. */ }
+        }
         if(PushNotices.foreground)return // The live inbox listener supplies foreground banners.
         if(Build.VERSION.SDK_INT>=33 && ContextCompat.checkSelfPermission(this,Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return
         val manager=getSystemService(NotificationManager::class.java)
