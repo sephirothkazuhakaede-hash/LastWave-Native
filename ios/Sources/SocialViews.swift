@@ -783,6 +783,8 @@ struct RelationshipListView: View {
 
 struct SocialPersonProfileView: View {
     @EnvironmentObject private var social: SocialStore
+    @EnvironmentObject private var player: WavePlayer
+    @StateObject private var listening = ProfileListeningActivityStore()
     let person: SocialProfile
     var body: some View {
         ZStack {
@@ -794,6 +796,7 @@ struct SocialPersonProfileView: View {
                         Text(person.displayName).font(.capyTitle).multilineTextAlignment(.center)
                         Text("@" + person.username).foregroundStyle(CapyColor.accent)
                         if !person.bio.isEmpty { Text(person.bio).foregroundStyle(CapyColor.secondaryText) }
+                        listeningCard
                         if person.id != social.currentUserID {
                             FollowControl(person: person)
                             if social.currentUserID != nil {
@@ -810,6 +813,42 @@ struct SocialPersonProfileView: View {
                 }
             }
         }.navigationTitle(person.displayName).navigationBarTitleDisplayMode(.inline)
+        .task(id: social.currentUserID) { listening.start(profileID: person.id, signedIn: social.currentUserID != nil) }
+        .onDisappear { listening.stop() }
+    }
+
+    @ViewBuilder private var listeningCard: some View {
+        if listening.loading {
+            ProgressView("Loading listening activity…").font(.capyCaption)
+        } else if let item = listening.activity {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                if context.date.timeIntervalSince(item.updatedAt) < 86400 {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label(item.isListening(at: context.date) ? "Listening now" : "Last listened " + item.updatedAt.formatted(.relative(presentation: .numeric)),
+                              systemImage: item.isListening(at: context.date) ? "waveform" : "clock")
+                            .font(.capyCaption).foregroundStyle(CapyColor.accent)
+                        Button { Task { await player.play(item.track) } } label: {
+                            HStack(spacing: 12) {
+                                Artwork(track: item.track, size: 56, radius: 12)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.track.title).font(.capyCallout).foregroundStyle(.white).lineLimit(2)
+                                    Text(item.track.artist).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(2)
+                                }
+                                Spacer(minLength: 0)
+                                if item.canPlay { Image(systemName: "play.fill").foregroundStyle(CapyColor.accent).frame(width: 32, height: 44) }
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain).disabled(!item.canPlay)
+                    }
+                    .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                    .waveSurface(radius: 22).accessibilityIdentifier("profile-listening-card")
+                }
+            }
+        } else if let error = listening.error {
+            VStack(spacing: 8) {
+                Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning)
+                Button("Retry") { listening.start(profileID: person.id, signedIn: social.currentUserID != nil) }
+            }
+        }
     }
 }
 

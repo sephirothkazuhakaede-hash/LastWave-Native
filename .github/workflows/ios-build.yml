@@ -64,7 +64,7 @@ jobs:
           APP_PLIST=build/Build/Products/Release-iphoneos/CapyFlow.app/Info.plist
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$APP_PLIST")" = "CapyFlow"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")" = "0.4.11"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")" = "22"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")" = "24"
       - name: Package unsigned IPA
         run: |
           mkdir -p Payload
@@ -96,7 +96,7 @@ jobs:
       - name: Prepare stable manifest and verify package
         run: |
           unzip -t dist/CapyFlow-0.4.11-unsigned.ipa
-          node backend/scripts/stable-manifest.mjs --stable --version 0.4.11 --build 22 --notes-file ios/RELEASE-0.4.11.md --install-url https://github.com/sephirothkazuhakaede-hash/LastWave-Native/releases/tag/capyflow-v0.4.11 --output dist/capyflow-stable.json
+          node backend/scripts/stable-manifest.mjs --stable --version 0.4.11 --build 24 --notes-file ios/RELEASE-0.4.11.md --install-url https://github.com/sephirothkazuhakaede-hash/LastWave-Native/releases/tag/capyflow-v0.4.11 --output dist/capyflow-stable.json
       - name: Publish complete stable release
         env:
           GH_TOKEN: ${{ github.token }}

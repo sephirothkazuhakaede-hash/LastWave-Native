@@ -95,9 +95,23 @@ private struct NewMessageView: View {
     }
 }
 
+private struct InlineChatPlaybackKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var usesInlineChatPlayback: Bool {
+        get { self[InlineChatPlaybackKey.self] }
+        set { self[InlineChatPlaybackKey.self] = newValue }
+    }
+}
+
 struct DirectChatView: View {
     @EnvironmentObject private var messaging: MessagingStore
     @EnvironmentObject private var social: SocialStore
+    @EnvironmentObject private var player: WavePlayer
+    @Environment(\.usesInlineChatPlayback) private var usesInlinePlayback
+    @State private var showPlayer = false
     @StateObject private var chat = DirectChatSession()
     @State private var draft = ""
     @State private var loadingHistory = false
@@ -146,6 +160,28 @@ struct DirectChatView: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
+                if usesInlinePlayback, let track = player.current {
+                    HStack(spacing: 10) {
+                        Button { showPlayer = true } label: {
+                            HStack(spacing: 10) {
+                                Artwork(track: track, size: 36, radius: 9)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(track.title).font(.capyCaption).lineLimit(1)
+                                    Text(track.artist).font(.caption2).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain).accessibilityLabel("Open Now Playing")
+                        if player.loading { ProgressView().tint(CapyColor.accent) }
+                        Button { player.toggle() } label: {
+                            Image(systemName: player.playing ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
+                        }.buttonStyle(.plain).foregroundStyle(CapyColor.accent).accessibilityLabel(player.playing ? "Pause music" : "Play music")
+                        Button { Task { await player.next() } } label: {
+                            Image(systemName: "forward.end.fill").frame(width: 44, height: 44)
+                        }.buttonStyle(.plain).accessibilityLabel("Next song")
+                    }
+                    .accessibilityElement(children: .contain).accessibilityIdentifier("chat-music-controls")
+                }
                 if let error = chat.error {
                     Text(error).font(.capyCaption).foregroundStyle(CapyColor.warning).fixedSize(horizontal: false, vertical: true)
                     if !chat.sending { Button("Reconnect chat") { chat.start(userID: social.currentUserID, peerID: person.id) } }
@@ -153,6 +189,7 @@ struct DirectChatView: View {
                 if !chat.exists && !social.isFollowing(person.id) { Text("Follow this person to start a new conversation.").font(.capyCaption).foregroundStyle(CapyColor.secondaryText) }
                 HStack(alignment: .bottom, spacing: 10) {
                     TextField("Message", text: $draft, axis: .vertical).lineLimit(1...5)
+                        .accessibilityIdentifier("chat-message-field")
                         .padding(12).background(CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 18))
                     Button {
                         let outgoing = draft
@@ -172,7 +209,19 @@ struct DirectChatView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) { NavigationLink { SocialPersonProfileView(person: person) } label: { SocialAvatar(profile: person, size: 34) } }
         }
-        .task(id: social.currentUserID) { messaging.activePeerID = person.id; chat.start(userID: social.currentUserID, peerID: person.id) }
+        .sheet(isPresented: $showPlayer) {
+            PlayerView().messageBanners(messaging)
+                .presentationDetents([.large]).presentationDragIndicator(.hidden)
+        }
+        .task(id: social.currentUserID) {
+            messaging.activePeerID = person.id
+#if DEBUG
+            let arguments = ProcessInfo.processInfo.arguments
+            if let flag = arguments.firstIndex(of: "--layout-fixture"),
+               arguments.indices.contains(flag + 1), arguments[flag + 1] == "chat" { return }
+#endif
+            chat.start(userID: social.currentUserID, peerID: person.id)
+        }
         .onDisappear { if messaging.activePeerID == person.id { messaging.activePeerID = nil }; chat.stop() }
     }
 }

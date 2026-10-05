@@ -1,6 +1,35 @@
 import XCTest
 
 final class HomeDockUITests: XCTestCase {
+    func testProfilePreviewShowsSharedListeningActivity() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--layout-fixture", "person"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Listening now"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["River Glass"].exists)
+        XCTAssertTrue(app.staticTexts["CapyFlow Friends"].exists)
+    }
+
+    func testConversationComposerStaysVisibleWithMusicAndKeyboard() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--layout-fixture", "chat"]
+        app.launch()
+        let composer = app.descendants(matching: .any).matching(identifier: "chat-message-field").firstMatch
+        XCTAssertTrue(composer.waitForExistence(timeout: 8))
+        let music = app.otherElements["chat-music-controls"]
+        XCTAssertTrue(music.waitForExistence(timeout: 4))
+        XCTAssertFalse(app.otherElements["capy-dock"].exists)
+        XCTAssertTrue(composer.isHittable)
+        XCTAssertLessThanOrEqual(music.frame.maxY, composer.frame.minY + 1)
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 4))
+        composer.typeText("Hello")
+        XCTAssertTrue(composer.isHittable)
+        XCTAssertLessThanOrEqual(composer.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
+        XCTAssertLessThanOrEqual(music.frame.maxY, composer.frame.minY + 1)
+        XCTAssertTrue(app.buttons["Open Now Playing"].isHittable)
+    }
+
     func testMessagesIsAvailableInMainNavigation() {
         let app = XCUIApplication()
         app.launchArguments = ["--layout-fixture", "root"]
@@ -38,7 +67,7 @@ final class HomeDockUITests: XCTestCase {
         XCTAssertGreaterThan(footer.frame.height, 0)
         XCTAssertGreaterThanOrEqual(footer.frame.minY, home.frame.minY - 1)
         XCTAssertLessThanOrEqual(footer.frame.maxY, dock.frame.minY + 1)
-        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 22"))
+        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 24"))
         XCTAssertTrue(footer.label.contains("by Seph"))
         friends.tap()
         XCTAssertTrue(app.staticTexts["Find people"].waitForExistence(timeout: 4))

@@ -203,3 +203,51 @@ struct FriendListeningActivity: Identifiable {
         return prefix + ": " + error.localizedDescription
     }
 }
+
+/// One live document subscription while a profile is visible.
+@MainActor final class ProfileListeningActivityStore: ObservableObject {
+    @Published private(set) var activity: FriendListeningActivity?
+    @Published private(set) var loading = false
+    @Published private(set) var error: String?
+    private var listener: ListenerRegistration?
+    private var epoch = UUID()
+
+    func start(profileID: String, signedIn: Bool) {
+        stop()
+#if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if let flag = arguments.firstIndex(of: "--layout-fixture"),
+           arguments.indices.contains(flag + 1), arguments[flag + 1] == "person" {
+            activity = FriendListeningActivity(id: profileID, data: [
+                "title": "River Glass", "artist": "CapyFlow Friends", "videoID": "fixture00002",
+                "playing": true, "updatedAt": Timestamp(date: Date()),
+                "expiresAt": Timestamp(date: Date().addingTimeInterval(300))
+            ])
+            return
+        }
+#endif
+        guard signedIn else { return }
+        loading = true
+        let session = epoch
+        listener = Firestore.firestore().collection("listeningActivity").document(profileID)
+            .addSnapshotListener { [weak self] snapshot, failure in
+                Task { @MainActor in
+                    guard let self, self.epoch == session else { return }
+                    self.loading = false
+                    if failure != nil {
+                        self.activity = nil
+                        self.error = "Couldn’t load listening activity. Please try again."
+                        return
+                    }
+                    self.error = nil
+                    self.activity = snapshot?.data().flatMap { FriendListeningActivity(id: profileID, data: $0) }
+                }
+            }
+    }
+
+    func stop() {
+        epoch = UUID()
+        listener?.remove(); listener = nil
+        activity = nil; loading = false; error = nil
+    }
+}

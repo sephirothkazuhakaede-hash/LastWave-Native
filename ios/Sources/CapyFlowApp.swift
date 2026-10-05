@@ -93,7 +93,7 @@ import GoogleSignIn
 
 #if DEBUG
 private enum LayoutFixture: String {
-    case root, queue, player, playerLyrics = "player-lyrics", album, playlist, social, profile
+    case root, chat, person, queue, player, playerLyrics = "player-lyrics", album, playlist, social, profile
 
     static var requested: LayoutFixture? {
         let arguments = ProcessInfo.processInfo.arguments
@@ -157,12 +157,17 @@ private enum LayoutFixture: String {
 }
 
 private struct LayoutFixtureView: View {
+    @EnvironmentObject private var social: SocialStore
     let fixture: LayoutFixture
 
     @ViewBuilder var body: some View {
         switch fixture {
+        case .person:
+            NavigationStack {
+                if let person = social.following.first { SocialPersonProfileView(person: person) }
+            }
         case .queue: QueueSheet()
-        case .root:
+        case .root, .chat:
             RootView()
         case .player:
             PlayerView()
@@ -215,6 +220,9 @@ struct RootView: View {
     @State private var drawerPerson: SocialProfile?
     @State private var drawerDestination: ProfileDrawerDestination?
     @State private var dockFrame: CGRect = .zero
+#if DEBUG
+    @State private var fixtureChatPresented = false
+#endif
     var body: some View {
         ZStack {
             WaveBackdrop()
@@ -233,15 +241,23 @@ struct RootView: View {
             if tab == .messages {
                 NavigationStack {
                     MessagesInboxView()
+#if DEBUG
+                        .navigationDestination(isPresented: $fixtureChatPresented) {
+                            if let friend = social.following.first { DirectChatView(person: friend) }
+                        }
+                        .onAppear { if LayoutFixture.requested == .chat { fixtureChatPresented = true } }
+#endif
                         .toolbar {
                             ToolbarItem(placement: .topBarLeading) {
                                 CapyProfileButton(action: openDrawer)
                             }
                         }
                 }
+                .environment(\.usesInlineChatPlayback, true)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 5) {
+            if tab != .messages || messaging.activePeerID == nil {
             CapyDock(selection: $tab) { showPlayer = true }
                 .padding(.horizontal, 12)
                 .background {
@@ -249,6 +265,7 @@ struct RootView: View {
                         Color.clear.preference(key: DockFramePreference.self, value: geometry.frame(in: .global))
                     }
                 }
+            }
         }
         .onPreferenceChange(DockFramePreference.self) { dockFrame = $0 }
         // Attach the window backdrop outside the dock's safe-area inset so
@@ -329,7 +346,10 @@ struct RootView: View {
 #if DEBUG
             // Keep the deterministic social fixture; no real Firebase account
             // is involved in a layout-only launch.
-            if LayoutFixture.requested != nil { return }
+            if LayoutFixture.requested != nil {
+                if LayoutFixture.requested == .chat { tab = .messages }
+                return
+            }
 #endif
             social.bind(to: auth.user)
         }
