@@ -61,8 +61,8 @@ class CompatibilityTest {
     @Test fun qualityShowsReportedStreamAndSingleQualityLimitation() {
         val info=JSONObject().put("codec","mp4a.40.2").put("bitrateKbps",129.5).put("sampleRateHz",44100).put("availableQualityCount",1)
         val value=audioDescription(info,"dataSaver")
-        assertTrue(value.contains("Data saver"));assertTrue(value.contains("129 kbps"));assertTrue(value.contains("44.1 kHz"));assertTrue(value.contains("Only one source quality"))
-        assertEquals("Best available · format not reported",audioDescription(null,"automatic"))
+        assertTrue(value.contains("Data saver"));assertTrue(value.contains("129 kbps"));assertTrue(value.contains("44.1 kHz"));assertTrue(value.contains("Only one quality available"))
+        assertEquals("Best available · quality details unavailable",audioDescription(null,"automatic"))
     }
 
     @Test fun manualSaveDuringDiscoveryWinsOverLateNetworkResponse() = kotlinx.coroutines.runBlocking {

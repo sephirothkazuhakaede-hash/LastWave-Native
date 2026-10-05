@@ -43,7 +43,7 @@ class Catalog {
         continuation.invokeOnCancellation{call.cancel()}
         call.enqueue(object: okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call,e: java.io.IOException){if(continuation.isActive)continuation.resumeWith(Result.failure(e))}
-            override fun onResponse(call: okhttp3.Call,response: okhttp3.Response){response.use{r -> val result=runCatching{check(r.isSuccessful){"Server returned ${r.code}"};r.body?.string() ?: error("Server returned an empty response")};if(continuation.isActive)continuation.resumeWith(result)}}
+            override fun onResponse(call: okhttp3.Call,response: okhttp3.Response){response.use{r -> val result=runCatching{if(!r.isSuccessful)throw HttpResponseException(r.code);r.body?.string() ?: error("Server returned an empty response")};if(continuation.isActive)continuation.resumeWith(result)}}
         })
     }
     suspend fun search(query: String): List<Track> = parseSongs(searchResponse(query, "EgWKAQIIAWoKEAkQBRAKEAMQBA=="))
@@ -69,14 +69,10 @@ class Catalog {
             JSONObject(response.body!!.string())
         }
     }
-    suspend fun discover(): String = withContext(Dispatchers.IO) {
-        // GitHub's raw endpoint is CDN-cached. A new tunnel must not read the old object.
+    suspend fun discover():String = discoverWithRetry {
         val url="https://raw.githubusercontent.com/sephirothkazuhakaede-hash/LastWave-Native/runtime/backend-discovery/backend.json".toHttpUrl().newBuilder()
             .addQueryParameter("refresh",java.util.UUID.randomUUID().toString()).build()
-        val request=Request.Builder().url(url).header("Cache-Control","no-cache, no-store").header("Pragma","no-cache").build()
-        val client=http.newBuilder().cache(null).callTimeout(4,TimeUnit.SECONDS).build()
-        val call=client.newCall(request)
-        val payload=call.execute().use{response -> check(response.isSuccessful){"Server discovery failed (${response.code})"};JSONObject(response.body?.string() ?: error("Discovery returned no address"))}
+        val payload=JSONObject(text(url.toString(),mapOf("Cache-Control" to "no-cache, no-store","Pragma" to "no-cache"),8))
         val address=payload.getString("url").trimEnd('/');val parsed=address.toHttpUrl()
         require(parsed.isHttps && parsed.host.endsWith(".trycloudflare.com") && parsed.username.isEmpty() && parsed.password.isEmpty() && parsed.query==null && parsed.fragment==null && parsed.port==443){"Invalid discovery address"}
         address

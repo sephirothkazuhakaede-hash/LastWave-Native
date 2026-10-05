@@ -24,6 +24,7 @@ data class AndroidUpdate(val code:Int,val name:String,val url:String,val sha256:
 object UpdatePolicy {
     const val RELEASES="https://api.github.com/repos/sephirothkazuhakaede-hash/LastWave-Native/releases?per_page=30"
     const val ASSET_PREFIX="https://github.com/sephirothkazuhakaede-hash/LastWave-Native/releases/download/android-dev"
+    fun acceptsRelease(release:JSONObject)=!release.optBoolean("draft") && !release.optBoolean("prerelease") && release.optString("tag_name").matches(Regex("android-dev[0-9]+"))
     fun trustedURL(value:String)=value.startsWith(ASSET_PREFIX) && !value.contains("..") && !value.contains("?") && !value.contains("#")
     fun parse(json:JSONObject,current:Int):AndroidUpdate?{
         val code=json.getInt("versionCode");val url=json.getString("apkURL");val hash=json.getString("sha256").lowercase()
@@ -53,12 +54,12 @@ class AppUpdater(app:Application):AndroidViewModel(app){
     fun acceptAnnouncement(){announcement=null}
     private val client=OkHttpClient.Builder().connectTimeout(20,TimeUnit.SECONDS).readTimeout(90,TimeUnit.SECONDS).build()
     private fun text(url:String)=client.newCall(Request.Builder().url(url).header("User-Agent","CapyFlow-Android").build()).execute().use{r->check(r.isSuccessful){"Update server returned ${r.code}"};val body=r.body ?: error("Empty update response");check(body.contentLength()<=2_000_000){"Update response is too large"};body.byteStream().use{input->val output=java.io.ByteArrayOutputStream();val bytes=ByteArray(8192);while(true){val count=input.read(bytes);if(count<0)break;check(output.size()+count<=2_000_000){"Update response is too large"};output.write(bytes,0,count)};output.toString("UTF-8")}}
-    fun check(automatic:Boolean=false){if(busy)return;busy=true;status="Checking GitHub…";available=null
+    fun check(automatic:Boolean=false){if(busy)return;busy=true;status="Checking for updates…";available=null
         viewModelScope.launch{try{
             val latest=withContext(Dispatchers.IO){
                 val releases=JSONArray(text(UpdatePolicy.RELEASES));var found:AndroidUpdate?=null
                 for(i in 0 until releases.length()){
-                    val release=releases.getJSONObject(i);if(release.optBoolean("draft") || !release.optString("tag_name").matches(Regex("android-dev[0-9]+")))continue
+                    val release=releases.getJSONObject(i);if(!UpdatePolicy.acceptsRelease(release))continue
                     if(release.getString("tag_name").removePrefix("android-dev").toIntOrNull()?.let{it<=BuildConfig.VERSION_CODE}!=false)continue
                     val assets=release.getJSONArray("assets")
                     for(j in 0 until assets.length()){val asset=assets.getJSONObject(j);if(asset.getString("name")!="android-update.json")continue
@@ -70,8 +71,8 @@ class AppUpdater(app:Application):AndroidViewModel(app){
                 };found
             };available=latest
             if(automatic && latest!=null && UpdateReminderPolicy.shouldPrompt(latest.code,preferences.getInt("deferredCode",0),preferences.getLong("deferredUntil",0),System.currentTimeMillis()))announcement=latest
-            status=if(latest==null)"You’re using the latest published build." else "${latest.name} is available."
-        }catch(e:Exception){status="Couldn’t check updates: ${e.message}"}finally{busy=false}}
+            status=if(latest==null)"CapyFlow is up to date." else "${latest.name} is available."
+        }catch(e:Exception){status=UserMessages.failure(e,"Couldn’t check for updates. Please try again.")}finally{busy=false}}
     }
     fun download(context:Context?=null){val update=available ?: return;if(busy)return;busy=true;ready=null;progress=0f;status="Downloading ${update.name}…"
         viewModelScope.launch{try{val file=withContext(Dispatchers.IO){
@@ -85,7 +86,7 @@ class AppUpdater(app:Application):AndroidViewModel(app){
                 }
                 verify(part,update.code);destination.delete();check(part.renameTo(destination)){"Couldn’t save APK"};destination
             }finally{part.delete()}
-        };ready=file;available=null;status="Update verified. Tap Install update.";if(context!=null)install(context)}catch(e:Exception){status="Update wasn’t installed: ${e.message}"}finally{busy=false;progress=null}}
+        };ready=file;available=null;status="Your update is ready to install.";if(context!=null)install(context)}catch(e:Exception){status=UserMessages.failure(e,"Couldn’t download or verify the update. Please try again.")}finally{busy=false;progress=null}}
     }
     private fun verify(file:File,code:Int){
         val app=getApplication<Application>();val pm=app.packageManager;val flags=if(Build.VERSION.SDK_INT>=28)PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
@@ -103,6 +104,6 @@ class AppUpdater(app:Application):AndroidViewModel(app){
         }
             val uri=FileProvider.getUriForFile(context,"${context.packageName}.updates",file)
             context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,"application/vnd.android.package-archive").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-        }catch(e:Exception){status="Couldn’t open Android installer: ${e.message}"}
+        }catch(e:Exception){status="Couldn’t open the installer. Please try again."}
     }
 }

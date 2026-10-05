@@ -61,18 +61,19 @@ jobs:
         working-directory: capyflow-android
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest :app:assembleDebug :app:lintDebug --stacktrace
+          ./gradlew :app:testReleaseUnitTest :app:assembleRelease :app:lintRelease --stacktrace
+          test "$("$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest debuggable app/build/outputs/apk/release/app-release.apk)" = "false"
       - uses: actions/upload-artifact@v4
         with:
-          name: CapyFlow-Android-dev11
-          path: capyflow-android/app/build/outputs/apk/debug/app-debug.apk
+          name: CapyFlow-Android-1.0.0
+          path: capyflow-android/app/build/outputs/apk/release/app-release.apk
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: CapyFlow-Android-validation
           path: |
             capyflow-android/app/build/reports/tests/
-            capyflow-android/app/build/reports/lint-results-debug.html
+            capyflow-android/app/build/reports/lint-results-release.html
 
   security:
     runs-on: ubuntu-latest
@@ -111,7 +112,7 @@ jobs:
           git archive --format=zip --output=dist/CapyFlow-Backend.zip HEAD backend
       - uses: actions/upload-artifact@v4
         with:
-          name: CapyFlow-Backend-dev11
+          name: CapyFlow-Backend-1.0.0
           path: dist/CapyFlow-Backend.zip
 
   publish:
@@ -126,22 +127,24 @@ jobs:
           node-version: '22'
       - uses: actions/download-artifact@v4
         with:
-          name: CapyFlow-Android-dev11
+          name: CapyFlow-Android-1.0.0
           path: dist
       - uses: actions/download-artifact@v4
         with:
-          name: CapyFlow-Backend-dev11
+          name: CapyFlow-Backend-1.0.0
           path: dist
-      - name: Publish verified Android preview
+      - name: Publish stable Android release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node capyflow-android/scripts/release-manifest.mjs dist/app-debug.apk capyflow-android/app/build.gradle.kts dist capyflow-android/android-release-notes.txt
+          node capyflow-android/scripts/release-manifest.mjs dist/app-release.apk capyflow-android/app/build.gradle.kts dist capyflow-android/android-release-notes.txt
           tag=$(node -p "'android-dev'+require('./dist/android-update.json').versionCode")
+          version=$(node -p "require('./dist/android-update.json').versionName")
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/CapyFlow.apk dist/android-update.json dist/CapyFlow-Backend.zip --clobber
+            gh release edit "$tag" --prerelease=false --title "CapyFlow $version" --notes-file capyflow-android/android-release-notes.txt
           else
-            gh release create "$tag" dist/CapyFlow.apk dist/android-update.json dist/CapyFlow-Backend.zip --target "$GITHUB_SHA" --prerelease --title "CapyFlow Android $tag" --notes-file capyflow-android/android-release-notes.txt
+            gh release create "$tag" dist/CapyFlow.apk dist/android-update.json dist/CapyFlow-Backend.zip --target "$GITHUB_SHA" --title "CapyFlow $version" --notes-file capyflow-android/android-release-notes.txt
           fi
       - name: Verify public in-app update download
         run: node backend/scripts/verify-android-update.mjs

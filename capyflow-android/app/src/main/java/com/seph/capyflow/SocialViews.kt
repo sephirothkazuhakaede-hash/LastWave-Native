@@ -28,10 +28,10 @@ import kotlinx.coroutines.*
     DisposableEffect(social,id){val listener=id?.let{social.watchProfile(it){person=it}};onDispose{listener?.remove()}}
     return person
 }
-@Composable fun ProfileAvatar(profile:Profile?,size:Int){
+@Composable fun ProfileAvatar(profile:Profile?,size:Int,description:String?=null){
     Box(Modifier.size(size.dp).clip(CircleShape).background(Violet.copy(alpha=.12f)),contentAlignment=Alignment.Center){
-        if(profile?.avatarData!=null || !profile?.avatar.isNullOrBlank())AsyncImage(profile?.avatarData ?: profile?.avatar,null,modifier=Modifier.fillMaxSize(),contentScale=ContentScale.Crop)
-        else Icon(Icons.Default.Person,null,tint=Violet,modifier=Modifier.size((size*.55f).dp))
+        if(profile?.avatarData!=null || !profile?.avatar.isNullOrBlank())AsyncImage(profile?.avatarData ?: profile?.avatar,description,modifier=Modifier.fillMaxSize(),contentScale=ContentScale.Crop)
+        else Icon(Icons.Default.Person,description,tint=Violet,modifier=Modifier.size((size*.55f).dp))
     }
 }
 @Composable fun ContactCard(social:SocialModel,id:String,onOpen:(Profile)->Unit,trailing:@Composable (Profile)->Unit = {}){
@@ -71,7 +71,7 @@ import kotlinx.coroutines.*
 @Composable fun EditProfile(social:SocialModel,profile:Profile,onClose:()->Unit){
     var username by remember(profile.id){mutableStateOf(profile.username)};var name by remember(profile.id){mutableStateOf(profile.displayName)};var bio by remember(profile.id){mutableStateOf(profile.bio)};var photo by remember(profile.id){mutableStateOf<ByteArray?>(null)}
     val context=LocalContext.current;val scope=rememberCoroutineScope();var preparing by remember{mutableStateOf(false)}
-    val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->if(uri!=null)scope.launch{preparing=true;try{photo=withContext(Dispatchers.IO){context.contentResolver.openInputStream(uri)?.use{val image=android.graphics.BitmapFactory.decodeStream(it) ?: error("Choose an image");boundedJpeg(image)} ?: error("Couldn’t open photo")}}catch(e:Exception){social.error=e.message}finally{preparing=false}}}
+    val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->if(uri!=null)scope.launch{preparing=true;try{photo=withContext(Dispatchers.IO){context.contentResolver.openInputStream(uri)?.use{val image=android.graphics.BitmapFactory.decodeStream(it) ?: error("Choose an image");boundedJpeg(image)} ?: error("Couldn’t open photo")}}catch(e:Exception){social.error=UserMessages.failure(e,"Couldn’t finish that action. Please try again.")}finally{preparing=false}}}
     ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night){Column(Modifier.fillMaxWidth().padding(24.dp).imePadding().navigationBarsPadding().verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)){
         Section("Edit profile");ProfileAvatar(profile.copy(avatarData=photo ?: profile.avatarData),88);TextButton(onClick={picker.launch("image/*")},enabled=!preparing){Text(if(preparing)"Preparing picture…" else "Change picture")}
         OutlinedTextField(username,{username=it},label={Text("Username")},prefix={Text("@")},singleLine=true,modifier=Modifier.fillMaxWidth());Text("Usernames can be changed once every 14 days. Your first custom username is free to choose.",fontSize=12.sp,color=Color.White.copy(alpha=.6f))
@@ -99,7 +99,7 @@ import kotlinx.coroutines.*
                 val active=social.activity.filterValues{it.title.isNotBlank()}.toList().sortedWith(compareByDescending<Pair<String,ListeningActivity>>{it.second.playing && it.second.expires>now}.thenByDescending{it.second.updated})
                 if(active.isEmpty())Text("No recent listening activity",fontSize=13.sp,color=Color.White.copy(alpha=.55f))
                 active.forEach{(id,a)->val friend=social.friends[id];Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable{friend?.let(onProfile)}.padding(8.dp),verticalAlignment=Alignment.CenterVertically){ProfileAvatar(friend,48);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(friend?.username ?: "Listener",fontWeight=FontWeight.Bold);Text(a.title,maxLines=2,overflow=TextOverflow.Ellipsis,fontSize=13.sp);Text(a.artist,color=Color.White.copy(alpha=.5f),fontSize=12.sp);Text(activityStatus(a.playing,a.updated,a.expires,now),fontSize=11.sp,color=if(a.playing && a.expires>now)Violet else Color.White.copy(alpha=.5f))};Artwork(a.artwork,42)}}
-                Text("Your music and downloads work even when social features are offline.",fontSize=12.sp,color=Color.White.copy(alpha=.4f),modifier=Modifier.padding(top=12.dp))
+                Text("Downloaded music is always ready, even without a connection.",fontSize=12.sp,color=Color.White.copy(alpha=.4f),modifier=Modifier.padding(top=12.dp))
             }
             "Settings"->{DrawerRow("Profile",Icons.Default.Person){social.ownProfile?.let(onProfile) ?: signIn()};DrawerRow("Streaming settings",Icons.Default.Cloud){page="Streaming settings"};DrawerRow("Audio quality",Icons.Default.GraphicEq){page="Audio quality"};DrawerRow("Notifications",Icons.Default.Notifications){page="Notifications"};if(vm.user!=null)TextButton(onClick={confirmSignOut=true}){Text("Sign out")}else Button(onClick=signIn){Text("Continue with Google")}}
             "Streaming settings"->StreamingSettings(vm)
@@ -110,7 +110,22 @@ import kotlinx.coroutines.*
         }
     }
 }
-@Composable fun StreamingSettings(vm:CapyModel){var address by remember(vm.server){mutableStateOf(vm.server)};Text(if(vm.automaticServer)"Automatic · follows your backend after restarts" else "Manual · uses the address you saved",fontSize=13.sp,color=Color.White.copy(alpha=.6f));OutlinedTextField(address,{address=it},label={Text("HTTPS server address")},singleLine=true,modifier=Modifier.fillMaxWidth());TextButton(onClick={vm.saveServer(address)}){Text("Save manual address")};TextButton(onClick={vm.useAutomaticServer()}){Text("Use automatic")};if(vm.serverStatus.isNotBlank())Text(vm.serverStatus,color=Violet,fontSize=12.sp)}
+@Composable fun StreamingSettings(vm:CapyModel){
+    var address by remember(vm.server){mutableStateOf(vm.server)}
+    var custom by remember{mutableStateOf(!vm.automaticServer)}
+    Text(if(vm.automaticServer)"Automatically connects you to music." else "Using your custom connection.",fontSize=13.sp,color=Color.White.copy(alpha=.6f))
+    Button(onClick={vm.useAutomaticServer()},enabled=!vm.serverBusy){
+        if(vm.serverBusy){CircularProgressIndicator(Modifier.size(16.dp),strokeWidth=2.dp);Spacer(Modifier.width(8.dp))}
+        Text(if(vm.serverBusy)"Connecting…" else "Use automatic")
+    }
+    TextButton(onClick={custom=!custom}){Text(if(custom)"Hide custom connection" else "Custom connection")}
+    if(custom){
+        Text("Use a custom address only if one was provided to you.",fontSize=12.sp,color=Color.White.copy(alpha=.6f))
+        OutlinedTextField(address,{address=it},label={Text("Connection address")},singleLine=true,modifier=Modifier.fillMaxWidth())
+        TextButton(onClick={vm.saveServer(address)}){Text("Save connection")}
+    }
+    if(vm.serverStatus.isNotBlank())Text(vm.serverStatus,color=Violet,fontSize=12.sp)
+}
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun CollaborateSheet(vm:CapyModel,social:SocialModel,playlist:Playlist,onClose:()->Unit,onProfile:(Profile)->Unit){
     var id by remember(playlist.id){mutableStateOf(social.sharedFor(playlist)?.id)};var invite by remember{mutableStateOf("")};var preparing by remember{mutableStateOf(false)};val scope=rememberCoroutineScope()
@@ -118,7 +133,7 @@ import kotlinx.coroutines.*
     ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night){LazyColumn(Modifier.fillMaxWidth().padding(horizontal=22.dp).navigationBarsPadding(),verticalArrangement=Arrangement.spacedBy(16.dp),contentPadding=PaddingValues(bottom=24.dp)){
         item{Text("Collaborate",fontSize=28.sp,fontWeight=FontWeight.Bold);Text(playlist.name,fontSize=18.sp,color=Violet,modifier=Modifier.padding(top=6.dp));Text("Invite people by their CapyFlow username. Everyone can add and remove songs; the owner manages people.",fontSize=13.sp,color=Color.White.copy(alpha=.6f),modifier=Modifier.padding(top=12.dp))}
         if(vm.user==null)item{Text("Sign in from Profile to create a shared playlist.")}
-        else if(id==null)item{Button(onClick={preparing=true;scope.launch{try{id=social.publish(playlist)}catch(e:Exception){social.error=e.message}finally{preparing=false}}},enabled=!preparing){Text(if(preparing)"Creating…" else "Create shared playlist")}}
+        else if(id==null)item{Button(onClick={preparing=true;scope.launch{try{id=social.publish(playlist)}catch(e:Exception){social.error=UserMessages.failure(e,"Couldn’t finish that action. Please try again.")}finally{preparing=false}}},enabled=!preparing){Text(if(preparing)"Creating…" else "Create shared playlist")}}
         else if(owner)item{OutlinedTextField(invite,{invite=it},label={Text("Invite @username")},singleLine=true,modifier=Modifier.fillMaxWidth());Button(onClick={id?.let{social.invite(it,invite)};invite=""},enabled=invite.isNotBlank(),modifier=Modifier.fillMaxWidth()){Icon(Icons.Default.PersonAdd,null);Text("Add collaborator",modifier=Modifier.padding(start=8.dp))}}
         item{Section("People")}
         items(shared?.memberIDs?.sortedBy{it!=shared.ownerID}.orEmpty(),key={it}){person->ContactCard(social,person,onProfile){if(person==shared?.ownerID)SuggestionChip(onClick={},label={Text("Owner")}) else if(owner)TextButton(onClick={shared?.let{social.removeMember(it,person)}}){Text("Remove")}}}

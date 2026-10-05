@@ -40,7 +40,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 @Composable fun UpdateSettings(){
     val updater:AppUpdater=viewModel();val context=LocalContext.current
     Text("CapyFlow ${BuildConfig.VERSION_NAME}")
-    Text("Download a verified update, then confirm installation with Android. Your account and local data stay in place.",color=androidx.compose.ui.graphics.Color.White.copy(alpha=.6f))
+    Text("Keep CapyFlow up to date. Your account, playlists and downloads stay saved.",color=androidx.compose.ui.graphics.Color.White.copy(alpha=.6f))
     Button(onClick={updater.check()},enabled=!updater.busy){Icon(Icons.Default.SystemUpdate,null);Spacer(Modifier.width(8.dp));Text(if(updater.busy)"Working…" else "Check for updates")}
     if(updater.progress!=null)LinearProgressIndicator(progress={updater.progress ?: 0f},modifier=Modifier.fillMaxWidth())
     updater.available?.let{update->Text(update.name,color=Violet);if(update.notes.isNotBlank()){Text("What’s new",fontSize=16.sp);Text(update.notes,fontSize=13.sp)};Button(onClick={updater.download(context)},enabled=!updater.busy){Icon(Icons.Default.Download,null);Text("Update now",modifier=Modifier.padding(start=8.dp))}}
@@ -55,7 +55,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
     }
     Text("Message notifications")
     Text(PushRegistry.status,color=Violet,fontSize=13.sp)
-    Text("Background messages require the CapyFlow notification server. Device registration alone doesn’t activate server delivery.",fontSize=13.sp,color=androidx.compose.ui.graphics.Color.White.copy(alpha=.6f))
+    Text("Get alerts for new messages while CapyFlow is in the background.",fontSize=13.sp,color=androidx.compose.ui.graphics.Color.White.copy(alpha=.6f))
     Button(onClick={
         if(Build.VERSION.SDK_INT>=33 && androidx.core.content.ContextCompat.checkSelfPermission(context,android.Manifest.permission.POST_NOTIFICATIONS)!=android.content.pm.PackageManager.PERMISSION_GRANTED)
             permission.launch(android.Manifest.permission.POST_NOTIFICATIONS)

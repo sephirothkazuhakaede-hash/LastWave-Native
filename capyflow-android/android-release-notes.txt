@@ -1,5 +1,10 @@
-• Replace the long Recently played list with a compact horizontal row.
-• Show more opens your latest 20 songs on a separate page.
-• Include the MSI message sender in the main music backend and Cloudflare launcher.
+CapyFlow 1.0.0
 
-Includes dev10’s messaging race fixes, sign-out confirmation, update notices and profile listening cards. Background push requires enabling the MSI sender with a private Firebase credential; your MSI must stay online.
+• Your profile picture now appears on Home and in your Library.
+• Message notifications use the CapyFlow icon.
+• Clearer settings, update descriptions and error messages.
+• Automatic connections retry temporary failures without extra taps.
+• Browse Recently played horizontally, with Show more for your latest 20 songs.
+• Receive new-message notifications while the app is in the background.
+
+Your account, playlists and downloads stay saved when you update.

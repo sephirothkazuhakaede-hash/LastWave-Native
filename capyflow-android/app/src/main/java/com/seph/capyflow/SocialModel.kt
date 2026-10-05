@@ -63,22 +63,22 @@ class SocialModel : ViewModel() {
         val epoch = generation
         ensureProfile(userID)
         listeners += database.collection("profiles").document(userID).addSnapshotListener { d,e ->
-            if(epoch==generation){if(e!=null)error=e.message;ownProfile=d?.takeIf{it.exists()}?.let{Profile.from(it)};syncCreatorUsernames()}
+            if(epoch==generation){if(e!=null)error=UserMessages.failure(e);ownProfile=d?.takeIf{it.exists()}?.let{Profile.from(it)};syncCreatorUsernames()}
         }
         listeners += database.collection("playlists").whereArrayContains("memberIDs",userID).addSnapshotListener { s,e ->
-            if(epoch==generation){if(e!=null)error=e.message;if(s!=null)sharedPlaylists=s.documents.mapNotNull{SharedCollection.from(it)};syncCreatorUsernames()}
+            if(epoch==generation){if(e!=null)error=UserMessages.failure(e);if(s!=null)sharedPlaylists=s.documents.mapNotNull{SharedCollection.from(it)};syncCreatorUsernames()}
         }
         listeners += database.collection("activitySettings").document(userID).addSnapshotListener { d,e ->
-            if(epoch==generation){if(e!=null)error=e.message;sharingActivity=d?.getBoolean("sharing")==true}
+            if(epoch==generation){if(e!=null)error=UserMessages.failure(e);sharingActivity=d?.getBoolean("sharing")==true}
         }
         listeners += database.collection("follows").whereEqualTo("followerID", userID).addSnapshotListener { s,e ->
             if(epoch != generation) return@addSnapshotListener
-            if(e != null) error = e.message
+            if(e != null) error = UserMessages.failure(e)
             if(s != null) {following = s.documents.mapNotNull { it.getString("followingID") }.toSet();observeFriends(epoch)}
         }
         listeners += database.collection("conversations").whereArrayContains("memberIDs", userID).limit(50).addSnapshotListener { s,e ->
             if(epoch != generation) return@addSnapshotListener
-            if(e != null) error = e.message
+            if(e != null) error = UserMessages.failure(e)
             if(s != null) { inbox = s.documents.mapNotNull { d ->
                 val members = (d.get("memberIDs") as? List<*>)?.filterIsInstance<String>() ?: return@mapNotNull null
                 val p = members.firstOrNull { it != userID } ?: return@mapNotNull null
@@ -108,7 +108,7 @@ class SocialModel : ViewModel() {
         viewModelScope.launch {
             try { val docs=database.collection("profiles").orderBy("username").startAt(query).endAt(query+"\uf8ff").limit(20).get().await()
                 if(epoch==generation && searchGate.accepts(request))profiles=docs.documents.map{Profile.from(it)}.filter{it.id!=userID}
-            } catch(e:Exception){if(epoch==generation && searchGate.accepts(request))error=e.message}
+            } catch(e:Exception){if(epoch==generation && searchGate.accepts(request))error=UserMessages.failure(e)}
             finally{if(epoch==generation && searchGate.accepts(request))searching=false}
         }
     }
@@ -116,7 +116,7 @@ class SocialModel : ViewModel() {
         val userID = uid ?: return; val ref = db?.collection("follows")?.document(userID + "_" + profile.id) ?: return
         if(profile.id == userID) return
         val task = if(value) ref.set(mapOf("followerID" to userID,"followingID" to profile.id,"createdAt" to FieldValue.serverTimestamp())) else ref.delete()
-        task.addOnFailureListener { error = it.message }
+        task.addOnFailureListener { error = UserMessages.failure(it) }
     }
     suspend fun profile(id: String): Profile? = db?.collection("profiles")?.document(id)?.get()?.await()?.let { if(it.exists()) Profile.from(it) else null }
     fun openChat(peerID: String) {
@@ -125,16 +125,16 @@ class SocialModel : ViewModel() {
         val ref = thread!!
         threadListener = ref.addSnapshotListener { s,e ->
             if(thread != ref) return@addSnapshotListener
-            if(e != null) { error = e.message; return@addSnapshotListener }
+            if(e != null) { error = UserMessages.failure(e); return@addSnapshotListener }
             threadExists = s?.exists() == true
             lastMessageID = s?.getString("lastMessageID")
             ownReadID = (s?.get("readMessageIDs") as? Map<*, *>)?.get(userID) as? String
             peerReadID=(s?.get("readMessageIDs") as? Map<*, *>)?.get(peerID) as? String
-            if(ChatReadPolicy.canObserveThread(threadExists,s?.metadata?.hasPendingWrites()!=false) && receiptListener==null)receiptListener=ref.collection("receipts").document(peerID).addSnapshotListener{d,failure -> if(thread==ref){if(failure!=null)error=failure.message;peerDeliveredID=d?.getString("messageID")}}
+            if(ChatReadPolicy.canObserveThread(threadExists,s?.metadata?.hasPendingWrites()!=false) && receiptListener==null)receiptListener=ref.collection("receipts").document(peerID).addSnapshotListener{d,failure -> if(thread==ref){if(failure!=null)error=UserMessages.failure(failure);peerDeliveredID=d?.getString("messageID")}}
             if(s!=null && !s.metadata.isFromCache)acknowledge(s)
             if(threadExists && s?.metadata?.hasPendingWrites()==false && chatListener == null) chatListener = ref.collection("messages").orderBy("createdAt",Query.Direction.DESCENDING).limit(50).addSnapshotListener(MetadataChanges.INCLUDE) { ms, failure ->
                 if(thread != ref) return@addSnapshotListener
-                if(failure != null) error = failure.message
+                if(failure != null) error = UserMessages.failure(failure)
                 if(ms != null) { messages = ms.documents.reversed().map { Message(it.id,it.getString("senderID") ?: "",it.getString("text") ?: "",it.metadata.hasPendingWrites(),it.getTimestamp("createdAt")?.toDate()?.time ?: 0) }; markRead() }
             }
             markRead()
@@ -154,7 +154,7 @@ class SocialModel : ViewModel() {
         }.addOnSuccessListener {
             if(epoch==generation && thread==ref && readingID==id){readingID=null;if(lastMessageID!=id)markRead()}
         }.addOnFailureListener {
-            if(epoch==generation && thread==ref && readingID==id){readingID=null;error="Couldn’t mark this conversation as read: ${it.message}"}
+            if(epoch==generation && thread==ref && readingID==id){readingID=null;error="Couldn’t update the read status. Your messages are still available."}
         }
     }
     fun send(raw: String, onSuccess: () -> Unit) {
@@ -166,13 +166,13 @@ class SocialModel : ViewModel() {
         if(threadExists) batch.update(ref,mapOf("lastMessageID" to id,"lastText" to text,"lastSenderID" to userID,"updatedAt" to time,"readMessageIDs.$userID" to id))
         else batch.set(ref,mapOf("memberIDs" to listOf(userID,peerID).sorted(),"lastMessageID" to id,"lastText" to text,"lastSenderID" to userID,"createdAt" to time,"updatedAt" to time,"readMessageIDs" to mapOf(userID to id,peerID to "")))
         sending = true; error = null
-        batch.commit().addOnSuccessListener { if(thread == ref) { sending = false; onSuccess() } }.addOnFailureListener { if(thread == ref) { sending = false; error = it.message } }
+        batch.commit().addOnSuccessListener { if(thread == ref) { sending = false; onSuccess() } }.addOnFailureListener { if(thread == ref) { sending = false; error = UserMessages.failure(it) } }
     }
     fun closeChat() { receiptListener?.remove();receiptListener=null;peerReadID=null;peerDeliveredID=null; chatListener?.remove(); threadListener?.remove(); chatListener = null; threadListener = null; thread = null; peer = null; messages = emptyList(); lastMessageID = null; ownReadID = null; readingID = null; threadExists = false; sending = false }
     override fun onCleared() { listeners.forEach { it.remove() };friendListeners.values.flatten().forEach{it.remove()}; closeChat() }
     fun watchActivity(id:String,onChange:(ListeningActivity?)->Unit):ListenerRegistration? = db?.collection("listeningActivity")?.document(id)?.addSnapshotListener{d,_ -> onChange(d?.takeIf{it.exists()}?.let{ListeningActivity.from(it)})}
-    fun watchProfile(id: String,onChange:(Profile?)->Unit): ListenerRegistration? = db?.collection("profiles")?.document(id)?.addSnapshotListener{d,e -> if(e!=null)error=e.message;onChange(d?.takeIf{it.exists()}?.let{Profile.from(it)})}
-    fun watchRelationships(id: String,followers: Boolean,onChange:(List<String>)->Unit): ListenerRegistration? = db?.collection("follows")?.whereEqualTo(if(followers)"followingID" else "followerID",id)?.addSnapshotListener{s,e -> if(e!=null)error=e.message;if(s!=null)onChange(s.documents.mapNotNull{it.getString(if(followers)"followerID" else "followingID")}.distinct())}
+    fun watchProfile(id: String,onChange:(Profile?)->Unit): ListenerRegistration? = db?.collection("profiles")?.document(id)?.addSnapshotListener{d,e -> if(e!=null)error=UserMessages.failure(e);onChange(d?.takeIf{it.exists()}?.let{Profile.from(it)})}
+    fun watchRelationships(id: String,followers: Boolean,onChange:(List<String>)->Unit): ListenerRegistration? = db?.collection("follows")?.whereEqualTo(if(followers)"followingID" else "followerID",id)?.addSnapshotListener{s,e -> if(e!=null)error=UserMessages.failure(e);if(s!=null)onChange(s.documents.mapNotNull{it.getString(if(followers)"followerID" else "followingID")}.distinct())}
     private fun ensureProfile(userID: String){
         val database=db ?: return;val epoch=generation
         viewModelScope.launch{try{
@@ -187,13 +187,15 @@ class SocialModel : ViewModel() {
                 tx.set(ref,mapOf("username" to generated,"usernameKey" to generated,"usernameIsGenerated" to true,"displayName" to "CapyFlow listener","bio" to "","avatarURL" to "","createdAt" to FieldValue.serverTimestamp(),"updatedAt" to FieldValue.serverTimestamp()))
                 null
             }.await()
-        }catch(e:Exception){if(epoch==generation)error=e.message}}
+        }catch(e:Exception){if(epoch==generation)error=UserMessages.failure(e)}}
     }
     fun saveProfile(rawUsername: String,name: String,bio: String,photo: ByteArray?,onSaved:()->Unit){
         val database=db ?: return;val userID=uid ?: return
         val username=rawUsername.trim().removePrefix("@").lowercase();val display=name.trim()
-        if(!UsernamePolicy.valid(username)){error="Use 3–20 lowercase letters, numbers, dots or underscores. Choose a non-reserved username.";return}
-        if(display.isEmpty()||display.length>60||bio.length>160|| (photo?.size ?: 0)>131072){error="Name must be 1–60 characters, bio up to 160 characters, and photo up to 128 KB.";return}
+        if(!UsernamePolicy.valid(username)){error="Choose a username with 3–20 lowercase letters, numbers, dots or underscores.";return}
+        if(display.isEmpty()||display.length>60){error="Choose a display name with 1–60 characters.";return}
+        if(bio.length>160){error="Keep your bio within 160 characters.";return}
+        if((photo?.size ?: 0)>131072){error="That picture is too large. Please choose another one.";return}
         if(savingProfile)return
         val epoch=generation;savingProfile=true
         viewModelScope.launch{try{
@@ -218,7 +220,7 @@ class SocialModel : ViewModel() {
                 null
             }.await()
             if(epoch==generation)onSaved()
-        }catch(e:Exception){if(epoch==generation)error=e.message}finally{if(epoch==generation)savingProfile=false}}
+        }catch(e:Exception){if(epoch==generation)error=UserMessages.failure(e)}finally{if(epoch==generation)savingProfile=false}}
     }
     fun sharedFor(playlist: Playlist)=sharedPlaylists.firstOrNull{ "cloud:"+it.id==playlist.id || (it.ownerID==uid && it.sourceID==playlist.id)}
     suspend fun publish(playlist: Playlist): String {
@@ -238,18 +240,18 @@ class SocialModel : ViewModel() {
             val ref=database.collection("playlists").document(sharedID)
             val person=database.collection("usernames").document(raw.trim().removePrefix("@").lowercase()).get().await().getString("uid") ?: error("No person found with that username")
             database.runTransaction{tx -> val d=tx.get(ref);check(d.getString("ownerID")==userID){"Only the owner can invite collaborators"};tx.update(ref,mapOf("memberIDs" to FieldValue.arrayUnion(person),"updatedAt" to FieldValue.serverTimestamp()));null}.await()
-        }catch(e:Exception){error=e.message}}
+        }catch(e:Exception){error=UserMessages.failure(e)}}
     }
-    fun removeMember(shared:SharedCollection,member:String){db?.collection("playlists")?.document(shared.id)?.update(mapOf("memberIDs" to FieldValue.arrayRemove(member),"updatedAt" to FieldValue.serverTimestamp()))?.addOnFailureListener{error=it.message}}
+    fun removeMember(shared:SharedCollection,member:String){db?.collection("playlists")?.document(shared.id)?.update(mapOf("memberIDs" to FieldValue.arrayRemove(member),"updatedAt" to FieldValue.serverTimestamp()))?.addOnFailureListener{error=UserMessages.failure(it)}}
     fun editShared(shared:SharedCollection,change:(List<Track>)->List<Track>){
         val database=db ?: return;val userID=uid ?: return
-        viewModelScope.launch{try{database.runTransaction{tx -> val ref=database.collection("playlists").document(shared.id);val d=tx.get(ref);check((d.get("memberIDs") as? List<*>)?.contains(userID)==true){"You are no longer a collaborator"};val current=SharedCollection.from(d) ?: error("Playlist unavailable");tx.update(ref,mapOf("tracks" to change(current.tracks).map{jsonMap(it.json())},"updatedAt" to FieldValue.serverTimestamp()));null}.await()}catch(e:Exception){error=e.message}}
+        viewModelScope.launch{try{database.runTransaction{tx -> val ref=database.collection("playlists").document(shared.id);val d=tx.get(ref);check((d.get("memberIDs") as? List<*>)?.contains(userID)==true){"You are no longer a collaborator"};val current=SharedCollection.from(d) ?: error("Playlist unavailable");tx.update(ref,mapOf("tracks" to change(current.tracks).map{jsonMap(it.json())},"updatedAt" to FieldValue.serverTimestamp()));null}.await()}catch(e:Exception){error=UserMessages.failure(e)}}
     }
-    fun renameShared(shared:SharedCollection,name:String){if(name.isNotBlank())db?.collection("playlists")?.document(shared.id)?.update(mapOf("name" to name.trim(),"updatedAt" to FieldValue.serverTimestamp()))?.addOnFailureListener{error=it.message}}
-    fun deleteShared(shared:SharedCollection,onDeleted:()->Unit){db?.collection("playlists")?.document(shared.id)?.delete()?.addOnSuccessListener{onDeleted()}?.addOnFailureListener{error=it.message}}
+    fun renameShared(shared:SharedCollection,name:String){if(name.isNotBlank())db?.collection("playlists")?.document(shared.id)?.update(mapOf("name" to name.trim(),"updatedAt" to FieldValue.serverTimestamp()))?.addOnFailureListener{error=UserMessages.failure(it)}}
+    fun deleteShared(shared:SharedCollection,onDeleted:()->Unit){db?.collection("playlists")?.document(shared.id)?.delete()?.addOnSuccessListener{onDeleted()}?.addOnFailureListener{error=UserMessages.failure(it)}}
     private fun syncCreatorUsernames(){
         val username=ownProfile?.username ?: return;val userID=uid ?: return
-        sharedPlaylists.filter{it.ownerID==userID && it.ownerName!=username}.forEach{shared -> db?.collection("playlists")?.document(shared.id)?.update(mapOf("ownerName" to username,"updatedAt" to FieldValue.serverTimestamp()))?.addOnFailureListener{error=it.message}}
+        sharedPlaylists.filter{it.ownerID==userID && it.ownerName!=username}.forEach{shared -> db?.collection("playlists")?.document(shared.id)?.update(mapOf("ownerName" to username,"updatedAt" to FieldValue.serverTimestamp()))?.addOnFailureListener{error=UserMessages.failure(it)}}
     }
     private fun observeFriends(epoch:Int){
         val database=db ?: return;val selected=following.take(50).toSet()
@@ -264,13 +266,13 @@ class SocialModel : ViewModel() {
         val database=db ?: return;val userID=uid ?: return
         val batch=database.batch();batch.set(database.collection("activitySettings").document(userID),mapOf("sharing" to enabled,"updatedAt" to FieldValue.serverTimestamp()))
         if(!enabled)batch.delete(database.collection("listeningActivity").document(userID))
-        batch.commit().addOnFailureListener{error=it.message}
+        batch.commit().addOnFailureListener{error=UserMessages.failure(it)}
     }
     fun publishActivity(track:Track?,playing:Boolean){
         if(!sharingActivity)return;val database=db ?: return;val userID=uid ?: return
         val ref=database.collection("listeningActivity").document(userID)
         if(track==null){ref.delete();return}
-        ref.set(mapOf("title" to track.title.take(300),"artist" to track.artist.take(300),"videoID" to track.playableID.take(128),"artworkURL" to Catalog.artworkForDisplay(track.artwork).take(2048),"playing" to playing,"updatedAt" to FieldValue.serverTimestamp(),"expiresAt" to Timestamp(java.util.Date(System.currentTimeMillis()+5*60000)))).addOnFailureListener{error=it.message}
+        ref.set(mapOf("title" to track.title.take(300),"artist" to track.artist.take(300),"videoID" to track.playableID.take(128),"artworkURL" to Catalog.artworkForDisplay(track.artwork).take(2048),"playing" to playing,"updatedAt" to FieldValue.serverTimestamp(),"expiresAt" to Timestamp(java.util.Date(System.currentTimeMillis()+5*60000)))).addOnFailureListener{error=UserMessages.failure(it)}
     }
     private fun acknowledge(d:DocumentSnapshot){
         val userID=uid ?: return;val id=d.getString("lastMessageID") ?: return

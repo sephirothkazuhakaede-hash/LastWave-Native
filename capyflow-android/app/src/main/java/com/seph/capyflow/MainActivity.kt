@@ -66,16 +66,16 @@ class MainActivity : ComponentActivity() {
     private val signInLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         runCatching { GoogleSignIn.getSignedInAccountFromIntent(result.data).getResult(com.google.android.gms.common.api.ApiException::class.java) }
             .onSuccess { account -> val token = account.idToken
-                if(token != null) model?.auth?.signInWithCredential(GoogleAuthProvider.getCredential(token,null))?.addOnFailureListener { model?.error = it.message }
-                else model?.error = "Google sign-in did not return an identity token"
-            }.onFailure { if((it as? com.google.android.gms.common.api.ApiException)?.statusCode != 12501) model?.error = "Google sign-in failed: ${it.message}" }
+                if(token != null) model?.auth?.signInWithCredential(GoogleAuthProvider.getCredential(token,null))?.addOnFailureListener { model?.error = UserMessages.failure(it,"Couldn’t sign in. Please try again.") }
+                else model?.error = "Couldn’t sign in. Please try again."
+            }.onFailure { if((it as? com.google.android.gms.common.api.ApiException)?.statusCode != 12501) model?.error = "Couldn’t sign in. Please try again." }
     }
     override fun onResume(){super.onResume();androidx.lifecycle.ViewModelProvider(this)[AppUpdater::class.java].checkAutomatically();PushNotices.foreground=true;if(BuildConfig.FIREBASE_CONFIGURED)PushRegistry.bind(this,com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid)}
     override fun onPause(){PushNotices.foreground=false;super.onPause()}
     private fun signIn() {
-        if(!BuildConfig.FIREBASE_CONFIGURED) { model?.error = "Account sign-in is not connected in this preview yet. You can still search, play music, download songs and use local playlists."; return }
+        if(!BuildConfig.FIREBASE_CONFIGURED) { model?.error = "Sign-in is temporarily unavailable. You can still listen to music and use your downloads."; return }
         val res = resources.getIdentifier("default_web_client_id","string",packageName)
-        if(res == 0) { model?.error = "Google sign-in is missing the web OAuth client ID. Enable Google authentication and download the updated Firebase configuration."; return }
+        if(res == 0) { model?.error = "Sign-in is temporarily unavailable. Please try again later."; return }
         val options = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).requestIdToken(getString(res)).requestEmail().build()
         signInLauncher.launch(GoogleSignIn.getClient(this,options).signInIntent)
     }
@@ -137,7 +137,7 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.fillMaxSize().padding(padding).widthIn(max=652.dp).align(Alignment.TopCenter).padding(horizontal=16.dp)) {
                 if(tab!="Library") Row(Modifier.fillMaxWidth().padding(top=12.dp,bottom=20.dp),verticalAlignment=Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) { Text("CAPYFLOW",color=Violet,fontSize=11.sp,fontWeight=FontWeight.Black,letterSpacing=3.sp); Text(if(selectedPlaylist!=null)vm.playlists.firstOrNull{it.id==selectedPlaylist}?.name ?: "Playlist" else tab,fontSize=32.sp,fontWeight=FontWeight.Bold) }
-                    IconButton(onClick={showSettings=true},modifier=Modifier.clip(CircleShape).background(Glass)) { Icon(Icons.Default.AccountCircle,"Profile and settings",tint=Violet) }
+                    IconButton(onClick={showSettings=true},modifier=Modifier.clip(CircleShape).background(Glass)) { ProfileAvatar(social.ownProfile,36,"Profile and settings") }
                 }
                 when(tab) {
                     "Home" -> LazyColumn(verticalArrangement=Arrangement.spacedBy(20.dp)) {
@@ -362,8 +362,7 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
     Column(Modifier.fillMaxWidth().padding(24.dp).navigationBarsPadding().verticalScroll(rememberScrollState())) {
         Section("Your CapyFlow")
         vm.user?.let{Text(it.displayName ?: "Signed in",fontSize=22.sp,fontWeight=FontWeight.Bold);Text(it.email ?: "",color=Violet);TextButton(onClick={confirmSignOut=true}){Text("Sign out")}} ?: Button(onClick=signIn,modifier=Modifier.fillMaxWidth()){Text("Continue with Google")}
-        Section("Streaming server");Text(if(vm.automaticServer)"Automatic · follows your backend after restarts" else "Manual · uses the address you saved",color=Color.White.copy(alpha=.6f),fontSize=13.sp)
-        OutlinedTextField(server,{server=it},label={Text("HTTPS server address")},modifier=Modifier.fillMaxWidth().padding(top=12.dp),singleLine=true,shape=RoundedCornerShape(18.dp));Row {TextButton(onClick={vm.saveServer(server)}){Text("Save manual address")};TextButton(onClick={vm.useAutomaticServer()}){Text("Use automatic")}}
+        Section("Streaming connection");StreamingSettings(vm)
         if(vm.serverStatus.isNotBlank())Text(vm.serverStatus,color=Violet,fontSize=12.sp)
         Section("Audio quality");Text("Applies to the next stream or download. Saved tracks keep their downloaded quality.",fontSize=12.sp,color=Color.White.copy(alpha=.6f));Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf("automatic","dataSaver").forEach{q -> FilterChip(vm.quality==q,{vm.saveQuality(q)},label={Text(if(q=="dataSaver")"Data saver" else "Best available")})}}
         Text("CapyFlow Android ${BuildConfig.VERSION_NAME}",color=Color.White.copy(alpha=.4f),fontSize=12.sp,modifier=Modifier.padding(top=24.dp))
@@ -426,7 +425,7 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
     val collections=(if(filter=="Shared")social.sharedPlaylists.map{it.imported()} else vm.playlists+social.sharedPlaylists.filter{it.ownerID!=vm.user?.uid}.map{it.imported()}).filter{when(filter){"Albums" -> it.albumID!=null;"Playlists" -> it.albumID==null;else -> true}}.let{if(sort=="Name")it.sortedBy{p->p.name.lowercase()} else it.reversed()}
     LazyColumn(Modifier.fillMaxSize(),verticalArrangement=Arrangement.spacedBy(18.dp),contentPadding=PaddingValues(top=16.dp,bottom=24.dp)) {
         item{Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-            IconButton(onClick=onProfile,modifier=Modifier.size(44.dp).clip(CircleShape).background(Violet.copy(alpha=.15f))){Icon(Icons.Default.AccountCircle,"Profile",tint=Violet)}
+            IconButton(onClick=onProfile,modifier=Modifier.size(44.dp).clip(CircleShape).background(Violet.copy(alpha=.15f))){ProfileAvatar(social.ownProfile,40,"Profile")}
             Column(Modifier.weight(1f)){Text(if(offline)"Downloads" else "Library",fontSize=30.sp,fontWeight=FontWeight.Bold);Text(if(offline)"${vm.downloads.size} available offline" else "Everything you made yours",fontSize=12.sp,color=Color.White.copy(alpha=.6f))}
             if(offline)IconButton(onClick={offline=false}){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back to library")} else {Box{IconButton(onClick={menu=true},modifier=Modifier.clip(CircleShape).background(Glass)){Icon(Icons.Default.SwapVert,"Sort library")};DropdownMenu(menu,{menu=false}){listOf("Recently added","Name").forEach{label -> DropdownMenuItem(text={Text(label)},onClick={sort=label;menu=false})}}};FilledIconButton(onClick=onCreate){Icon(Icons.Default.Add,"Create playlist")}}
         }}
