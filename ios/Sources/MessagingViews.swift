@@ -95,6 +95,12 @@ private struct NewMessageView: View {
     }
 }
 
+/// Describes the visible navigation destination, independently of message listeners.
+struct ChatPresentationPreference: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
+}
+
 private struct InlineChatPlaybackKey: EnvironmentKey {
     static let defaultValue = false
 }
@@ -206,6 +212,9 @@ struct DirectChatView: View {
             }.padding(12).background(CapyColor.background)
         }
         .navigationTitle(person.displayName).navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(CapyColor.background, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .preference(key: ChatPresentationPreference.self, value: usesInlinePlayback)
         .toolbar {
             ToolbarItem(placement: .primaryAction) { NavigationLink { SocialPersonProfileView(person: person) } label: { SocialAvatar(profile: person, size: 34) } }
         }

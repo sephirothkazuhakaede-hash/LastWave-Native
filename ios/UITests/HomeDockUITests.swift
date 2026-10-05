@@ -1,6 +1,31 @@
 import XCTest
 
 final class HomeDockUITests: XCTestCase {
+    func testConversationDockRestoresAfterBackgroundAndBackNavigation() {
+        for playing in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--layout-fixture", "chat"] + (playing ? ["--fixture-playing"] : [])
+            app.launch()
+            let composer = app.descendants(matching: .any).matching(identifier: "chat-message-field").firstMatch
+            XCTAssertTrue(composer.waitForExistence(timeout: 8))
+            XCTAssertFalse(app.otherElements["capy-dock"].exists)
+            XCUIDevice.shared.press(.home)
+            app.activate()
+            XCTAssertTrue(composer.waitForExistence(timeout: 8))
+            XCTAssertTrue(composer.isHittable)
+            XCTAssertFalse(app.otherElements["capy-dock"].exists)
+            XCTAssertTrue(app.otherElements["chat-music-controls"].exists)
+            app.navigationBars.buttons["Messages"].tap()
+            let dock = app.otherElements["capy-dock"]
+            XCTAssertTrue(dock.waitForExistence(timeout: 5))
+            XCTAssertTrue(dock.buttons["Home"].isHittable)
+            XCTAssertFalse(composer.exists)
+            dock.buttons["Home"].tap()
+            XCTAssertTrue(app.scrollViews["home-scroll"].isHittable)
+            app.terminate()
+        }
+    }
+
     func testProfilePreviewShowsSharedListeningActivity() {
         let app = XCUIApplication()
         app.launchArguments = ["--layout-fixture", "person"]
@@ -67,7 +92,7 @@ final class HomeDockUITests: XCTestCase {
         XCTAssertGreaterThan(footer.frame.height, 0)
         XCTAssertGreaterThanOrEqual(footer.frame.minY, home.frame.minY - 1)
         XCTAssertLessThanOrEqual(footer.frame.maxY, dock.frame.minY + 1)
-        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 24"))
+        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 25"))
         XCTAssertTrue(footer.label.contains("by Seph"))
         friends.tap()
         XCTAssertTrue(app.staticTexts["Find people"].waitForExistence(timeout: 4))

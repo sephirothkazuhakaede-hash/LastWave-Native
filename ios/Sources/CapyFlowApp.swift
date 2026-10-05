@@ -118,6 +118,7 @@ private enum LayoutFixture: String {
 
     @MainActor static func install(into player: WavePlayer, social: SocialStore) {
         player.current = tracks[0]
+        player.playing = ProcessInfo.processInfo.arguments.contains("--fixture-playing")
         player.duration = tracks[0].duration ?? 0
         player.elapsed = 87
         player.queue = Array(tracks.dropFirst())
@@ -220,8 +221,10 @@ struct RootView: View {
     @State private var drawerPerson: SocialProfile?
     @State private var drawerDestination: ProfileDrawerDestination?
     @State private var dockFrame: CGRect = .zero
+    @State private var conversationVisible = false
 #if DEBUG
     @State private var fixtureChatPresented = false
+    @State private var fixtureOpenedChat = false
 #endif
     var body: some View {
         ZStack {
@@ -245,7 +248,11 @@ struct RootView: View {
                         .navigationDestination(isPresented: $fixtureChatPresented) {
                             if let friend = social.following.first { DirectChatView(person: friend) }
                         }
-                        .onAppear { if LayoutFixture.requested == .chat { fixtureChatPresented = true } }
+                        .onAppear {
+                            if LayoutFixture.requested == .chat && !fixtureOpenedChat {
+                                fixtureOpenedChat = true; fixtureChatPresented = true
+                            }
+                        }
 #endif
                         .toolbar {
                             ToolbarItem(placement: .topBarLeading) {
@@ -257,7 +264,7 @@ struct RootView: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 5) {
-            if tab != .messages || messaging.activePeerID == nil {
+            if tab != .messages || !conversationVisible {
             CapyDock(selection: $tab) { showPlayer = true }
                 .padding(.horizontal, 12)
                 .background {
@@ -268,6 +275,7 @@ struct RootView: View {
             }
         }
         .onPreferenceChange(DockFramePreference.self) { dockFrame = $0 }
+        .onPreferenceChange(ChatPresentationPreference.self) { conversationVisible = $0 }
         // Attach the window backdrop outside the dock's safe-area inset so
         // the inset cannot reduce its drawing bounds to the content region.
         .background { WaveBackdrop() }
