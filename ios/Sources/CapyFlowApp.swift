@@ -319,7 +319,7 @@ struct RootView: View {
                 }
             )
         }
-        .transition(.opacity)
+        
         .zIndex(40)
     }
 }
@@ -345,7 +345,9 @@ struct RootView: View {
                 }
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") { drawerDestination = nil }
+                            Button("Done") {
+                                closeDrawerDestination()
+                            }
                         }
                     }
             }
@@ -356,7 +358,7 @@ struct RootView: View {
             if drawerDestination == .settings {
                 SettingsPageView(close: { closeDrawerDestination() })
                     .transition(.move(edge: .trailing))
-                    .zIndex(35)
+                    .zIndex(50)
             }
         }
         .overlay(alignment: .top) {
@@ -392,16 +394,24 @@ struct RootView: View {
 private func closeDrawer() {
     withAnimation(.spring(response: 0.30, dampingFraction: 0.90)) {
         showProfileDrawer = false
+        drawerDestination = nil
+        drawerPerson = nil
     }
 }
 
     private func openDrawerDestination(_ destination: ProfileDrawerDestination) {
+    if destination == .globalChat {
         closeDrawer()
-        if destination == .globalChat { withAnimation { showGlobalChat = true }; return }
-        withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
-            drawerDestination = destination
+        withAnimation {
+            showGlobalChat = true
         }
+        return
     }
+
+    withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
+        drawerDestination = destination
+    }
+}
 
     private func closeDrawerDestination() {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
@@ -452,8 +462,31 @@ private struct ProfileDrawerContainer: View {
     let openGlobalChat: () -> Void
     let openPerson: (SocialProfile) -> Void
 
-    @State private var dragOffset: CGFloat = 0
-    @State private var suppressActions = false
+    @State private var dragOffset: CGFloat
+@State private var suppressActions = false
+
+init(
+    width: CGFloat,
+    close: @escaping () -> Void,
+    openProfile: @escaping () -> Void,
+    openSettings: @escaping () -> Void,
+    openActivity: @escaping () -> Void,
+    openUpdates: @escaping () -> Void,
+    openMessages: @escaping () -> Void,
+    openGlobalChat: @escaping () -> Void,
+    openPerson: @escaping (SocialProfile) -> Void
+) {
+    self.width = width
+    self.close = close
+    self.openProfile = openProfile
+    self.openSettings = openSettings
+    self.openActivity = openActivity
+    self.openUpdates = openUpdates
+    self.openMessages = openMessages
+    self.openGlobalChat = openGlobalChat
+    self.openPerson = openPerson
+    _dragOffset = State(initialValue: -width)
+}
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -479,6 +512,7 @@ private struct ProfileDrawerContainer: View {
             .frame(width: width)
             .frame(maxHeight: .infinity)
             .background(CapyColor.background)
+            .contentShape(Rectangle())
             .offset(x: dragOffset)
             .shadow(color: .black.opacity(0.45), radius: 30, x: 12)
             .transition(.move(edge: .leading))
@@ -542,6 +576,11 @@ private struct ProfileDrawerContainer: View {
                         }
                     }
             )
+                }
+        .onAppear {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                dragOffset = 0
+            }
         }
     }
 }
@@ -1283,14 +1322,32 @@ private struct SettingsPageView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: close) {
-                        Image(systemName: "chevron.left")
-                    }
-                    .accessibilityLabel("Back")
-                }
+            .gesture(
+    DragGesture(minimumDistance: 20)
+        .onEnded { value in
+            let startedNearLeftEdge = value.startLocation.x < 35
+            let movedRight = value.translation.width > 80
+            let mostlyHorizontal =
+                abs(value.translation.width) >
+                abs(value.translation.height)
+
+            if startedNearLeftEdge && movedRight && mostlyHorizontal {
+                close()
             }
+        }
+)   
+            .toolbar {
+    ToolbarItem(placement: .navigationBarLeading) {
+        Button(action: close) {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.left")
+                Text("Back")
+            }
+        }
+        .accessibilityLabel("Back")
+    }
+}
+.toolbar(.visible, for: .navigationBar)
         }
         .alert("Sign out of CapyFlow?", isPresented: $confirmSignOut) {
             Button("Cancel", role: .cancel) {}
