@@ -274,7 +274,12 @@ struct RootView: View {
             }
         }
         .navigationDestination(isPresented: $showGlobalChat) { GlobalChatView() }
-        .toolbar(tab == .messages || showGlobalChat ? .visible : .hidden, for: .navigationBar)
+        .toolbar(
+            tab == .messages || showGlobalChat || drawerDestination == .settings
+                ? .visible
+                : .hidden,
+            for: .navigationBar
+        )
         .onChange(of: messaging.globalChatRequest) { _, _ in
             let modal = showPlayer || drawerDestination != nil
             showPlayer = false; drawerDestination = nil; closeDrawer()
@@ -289,40 +294,40 @@ struct RootView: View {
         // the inset cannot reduce its drawing bounds to the content region.
         .background { WaveBackdrop() }
         .overlay {
-    if showProfileDrawer {
-        GeometryReader { geometry in
-            ProfileDrawerContainer(
-                width: min(350, geometry.size.width * 0.88),
-                close: { closeDrawer() },
-                openProfile: {
-                    drawerPerson = nil
-                    openDrawerDestination(.profile)
-                },
-                openSettings: {
-                    openDrawerDestination(.settings)
-                },
-                openActivity: {
-                    openDrawerDestination(.activity)
-                },
-                openUpdates: {
-                    openDrawerDestination(.updates)
-                },
-                openMessages: {
-                    openDrawerDestination(.messages)
-                },
-                openGlobalChat: {
-                    openDrawerDestination(.globalChat)
-                },
-                openPerson: { person in
-                    drawerPerson = person
-                    openDrawerDestination(.profile)
+            if showProfileDrawer {
+                GeometryReader { geometry in
+                    ProfileDrawerContainer(
+                        width: min(350, geometry.size.width * 0.88),
+                        close: { closeDrawer() },
+                        openProfile: {
+                            drawerPerson = nil
+                            openDrawerDestination(.profile)
+                        },
+                        openSettings: {
+                            openDrawerDestination(.settings)
+                        },
+                        openActivity: {
+                            openDrawerDestination(.activity)
+                        },
+                        openUpdates: {
+                            openDrawerDestination(.updates)
+                        },
+                        openMessages: {
+                            openDrawerDestination(.messages)
+                        },
+                        openGlobalChat: {
+                            openDrawerDestination(.globalChat)
+                        },
+                        openPerson: { person in
+                            drawerPerson = person
+                            openDrawerDestination(.profile)
+                        }
+                    )
                 }
-            )
+
+                .zIndex(40)
+            }
         }
-        
-        .zIndex(40)
-    }
-}
         .sheet(isPresented: $showPlayer) {
             PlayerView()
                 .messageBanners(messaging)
@@ -385,33 +390,33 @@ struct RootView: View {
     }
 
     private func openDrawer() {
-    withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
-        showProfileDrawer = true
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+            showProfileDrawer = true
+        }
+        CapyHaptics.selection()
     }
-    CapyHaptics.selection()
-}
 
-private func closeDrawer() {
-    withAnimation(.spring(response: 0.30, dampingFraction: 0.90)) {
-        showProfileDrawer = false
-        drawerDestination = nil
-        drawerPerson = nil
+    private func closeDrawer() {
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.90)) {
+            showProfileDrawer = false
+            drawerDestination = nil
+            drawerPerson = nil
+        }
     }
-}
 
     private func openDrawerDestination(_ destination: ProfileDrawerDestination) {
-    if destination == .globalChat {
-        closeDrawer()
-        withAnimation {
-            showGlobalChat = true
+        if destination == .globalChat {
+            closeDrawer()
+            withAnimation {
+                showGlobalChat = true
+            }
+            return
         }
-        return
-    }
 
-    withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
-        drawerDestination = destination
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
+            drawerDestination = destination
+        }
     }
-}
 
     private func closeDrawerDestination() {
         withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
@@ -463,30 +468,30 @@ private struct ProfileDrawerContainer: View {
     let openPerson: (SocialProfile) -> Void
 
     @State private var dragOffset: CGFloat
-@State private var suppressActions = false
+    @State private var suppressActions = false
 
-init(
-    width: CGFloat,
-    close: @escaping () -> Void,
-    openProfile: @escaping () -> Void,
-    openSettings: @escaping () -> Void,
-    openActivity: @escaping () -> Void,
-    openUpdates: @escaping () -> Void,
-    openMessages: @escaping () -> Void,
-    openGlobalChat: @escaping () -> Void,
-    openPerson: @escaping (SocialProfile) -> Void
-) {
-    self.width = width
-    self.close = close
-    self.openProfile = openProfile
-    self.openSettings = openSettings
-    self.openActivity = openActivity
-    self.openUpdates = openUpdates
-    self.openMessages = openMessages
-    self.openGlobalChat = openGlobalChat
-    self.openPerson = openPerson
-    _dragOffset = State(initialValue: -width)
-}
+    init(
+        width: CGFloat,
+        close: @escaping () -> Void,
+        openProfile: @escaping () -> Void,
+        openSettings: @escaping () -> Void,
+        openActivity: @escaping () -> Void,
+        openUpdates: @escaping () -> Void,
+        openMessages: @escaping () -> Void,
+        openGlobalChat: @escaping () -> Void,
+        openPerson: @escaping (SocialProfile) -> Void
+    ) {
+        self.width = width
+        self.close = close
+        self.openProfile = openProfile
+        self.openSettings = openSettings
+        self.openActivity = openActivity
+        self.openUpdates = openUpdates
+        self.openMessages = openMessages
+        self.openGlobalChat = openGlobalChat
+        self.openPerson = openPerson
+        _dragOffset = State(initialValue: -width)
+    }
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -516,67 +521,67 @@ init(
             .offset(x: dragOffset)
             .shadow(color: .black.opacity(0.45), radius: 30, x: 12)
             .transition(.move(edge: .leading))
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 10)
-                    .onChanged { value in
-                        let horizontal =
-                            abs(value.translation.width) >
-                            abs(value.translation.height)
+        }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 10)
+                .onChanged { value in
+                    let horizontal =
+                        abs(value.translation.width) >
+                        abs(value.translation.height)
 
-                        guard horizontal,
-                              value.translation.width < 0 else {
-                            return
-                        }
-
-                        suppressActions = true
-                        dragOffset = value.translation.width
+                    guard horizontal,
+                          value.translation.width < 0 else {
+                        return
                     }
-                    .onEnded { value in
-                        let horizontal =
-                            abs(value.translation.width) >
-                            abs(value.translation.height)
 
-                        let shouldClose =
-                            horizontal &&
-                            (
-                                value.translation.width < -(width * 0.28) ||
-                                value.predictedEndTranslation.width < -(width * 0.50)
+                    suppressActions = true
+                    dragOffset = value.translation.width
+                }
+                .onEnded { value in
+                    let horizontal =
+                        abs(value.translation.width) >
+                        abs(value.translation.height)
+
+                    let shouldClose =
+                        horizontal &&
+                        (
+                            value.translation.width < -(width * 0.28) ||
+                            value.predictedEndTranslation.width < -(width * 0.50)
+                        )
+
+                    if shouldClose {
+                        withAnimation(
+                            .spring(
+                                response: 0.30,
+                                dampingFraction: 0.90
                             )
-
-                        if shouldClose {
-                            withAnimation(
-                                .spring(
-                                    response: 0.30,
-                                    dampingFraction: 0.90
-                                )
-                            ) {
-                                dragOffset = -width
-                            }
-
-                            DispatchQueue.main.asyncAfter(
-                                deadline: .now() + 0.12
-                            ) {
-                                close()
-                            }
-                        } else {
-                            withAnimation(
-                                .spring(
-                                    response: 0.30,
-                                    dampingFraction: 0.86
-                                )
-                            ) {
-                                dragOffset = 0
-                            }
+                        ) {
+                            dragOffset = -width
                         }
 
                         DispatchQueue.main.asyncAfter(
-                            deadline: .now() + 0.18
+                            deadline: .now() + 0.12
                         ) {
-                            suppressActions = false
+                            close()
+                        }
+                    } else {
+                        withAnimation(
+                            .spring(
+                                response: 0.30,
+                                dampingFraction: 0.86
+                            )
+                        ) {
+                            dragOffset = 0
                         }
                     }
-            )
+
+                    DispatchQueue.main.asyncAfter(
+                        deadline: .now() + 0.18
+                    ) {
+                        suppressActions = false
+                    }
                 }
+        )
         .onAppear {
             withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                 dragOffset = 0
