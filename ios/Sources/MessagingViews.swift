@@ -121,6 +121,7 @@ struct DirectChatView: View {
     @StateObject private var chat = DirectChatSession()
     @State private var draft = ""
     @State private var loadingHistory = false
+    @FocusState private var composerFocused: Bool
     let person: SocialProfile
     var body: some View {
         ZStack {
@@ -198,8 +199,16 @@ struct DirectChatView: View {
                 if !chat.exists && !social.isFollowing(person.id) { Text("Follow this person to start a new conversation.").font(.capyCaption).foregroundStyle(CapyColor.secondaryText) }
                 HStack(alignment: .bottom, spacing: 10) {
                     TextField("Message", text: $draft, axis: .vertical).lineLimit(1...5)
+                        .focused($composerFocused)
                         .accessibilityIdentifier("chat-message-field")
                         .padding(12).background(CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 18))
+                    Button { composerFocused = false } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                            .frame(width: 38, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CapyColor.secondaryText)
+                    .accessibilityLabel("Dismiss keyboard")
                     Button {
                         let outgoing = draft
                         Task { if await chat.send(outgoing), draft == outgoing { draft = "" } }
