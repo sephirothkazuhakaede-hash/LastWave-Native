@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -116,12 +117,15 @@ class MainActivity : ComponentActivity() {
     var showGlobalChat by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var notice by remember{mutableStateOf<AppNotice?>(null)}
+    var noticeDrag by remember(notice?.id){mutableFloatStateOf(0f)}
+    val noticeOffset by animateFloatAsState(noticeDrag,spring(stiffness=Spring.StiffnessHigh),label="notification swipe")
+    val dismissDistance=with(LocalDensity.current){32.dp.toPx()}
     LaunchedEffect(vm.user?.uid){chatPeer=null;selectedProfile=null;social.clearPeopleSearch()}
     LaunchedEffect(requestedPeer,vm.user?.uid){if(requestedPeer!=null && vm.user!=null && requestedPeer!=vm.user?.uid){if(requestedPeer=="global-chat"){showGlobalChat=true}else{social.openChat(requestedPeer);chatPeer=requestedPeer};onPeerConsumed()}}
     GlobalChatAlerts(vm.user?.uid,showGlobalChat){notice=it}
     LaunchedEffect(social){social.notices.collect{if(it.peerID==null || ChatPreferences.enabled(updateContext,"messageBanners"))notice=it}}
     LaunchedEffect(Unit){PushNotices.events.collect{notice=it}}
-    LaunchedEffect(notice?.id){if(notice!=null){kotlinx.coroutines.delay(4500);notice=null}}
+    LaunchedEffect(notice?.id){if(notice!=null){kotlinx.coroutines.delay(4000);notice=null}}
     LaunchedEffect(vm.error,social.error){(vm.error ?: social.error)?.let{notice=AppNotice("CapyFlow",it);vm.error=null;social.error=null}}
     Box(Modifier.fillMaxSize().background(Night)) {
         AmbientBackground()
@@ -223,7 +227,13 @@ class MainActivity : ComponentActivity() {
         AnimatedVisibility(showSettings,enter=slideInHorizontally(tween(300),initialOffsetX={-it}),exit=slideOutHorizontally(tween(260),targetOffsetX={-it})){
             AccountDrawer(vm,social,signIn,{showSettings=false;settingsStartPage="CapyFlow"},{selectedProfile=it},{tab="Social";showSettings=false},{tab="Messages";showSettings=false},{showGlobalChat=true;showSettings=false},settingsStartPage)
         }
-        AnimatedVisibility(notice!=null,modifier=Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp),enter=slideInVertically(initialOffsetY={-it})+fadeIn(),exit=slideOutVertically(targetOffsetY={-it})+fadeOut()){
+        AnimatedVisibility(notice!=null,modifier=Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp)
+            .offset { IntOffset(0,noticeOffset.toInt()) }
+            .pointerInput(notice?.id) {
+                detectVerticalDragGestures(onDragEnd={if(noticeDrag < -dismissDistance)notice=null;noticeDrag=0f},onDragCancel={noticeDrag=0f}) { change, amount ->
+                    if(amount<0 || noticeDrag<0){change.consume();noticeDrag=(noticeDrag+amount).coerceAtMost(0f)}
+                }
+            },enter=slideInVertically(initialOffsetY={-it})+fadeIn(),exit=slideOutVertically(targetOffsetY={-it})+fadeOut()){
             notice?.let{n->Surface(shape=RoundedCornerShape(24.dp),color=Raised,tonalElevation=8.dp,shadowElevation=8.dp){Row(Modifier.fillMaxWidth().clickable{if(n.global)showGlobalChat=true;n.peerID?.let{if(vm.user!=null){social.openChat(it);chatPeer=it}};notice=null}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(if(n.peerID!=null)Icons.Default.Forum else Icons.Default.Info,null,tint=Violet);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(n.title,fontWeight=FontWeight.Bold);Text(n.body,maxLines=3,overflow=TextOverflow.Ellipsis,fontSize=13.sp)};IconButton(onClick={notice=null}){Icon(Icons.Default.Close,"Dismiss notification")}}}}
         }
     }

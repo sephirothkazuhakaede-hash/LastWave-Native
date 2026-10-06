@@ -1,5 +1,10 @@
-Choose your chat alerts in Settings → Notifications. Message banners and Global Chat banners have separate switches. Global Chat push notifications have their own switch, so you can choose alerts while using the app, in the background, or both.
+What’s new
 
-Global Chat is available from your profile side panel. Chats include dates, and starting a conversation is more reliable.
+• Join Global Chat from your profile menu.
+• Choose whether to show message and Global Chat banners while you use CapyFlow.
+• Choose Global Chat notifications for when you’re outside the app with a separate switch.
+• Swipe up to dismiss a banner, or let it disappear after four seconds.
+• Messages are grouped by date, so conversations are easier to follow.
+• Starting a new chat is more reliable.
 
-Your account, playlists, messages and downloads remain in place when updating.
+Your account, playlists, messages and downloads stay with you when you update.
