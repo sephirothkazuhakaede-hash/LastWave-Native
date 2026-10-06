@@ -75,6 +75,19 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /globalChatPresence/{uid} {
+      allow read: if googleAccount();
+
+      allow create, update: if googleAccount() &&
+        request.auth.uid == uid &&
+        request.resource.data.keys().hasOnly(['uid', 'updatedAt']) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.updatedAt == request.time;
+
+      allow delete: if googleAccount() &&
+        request.auth.uid == uid;
+    }
+
     match /profiles/{uid} {
       allow get: if signedIn();
       allow list: if signedIn() && request.query.limit <= 20;
