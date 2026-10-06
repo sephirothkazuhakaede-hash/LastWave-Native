@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
@@ -112,6 +113,7 @@ class MainActivity : ComponentActivity() {
     var addTrack by remember { mutableStateOf<Track?>(null) }
     var selectedProfile by remember { mutableStateOf<Profile?>(null) }
     var chatPeer by remember { mutableStateOf<String?>(null) }
+    var showGlobalChat by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var notice by remember{mutableStateOf<AppNotice?>(null)}
     LaunchedEffect(vm.user?.uid){chatPeer=null;selectedProfile=null;social.clearPeopleSearch()}
@@ -215,9 +217,10 @@ class MainActivity : ComponentActivity() {
             BackHandler{social.closeChat();chatPeer=null}
             Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();ChatScreen(id,vm,social,{selectedProfile=it}){social.closeChat();chatPeer=null}}
         }}
+        if(showGlobalChat)Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();GlobalChatScreen(vm,social,signIn,{selectedProfile=it}){showGlobalChat=false}}
         AnimatedVisibility(showSettings,enter=fadeIn(tween(200)),exit=fadeOut(tween(200))){Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha=.55f)).clickable{showSettings=false})}
         AnimatedVisibility(showSettings,enter=slideInHorizontally(tween(300),initialOffsetX={-it}),exit=slideOutHorizontally(tween(260),targetOffsetX={-it})){
-            AccountDrawer(vm,social,signIn,{showSettings=false;settingsStartPage="CapyFlow"},{selectedProfile=it},{tab="Social";showSettings=false},{tab="Messages";showSettings=false},settingsStartPage)
+            AccountDrawer(vm,social,signIn,{showSettings=false;settingsStartPage="CapyFlow"},{selectedProfile=it},{tab="Social";showSettings=false},{tab="Messages";showSettings=false},{showGlobalChat=true;showSettings=false},settingsStartPage)
         }
         AnimatedVisibility(notice!=null,modifier=Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(12.dp),enter=slideInVertically(initialOffsetY={-it})+fadeIn(),exit=slideOutVertically(targetOffsetY={-it})+fadeOut()){
             notice?.let{n->Surface(shape=RoundedCornerShape(24.dp),color=Raised,tonalElevation=8.dp,shadowElevation=8.dp){Row(Modifier.fillMaxWidth().clickable{n.peerID?.let{if(vm.user!=null){social.openChat(it);chatPeer=it}};notice=null}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(if(n.peerID!=null)Icons.Default.Forum else Icons.Default.Info,null,tint=Violet);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(n.title,fontWeight=FontWeight.Bold);Text(n.body,maxLines=3,overflow=TextOverflow.Ellipsis,fontSize=13.sp)};IconButton(onClick={notice=null}){Icon(Icons.Default.Close,"Dismiss notification")}}}}
@@ -397,10 +400,18 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
 }
 @Composable fun ChatScreen(peer: String,vm: CapyModel,social: SocialModel,onProfile:(Profile)->Unit,onClose:()->Unit) {
     var draft by remember(peer){mutableStateOf("")};val profile=liveProfile(social,peer)
+    val ordered=remember(social.messages){social.messages.reversed()}
     DisposableEffect(peer){PushNotices.activePeer=peer;onDispose{if(PushNotices.activePeer==peer)PushNotices.activePeer=null}}
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().navigationBarsPadding().padding(16.dp)) {
         Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Row(Modifier.clickable{profile?.let(onProfile)},verticalAlignment=Alignment.CenterVertically){ProfileAvatar(profile,40);Text(profile?.displayName ?: "Messages",fontSize=22.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(start=10.dp))}}
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp),reverseLayout=true){items(social.messages.reversed(),key={it.id}){m -> Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.sender==vm.user?.uid)Arrangement.End else Arrangement.Start){Column(Modifier.widthIn(max=280.dp).clip(RoundedCornerShape(20.dp)).background(if(m.sender==vm.user?.uid)Violet.copy(alpha=.22f) else Glass).padding(14.dp)){Text(m.text);Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){if(m.date>0)Text(java.text.SimpleDateFormat("h:mm a",java.util.Locale.getDefault()).format(java.util.Date(m.date)),fontSize=10.sp,color=Color.White.copy(alpha=.5f));if(m.sender==vm.user?.uid)Text(social.messageStatus(m),fontSize=10.sp,color=Color.White.copy(alpha=.5f))}}}}}
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp),reverseLayout=true){
+            itemsIndexed(ordered,key={_,m->m.id}){index,m ->
+                Column {
+                    if(index==ordered.lastIndex || chatDay(m.date)!=chatDay(ordered[index+1].date))Text(chatDateLabel(m.date),fontSize=12.sp,color=Color.White.copy(alpha=.55f),modifier=Modifier.fillMaxWidth().padding(vertical=10.dp))
+                    Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.sender==vm.user?.uid)Arrangement.End else Arrangement.Start){Column(Modifier.widthIn(max=280.dp).clip(RoundedCornerShape(20.dp)).background(if(m.sender==vm.user?.uid)Violet.copy(alpha=.22f) else Glass).padding(14.dp)){Text(m.text);Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){if(m.date>0)Text(chatTime(m.date),fontSize=10.sp,color=Color.White.copy(alpha=.5f));if(m.sender==vm.user?.uid)Text(social.messageStatus(m),fontSize=10.sp,color=Color.White.copy(alpha=.5f))}}}
+                }
+            }
+        }
         Row(Modifier.padding(top=12.dp),verticalAlignment=Alignment.CenterVertically){OutlinedTextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),maxLines=4);IconButton(onClick={val submitted=draft;social.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!social.sending){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Violet)}}
     }
 }

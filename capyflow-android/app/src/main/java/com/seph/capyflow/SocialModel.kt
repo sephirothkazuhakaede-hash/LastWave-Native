@@ -120,12 +120,13 @@ class SocialModel : ViewModel() {
     }
     suspend fun profile(id: String): Profile? = db?.collection("profiles")?.document(id)?.get()?.await()?.let { if(it.exists()) Profile.from(it) else null }
     fun openChat(peerID: String) {
-        closeChat(); val userID = uid ?: return; if(userID == peerID) return
+        closeChat(); error=null; val userID = uid ?: return; if(userID == peerID) return
         peer = peerID; thread = db!!.collection("conversations").document(conversationID(userID,peerID))
         val ref = thread!!
-        threadListener = ref.addSnapshotListener { s,e ->
+        threadListener = ref.addSnapshotListener(MetadataChanges.INCLUDE) { s,e ->
             if(thread != ref) return@addSnapshotListener
             if(e != null) { error = UserMessages.failure(e); return@addSnapshotListener }
+            if(s!=null && !s.metadata.isFromCache && !s.metadata.hasPendingWrites())error=null
             threadExists = s?.exists() == true
             lastMessageID = s?.getString("lastMessageID")
             ownReadID = (s?.get("readMessageIDs") as? Map<*, *>)?.get(userID) as? String
@@ -135,7 +136,7 @@ class SocialModel : ViewModel() {
             if(threadExists && s?.metadata?.hasPendingWrites()==false && chatListener == null) chatListener = ref.collection("messages").orderBy("createdAt",Query.Direction.DESCENDING).limit(50).addSnapshotListener(MetadataChanges.INCLUDE) { ms, failure ->
                 if(thread != ref) return@addSnapshotListener
                 if(failure != null) error = UserMessages.failure(failure)
-                if(ms != null) { messages = ms.documents.reversed().map { Message(it.id,it.getString("senderID") ?: "",it.getString("text") ?: "",it.metadata.hasPendingWrites(),it.getTimestamp("createdAt")?.toDate()?.time ?: 0) }; markRead() }
+                if(ms != null) { messages = ms.documents.reversed().map { Message(it.id,it.getString("senderID") ?: "",it.getString("text") ?: "",it.metadata.hasPendingWrites(),it.getTimestamp("createdAt",DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)?.toDate()?.time ?: System.currentTimeMillis()) }; markRead() }
             }
             markRead()
         }
@@ -160,13 +161,18 @@ class SocialModel : ViewModel() {
     fun send(raw: String, onSuccess: () -> Unit) {
         val text = raw.trim(); if(sending || text.isEmpty() || text.length > 4000) return
         val userID = uid ?: return; val peerID = peer ?: return; val ref = thread ?: return; val database = db ?: return
-        if(!threadExists && peerID !in following){error="Follow this person before starting a conversation.";return}
-        val batch = database.batch(); val id = UUID.randomUUID().toString(); val time = FieldValue.serverTimestamp()
-        batch.set(ref.collection("messages").document(id),mapOf("senderID" to userID,"text" to text,"createdAt" to time))
-        if(threadExists) batch.update(ref,mapOf("lastMessageID" to id,"lastText" to text,"lastSenderID" to userID,"updatedAt" to time,"readMessageIDs.$userID" to id))
-        else batch.set(ref,mapOf("memberIDs" to listOf(userID,peerID).sorted(),"lastMessageID" to id,"lastText" to text,"lastSenderID" to userID,"createdAt" to time,"updatedAt" to time,"readMessageIDs" to mapOf(userID to id,peerID to "")))
-        sending = true; error = null
-        batch.commit().addOnSuccessListener { if(thread == ref) { sending = false; onSuccess() } }.addOnFailureListener { if(thread == ref) { sending = false; error = UserMessages.failure(it) } }
+        sending=true;error=null
+        val id=UUID.randomUUID().toString()
+        database.runTransaction { transaction ->
+            val current=transaction.get(ref)
+            if(!current.exists() && !transaction.get(database.collection("follows").document(userID+"_"+peerID)).exists())
+                throw IllegalStateException("Follow this person before starting a conversation.")
+            val time=FieldValue.serverTimestamp()
+            transaction.set(ref.collection("messages").document(id),mapOf("senderID" to userID,"text" to text,"createdAt" to time))
+            if(current.exists())transaction.update(ref,mapOf("lastMessageID" to id,"lastText" to text,"lastSenderID" to userID,"updatedAt" to time,"readMessageIDs.$userID" to id))
+            else transaction.set(ref,mapOf("memberIDs" to listOf(userID,peerID).sorted(),"lastMessageID" to id,"lastText" to text,"lastSenderID" to userID,"createdAt" to time,"updatedAt" to time,"readMessageIDs" to mapOf(userID to id,peerID to "")))
+            null
+        }.addOnSuccessListener{if(thread==ref){sending=false;onSuccess()}}.addOnFailureListener{if(thread==ref){sending=false;error=if(it is IllegalStateException)it.message else UserMessages.failure(it,"Message wasn’t sent. Please reconnect and try again.")}}
     }
     fun closeChat() { receiptListener?.remove();receiptListener=null;peerReadID=null;peerDeliveredID=null; chatListener?.remove(); threadListener?.remove(); chatListener = null; threadListener = null; thread = null; peer = null; messages = emptyList(); lastMessageID = null; ownReadID = null; readingID = null; threadExists = false; sending = false }
     override fun onCleared() { listeners.forEach { it.remove() };friendListeners.values.flatten().forEach{it.remove()}; closeChat() }

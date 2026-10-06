@@ -4,7 +4,7 @@ if (firebaseConfigured) apply(plugin = "com.google.gms.google-services")
 android {
     namespace = "com.seph.capyflow"
     compileSdk = 36
-    defaultConfig { applicationId = "com.seph.capyflow"; minSdk = 26; targetSdk = 36; versionCode = 13; versionName = "1.0.0"; buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString()) }
+    defaultConfig { applicationId = "com.seph.capyflow"; minSdk = 26; targetSdk = 36; versionCode = 14; versionName = "1.0.1"; buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString()) }
     val ciSigning = System.getenv("CAPYFLOW_CI_KEYSTORE")
     if(ciSigning != null) signingConfigs { getByName("debug") { storeFile = file(ciSigning);storePassword="android";keyAlias="capyflow-ci";keyPassword="android" } }
     else if (rootProject.file("signing/capyflow-preview.jks").exists()) signingConfigs { getByName("debug") { storeFile = rootProject.file("signing/capyflow-preview.jks"); storePassword = "android"; keyAlias = "capyflow-preview"; keyPassword = "android" } }

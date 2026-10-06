@@ -255,3 +255,55 @@ test('stale read is rejected but transaction skips old message and reads the lat
   await assertSucceeds(mark('second'));
   if((await getDoc(ref)).get('readMessageIDs.bob')!=='second')throw new Error('Latest message was not read');
 });
+
+const google = uid => env.authenticatedContext(uid, { firebase: { sign_in_provider: 'google.com' } }).firestore();
+function globalSend(db, uid, id, text = 'Hello everyone') {
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'globalMessages', id), { senderID: uid, text, createdAt: serverTimestamp() });
+  batch.set(doc(db, 'globalChatSenders', uid), { messageID: id, lastSentAt: serverTimestamp() });
+  return batch.commit();
+}
+test('global chat requires Google login, authentic authors, bounded reads and immutable messages', async () => {
+  await create('alice', 'alice_initial');
+  const db = google('alice');
+  await assertSucceeds(globalSend(db, 'alice', 'first', 'Hello\nCapyFlow'));
+  await assertSucceeds(getDocs(query(collection(google('bob'), 'globalMessages'), limit(50))));
+  await assertFails(getDocs(collection(db, 'globalMessages')));
+  await assertFails(getDocs(query(collection(db, 'globalMessages'), limit(51))));
+  await assertFails(getDocs(query(collection(env.unauthenticatedContext().firestore(), 'globalMessages'), limit(50))));
+  await assertFails(getDocs(query(collection(account('alice'), 'globalMessages'), limit(50))));
+  await assertFails(globalSend(google('bob'), 'alice', 'spoofed'));
+  await assertFails(updateDoc(doc(db, 'globalMessages', 'first'), { text: 'Changed' }));
+  await assertFails(deleteDoc(doc(db, 'globalMessages', 'first')));
+  await assertFails(getDoc(doc(google('bob'), 'globalChatSenders', 'alice')));
+});
+test('global chat validates messages and throttles atomic sends across devices', async () => {
+  await create('alice', 'alice_initial');
+  const db = google('alice');
+  await assertFails(globalSend(db, 'alice', 'blank', ' \n '));
+  await assertFails(globalSend(db, 'alice', 'long', 'x'.repeat(4001)));
+  await assertFails(setDoc(doc(db, 'globalMessages', 'no_gate'), { senderID: 'alice', text: 'Hi', createdAt: serverTimestamp() }));
+  await assertSucceeds(globalSend(db, 'alice', 'first'));
+  await assertFails(globalSend(db, 'alice', 'rapid'));
+  await env.withSecurityRulesDisabled(async c => { await updateDoc(doc(c.firestore(), 'globalChatSenders', 'alice'), { lastSentAt: Timestamp.fromMillis(Date.now() - 5000) }); });
+  await assertSucceeds(globalSend(db, 'alice', 'second'));
+});
+
+test('simultaneous first messages preserve the committed thread and both authors', async () => {
+  for (const [uid,peer] of [['alice','bob'],['bob','alice']]) await setDoc(doc(account(uid), 'follows', uid+'_'+peer), { followerID: uid, followingID: peer });
+  async function first(uid, id) {
+    const db = account(uid), ref = doc(db, 'conversations', 'alice_bob');
+    return runTransaction(db, async tx => {
+      const current = await tx.get(ref);
+      if(!current.exists()) await tx.get(doc(db,'follows',uid+'_'+(uid==='alice'?'bob':'alice')));
+      tx.set(doc(ref,'messages',id),{senderID:uid,text:id,createdAt:serverTimestamp()});
+      const data={lastMessageID:id,lastText:id,lastSenderID:uid,updatedAt:serverTimestamp()};
+      if(current.exists())tx.update(ref,{...data,['readMessageIDs.'+uid]:id});
+      else tx.set(ref,{...data,createdAt:serverTimestamp(),memberIDs:['alice','bob'],readMessageIDs:{alice:uid==='alice'?id:'',bob:uid==='bob'?id:''}});
+    });
+  }
+  await Promise.all([assertSucceeds(first('alice','one')),assertSucceeds(first('bob','two'))]);
+  await assertSucceeds(getDoc(doc(account('alice'),'conversations','alice_bob','messages','one')));
+  await assertSucceeds(getDoc(doc(account('bob'),'conversations','alice_bob','messages','two')));
+  await assertFails(getDoc(doc(account('mallory'),'conversations','alice_bob')));
+});

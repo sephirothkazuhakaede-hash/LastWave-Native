@@ -1,12 +1,5 @@
-CapyFlow 1.0.0
-• Refreshing your automatic connection now updates the displayed address.
-• Notification settings now show when notifications are enabled and refresh after changes in Android settings.
+Global Chat is here. Open your profile side panel and join the conversation with your Google account. See each listener’s picture, name and message time.
 
-• Your profile picture now appears on Home and in your Library.
-• Message notifications use the CapyFlow icon.
-• Clearer settings, update descriptions and error messages.
-• Automatic connections retry temporary failures without extra taps.
-• Browse Recently played horizontally, with Show more for your latest 20 songs.
-• Receive new-message notifications while the app is in the background.
+Chats now separate messages by date. Starting a new conversation is more reliable, including when both people send their first message at the same time. Global Chat loads older messages on demand and keeps profile fetching efficient.
 
-Your account, playlists and downloads stay saved when you update.
+Your account, playlists, messages and downloads remain in place when updating.

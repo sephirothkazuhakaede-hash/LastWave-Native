@@ -82,7 +82,7 @@ import kotlinx.coroutines.*
 @Composable fun DrawerRow(title:String,icon:androidx.compose.ui.graphics.vector.ImageVector,onClick:()->Unit){
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Glass).border(1.dp,Color.White.copy(alpha=.07f),RoundedCornerShape(24.dp)).clickable(onClick=onClick).padding(20.dp),verticalAlignment=Alignment.CenterVertically){Icon(icon,null,tint=Violet);Text(title,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f).padding(start=16.dp));Icon(Icons.Default.ChevronRight,null,tint=Color.White.copy(alpha=.4f))}
 }
-@Composable fun AccountDrawer(vm:CapyModel,social:SocialModel,signIn:()->Unit,onClose:()->Unit,onProfile:(Profile)->Unit,onSocial:()->Unit,onMessages:()->Unit,initialPage:String="CapyFlow"){
+@Composable fun AccountDrawer(vm:CapyModel,social:SocialModel,signIn:()->Unit,onClose:()->Unit,onProfile:(Profile)->Unit,onSocial:()->Unit,onMessages:()->Unit,onGlobalChat:()->Unit,initialPage:String="CapyFlow"){
     var page by remember(initialPage){mutableStateOf(initialPage)};val scope=rememberCoroutineScope()
     var confirmSignOut by remember { mutableStateOf(false) }
     if(confirmSignOut) AlertDialog(onDismissRequest={confirmSignOut=false},title={Text("Sign out?")},text={Text("Your playlists stay saved to your account. You can sign in again anytime.")},confirmButton={TextButton(onClick={confirmSignOut=false;social.bind(null,null);vm.signOut();onClose()}){Text("Sign out")}},dismissButton={TextButton(onClick={confirmSignOut=false}){Text("Cancel")}})
@@ -93,7 +93,7 @@ import kotlinx.coroutines.*
             "CapyFlow"->{
                 val p=social.ownProfile
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Violet.copy(alpha=.12f)).border(1.dp,Violet.copy(alpha=.25f),RoundedCornerShape(28.dp)).clickable{if(p!=null)onProfile(p) else signIn()}.padding(18.dp),verticalAlignment=Alignment.CenterVertically){ProfileAvatar(p,68);Column(Modifier.padding(start=16.dp)){Text(p?.displayName ?: "Welcome",fontSize=23.sp,fontWeight=FontWeight.Bold);Text(p?.let{"@${it.username}"} ?: "Sign in to CapyFlow",color=Color.White.copy(alpha=.6f));Text("View profile",color=Violet,modifier=Modifier.padding(top=5.dp))}}
-                DrawerRow("Profile & friends",Icons.Default.People){onSocial()};DrawerRow("Messages",Icons.Default.Forum){onMessages()};DrawerRow("Settings",Icons.Default.Settings){page="Settings"};DrawerRow("Friend Activity privacy",Icons.Default.PrivacyTip){page="Friend Activity privacy"};DrawerRow("Updates",Icons.Default.SystemUpdate){page="Updates"}
+                DrawerRow("Profile & friends",Icons.Default.People){onSocial()};DrawerRow("Messages",Icons.Default.Forum){onMessages()};DrawerRow("Global Chat",Icons.Default.Public){onGlobalChat()};DrawerRow("Settings",Icons.Default.Settings){page="Settings"};DrawerRow("Friend Activity privacy",Icons.Default.PrivacyTip){page="Friend Activity privacy"};DrawerRow("Updates",Icons.Default.SystemUpdate){page="Updates"}
                 Section("Friend Activity")
                 var now by remember{mutableLongStateOf(System.currentTimeMillis())};LaunchedEffect(Unit){while(true){delay(30000);now=System.currentTimeMillis()}}
                 val active=social.activity.filterValues{it.title.isNotBlank()}.toList().sortedWith(compareByDescending<Pair<String,ListeningActivity>>{it.second.playing && it.second.expires>now}.thenByDescending{it.second.updated})
