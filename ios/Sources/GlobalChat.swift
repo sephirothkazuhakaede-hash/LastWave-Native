@@ -165,7 +165,7 @@ struct GlobalChatView: View {
                     }.buttonStyle(.plain)
                 } else { RoundedRectangle(cornerRadius: 6).fill(CapyColor.surfaceStrong).frame(width: 96, height: 12).accessibilityLabel("Loading profile") }
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(message.text).font(.capyBody).fixedSize(horizontal: false, vertical: true).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(message.text).font(.capyBody).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                     Text(message.pending ? "Sending…" : message.createdAt.formatted(date: .omitted, time: .shortened)).font(.caption2).opacity(0.65)
                 }
                 .padding(.horizontal, 13).padding(.vertical, 10)
