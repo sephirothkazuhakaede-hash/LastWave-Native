@@ -92,31 +92,6 @@ struct ChatDate {
     }
 }
 
-if removePresence, let previousUID {
-            Task {
-                try? await db.collection("globalChatPresence")
-                    .document(previousUID)
-                    .delete()
-            }
-        }
-    }
-
-    private func writePresence() async {
-        guard let uid else { return }
-
-        do {
-            try await db.collection("globalChatPresence")
-                .document(uid)
-                .setData([
-                    "uid": uid,
-                    "updatedAt": FieldValue.serverTimestamp()
-                ])
-        } catch {
-            // Presence is best-effort and must never interrupt Global Chat.
-        }
-    }
-}
-
 @MainActor
 final class GlobalChatPresenceSession: ObservableObject {
     @Published private(set) var userIDs: [String] = []
