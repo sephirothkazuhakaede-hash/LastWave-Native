@@ -217,8 +217,8 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
     }
 }
 
-@Composable fun GlobalChatScreen(vm:CapyModel,social:SocialModel,signIn:()->Unit,onProfile:(Profile)->Unit,onOpenPlayer:()->Unit,onClose:()->Unit){
-    val chat:GlobalChatModel=viewModel();var draft by remember{mutableStateOf("")};val list=rememberLazyListState()
+@Composable fun GlobalChatScreen(vm:CapyModel,social:SocialModel,signIn:()->Unit,onProfile:(Profile)->Unit,onClose:()->Unit){
+    val chat:GlobalChatModel=viewModel();var draft by remember{mutableStateOf("")};val list=rememberLazyListState();var chatPlayerOpen by remember{mutableStateOf(false)}
     val lifecycleOwner=LocalLifecycleOwner.current
     val known=social.friends + listOfNotNull(social.ownProfile).associateBy{it.id}
     LaunchedEffect(known){chat.seed(known)}
@@ -273,8 +273,14 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
             }
         }
         chat.error?.let{Text(it,color=Violet,fontSize=12.sp);TextButton(onClick={chat.start(vm.db,vm.user?.uid,known)}){Text("Reconnect")}}
-        vm.current?.let{MiniPlayer(it,vm,onOpenPlayer)}
-        if(vm.user!=null)Row(verticalAlignment=Alignment.Bottom){TextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),colors=TextFieldDefaults.colors(focusedContainerColor=Raised,unfocusedContainerColor=Raised,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent),maxLines=5);Spacer(Modifier.width(8.dp));FilledIconButton(onClick={val submitted=draft;chat.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!chat.sending&&social.ownProfile!=null){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Night)}}
+        Column(Modifier.fillMaxWidth().padding(top=10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            vm.current?.let{ChatMiniPlayer(it,vm){chatPlayerOpen=true}}
+            if(vm.user!=null)Row(verticalAlignment=Alignment.Bottom){TextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),colors=TextFieldDefaults.colors(focusedContainerColor=Raised,unfocusedContainerColor=Raised,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent),maxLines=5);Spacer(Modifier.width(8.dp));FilledIconButton(onClick={val submitted=draft;chat.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!chat.sending&&social.ownProfile!=null){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Night)}}
+        }
+    }
+    if(chatPlayerOpen){
+        BackHandler{chatPlayerOpen=false}
+        PlayerScreen(vm,{chatPlayerOpen=false},{},{})
     }
 }
 
