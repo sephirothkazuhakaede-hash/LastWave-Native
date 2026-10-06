@@ -531,6 +531,7 @@ struct SharedPlaylistDetailView: View {
     @State private var playlistName = ""
     @State private var managePresented = false
     @State private var addSongsPresented = false
+    @State private var showPlayer = false
     @Environment(\.dismiss) private var dismiss
     private var playlist: SharedPlaylist? { social.sharedPlaylists.first { $0.id == playlistID } }
     var body: some View {
@@ -572,6 +573,18 @@ struct SharedPlaylistDetailView: View {
                     .padding(.top, 18).padding(.bottom, 100)
                 }
             }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 6) {
+            if player.current != nil {
+                PlaylistNowPlayingBar { showPlayer = true }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+            }
+        }
+        .sheet(isPresented: $showPlayer) {
+            PlayerView()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
         }
         .navigationTitle("Shared Playlist").navigationBarTitleDisplayMode(.inline)
         .toolbar {
