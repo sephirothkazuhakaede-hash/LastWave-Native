@@ -92,10 +92,221 @@ struct ChatDate {
     }
 }
 
+if removePresence, let previousUID {
+            Task {
+                try? await db.collection("globalChatPresence")
+                    .document(previousUID)
+                    .delete()
+            }
+        }
+    }
+
+    private func writePresence() async {
+        guard let uid else { return }
+
+        do {
+            try await db.collection("globalChatPresence")
+                .document(uid)
+                .setData([
+                    "uid": uid,
+                    "updatedAt": FieldValue.serverTimestamp()
+                ])
+        } catch {
+            // Presence is best-effort and must never interrupt Global Chat.
+        }
+    }
+}
+
+@MainActor
+final class GlobalChatPresenceSession: ObservableObject {
+    @Published private(set) var userIDs: [String] = []
+    @Published private(set) var profiles: [String: SocialProfile] = [:]
+
+    private let db = Firestore.firestore()
+    private var listener: ListenerRegistration?
+    private var heartbeatTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
+    private var uid: String?
+    private var epoch = UUID()
+    private var requestedProfiles = Set<String>()
+
+    func start(userID: String?) {
+        stop(removePresence: false)
+
+        guard let userID else {
+            userIDs = []
+            profiles = [:]
+            return
+        }
+
+        uid = userID
+        let session = epoch
+
+        listener = db.collection("globalChatPresence")
+            .addSnapshotListener { [weak self] snapshot, _ in
+                Task { @MainActor in
+                    guard let self, self.epoch == session else { return }
+                    guard let snapshot else { return }
+
+                    self.updatePresence(
+                        documents: snapshot.documents,
+                        session: session
+                    )
+                }
+            }
+
+        heartbeatTask = Task { [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                await self.writePresence()
+
+                try? await Task.sleep(for: .seconds(25))
+
+                guard self.epoch == session else { return }
+            }
+        }
+
+        refreshTask = Task { [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+
+                guard self.epoch == session else { return }
+
+                await self.refreshPresence(session: session)
+            }
+        }
+    }
+
+    func stop(removePresence: Bool = true) {
+        let previousUID = uid
+
+        epoch = UUID()
+
+        listener?.remove()
+        listener = nil
+
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+
+        refreshTask?.cancel()
+        refreshTask = nil
+
+        uid = nil
+        userIDs = []
+        profiles = [:]
+        requestedProfiles = []
+
+        if removePresence, let previousUID {
+            Task {
+                try? await db.collection("globalChatPresence")
+                    .document(previousUID)
+                    .delete()
+            }
+        }
+    }
+
+    private func writePresence() async {
+        guard let uid else { return }
+
+        do {
+            try await db.collection("globalChatPresence")
+                .document(uid)
+                .setData([
+                    "uid": uid,
+                    "updatedAt": FieldValue.serverTimestamp()
+                ])
+        } catch {
+            // Presence is best-effort and must never interrupt chat.
+        }
+    }
+
+    private func refreshPresence(session: UUID) async {
+        do {
+            let snapshot = try await db.collection("globalChatPresence")
+                .getDocuments()
+
+            guard epoch == session else { return }
+
+            updatePresence(
+                documents: snapshot.documents,
+                session: session
+            )
+        } catch {
+            // Presence failures must never interrupt Global Chat.
+        }
+    }
+
+    private func updatePresence(
+        documents: [QueryDocumentSnapshot],
+        session: UUID
+    ) {
+        let cutoff = Date().addingTimeInterval(-75)
+
+        let activeIDs = documents.compactMap { document -> String? in
+            let data = document.data()
+
+            guard
+                let presenceUID = data["uid"] as? String,
+                let updatedAt = data["updatedAt"] as? Timestamp,
+                updatedAt.dateValue() >= cutoff
+            else {
+                return nil
+            }
+
+            return presenceUID
+        }
+
+        userIDs = Array(Set(activeIDs)).sorted()
+
+        let missing = userIDs.filter {
+            profiles[$0] == nil && !requestedProfiles.contains($0)
+        }
+
+        guard !missing.isEmpty else { return }
+
+        requestedProfiles.formUnion(missing)
+
+        Task { [weak self] in
+            guard let self else { return }
+
+            for start in stride(from: 0, to: missing.count, by: 20) {
+                let end = min(start + 20, missing.count)
+                let ids = Array(missing[start..<end])
+
+                do {
+                    let result = try await db.collection("profiles")
+                        .whereField(FieldPath.documentID(), in: ids)
+                        .limit(to: 20)
+                        .getDocuments()
+
+                    guard epoch == session else { return }
+
+                    for document in result.documents {
+                        if let profile = SocialProfile(
+                            id: document.documentID,
+                            data: document.data()
+                        ) {
+                            profiles[profile.id] = profile
+                        }
+                    }
+                } catch {
+                    guard epoch == session else { return }
+                    requestedProfiles.subtract(ids)
+                }
+            }
+        }
+    }
+}
+
 struct GlobalChatView: View {
     @EnvironmentObject private var messaging: MessagingStore
     @EnvironmentObject private var social: SocialStore
     @StateObject private var chat = GlobalChatSession()
+    @StateObject private var presence = GlobalChatPresenceSession()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var draft = ""
     @State private var loadingHistory = false
     var body: some View {
@@ -107,7 +318,73 @@ struct GlobalChatView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 16) {
-                            Text("A shared chat for everyone on CapyFlow.").font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                            VStack(alignment: .leading, spacing: 10) {
+    Text("A shared chat for everyone on CapyFlow.")
+        .font(.capyCaption)
+        .foregroundStyle(CapyColor.secondaryText)
+
+    if !presence.userIDs.isEmpty {
+        NavigationLink {
+            GlobalChatActiveUsersView(
+    presence: presence
+)
+        } label: {
+            HStack(spacing: 10) {
+                HStack(spacing: -8) {
+                    ForEach(Array(presence.userIDs.prefix(4)), id: \.self) { uid in
+                        if let person = presence.profiles[uid] {
+                            SocialAvatar(profile: person, size: 28)
+                                .overlay {
+                                    Circle()
+                                        .stroke(CapyColor.background, lineWidth: 2)
+                                }
+                        } else {
+                            Circle()
+                                .fill(CapyColor.surfaceStrong)
+                                .frame(width: 28, height: 28)
+                                .overlay {
+                                    Image(systemName: "person.fill")
+                                        .font(.caption2)
+                                        .foregroundStyle(CapyColor.secondaryText)
+                                }
+                                .overlay {
+                                    Circle()
+                                        .stroke(CapyColor.background, lineWidth: 2)
+                                }
+                        }
+                    }
+                }
+
+                Text("In chat · \(presence.userIDs.count)")
+                    .font(.capyCallout)
+                    .foregroundStyle(Color.white)
+
+                if presence.userIDs.count > 4 {
+                    Text("+\(presence.userIDs.count - 4)")
+                        .font(.capyCaption)
+                        .foregroundStyle(CapyColor.secondaryText)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.bold())
+                    .foregroundStyle(CapyColor.tertiaryText)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .background(
+                CapyColor.surfaceStrong,
+                in: RoundedRectangle(
+                    cornerRadius: 16,
+                    style: .continuous
+                )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
                             if chat.loading { ProgressView("Loading chat…") }
                             if chat.hasMore {
                                 Button(chat.loadingOlder ? "Loading…" : "Load older messages") {
@@ -145,8 +422,26 @@ struct GlobalChatView: View {
         }
         .navigationTitle("Global Chat").navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar).toolbar(.visible, for: .navigationBar)
-        .task(id: social.currentUserID) { messaging.globalChatVisible = true; chat.start(userID: social.currentUserID) }
-        .onDisappear { messaging.globalChatVisible = false; chat.stop() }
+        .task(id: social.currentUserID) {
+    messaging.globalChatVisible = true
+    chat.start(userID: social.currentUserID)
+
+    if scenePhase == .active {
+        presence.start(userID: social.currentUserID)
+    }
+}
+.onChange(of: scenePhase) { _, newPhase in
+    if newPhase == .active {
+        presence.start(userID: social.currentUserID)
+    } else {
+        presence.stop()
+    }
+}
+.onDisappear {
+    messaging.globalChatVisible = false
+    chat.stop()
+    presence.stop()
+}
     }
     private func messageRow(_ message: DirectMessage) -> some View {
         let own = message.senderID == social.currentUserID
@@ -177,5 +472,85 @@ struct GlobalChatView: View {
             }
             if !own { Spacer(minLength: 45) }
         }
+    }
+}
+
+private struct GlobalChatActiveUsersView: View {
+    @ObservedObject var presence: GlobalChatPresenceSession
+
+    var body: some View {
+        ZStack {
+            WaveBackdrop()
+
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(presence.userIDs, id: \.self) { uid in
+                        if let person = presence.profiles[uid] {
+                            NavigationLink {
+                                SocialPersonProfileView(person: person)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    SocialAvatar(profile: person, size: 46)
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(person.displayName)
+                                            .font(.capyCallout)
+                                            .foregroundStyle(Color.white)
+                                            .lineLimit(1)
+
+                                        Text("@\(person.username)")
+                                            .font(.capyCaption)
+                                            .foregroundStyle(CapyColor.secondaryText)
+                                            .lineLimit(1)
+                                    }
+
+                                    Spacer()
+
+                                    Circle()
+                                        .fill(Color.green)
+                                        .frame(width: 8, height: 8)
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(CapyColor.tertiaryText)
+                                }
+                                .padding(12)
+                                .background(
+                                    CapyColor.surfaceStrong,
+                                    in: RoundedRectangle(
+                                        cornerRadius: 18,
+                                        style: .continuous
+                                    )
+                                )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            HStack(spacing: 12) {
+                                Circle()
+                                    .fill(CapyColor.surfaceStrong)
+                                    .frame(width: 46, height: 46)
+                                    .overlay {
+                                        Image(systemName: "person.fill")
+                                            .foregroundStyle(CapyColor.secondaryText)
+                                    }
+
+                                Text("Loading profile…")
+                                    .font(.capyCallout)
+                                    .foregroundStyle(CapyColor.secondaryText)
+
+                                Spacer()
+                            }
+                            .padding(12)
+                        }
+                    }
+                }
+                .padding(16)
+            }
+        }
+        .navigationTitle("In chat · \(presence.userIDs.count)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar(.visible, for: .navigationBar)
     }
 }
