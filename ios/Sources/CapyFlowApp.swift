@@ -693,7 +693,7 @@ private struct ProfileDrawerView: View {
         }
         .safeAreaPadding(.top)
         .safeAreaPadding(.bottom)
-        }
+        
     }
 
     private func perform(_ action: () -> Void) {
