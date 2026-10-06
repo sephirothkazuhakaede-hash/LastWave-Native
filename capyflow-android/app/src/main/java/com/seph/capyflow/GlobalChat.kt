@@ -22,6 +22,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.firebase.firestore.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -42,6 +45,7 @@ fun chatTime(date:Long):String = Instant.ofEpochMilli(date).atZone(ZoneId.system
 class GlobalChatModel:ViewModel() {
     var messages by mutableStateOf<List<Message>>(emptyList()); private set
     var profiles by mutableStateOf<Map<String,Profile>>(emptyMap()); private set
+    var activeUserIDs by mutableStateOf<List<String>>(emptyList()); private set
     var loading by mutableStateOf(false); private set
     var sending by mutableStateOf(false); private set
     var loadingOlder by mutableStateOf(false); private set
@@ -50,6 +54,8 @@ class GlobalChatModel:ViewModel() {
     private var database:FirebaseFirestore?=null
     private var uid:String?=null
     private var listener:ListenerRegistration?=null
+    private var presenceListener:ListenerRegistration?=null
+    private var presenceJob:kotlinx.coroutines.Job?=null
     private var generation=0
     private var oldest:DocumentSnapshot?=null
     private val history=mutableMapOf<String,Message>()
@@ -68,8 +74,114 @@ class GlobalChatModel:ViewModel() {
             if(snapshot!=null){error=null;merge(snapshot.documents,epoch);if(oldest==null){oldest=snapshot.documents.lastOrNull();hasMore=snapshot.size()==50}}
         }
     }
+    fun startPresence() {
+    val db=database ?: return
+    val userID=uid ?: return
+
+    stopPresence(remove=false)
+    val epoch=generation
+
+    presenceListener=db.collection("globalChatPresence")
+        .addSnapshotListener { snapshot,_ ->
+            if(epoch!=generation || snapshot==null)return@addSnapshotListener
+
+            val cutoff=System.currentTimeMillis()-75_000L
+
+            activeUserIDs=snapshot.documents.mapNotNull { document ->
+                val presenceUID=document.getString("uid")
+                val updated=document.getTimestamp("updatedAt")?.toDate()?.time
+
+                if(presenceUID!=null && updated!=null && updated>=cutoff)
+                    presenceUID
+                else null
+            }.distinct().sorted()
+
+            loadPresenceProfiles(activeUserIDs,epoch)
+        }
+
+    presenceJob=viewModelScope.launch {
+        while(true) {
+            try {
+                db.collection("globalChatPresence")
+                    .document(userID)
+                    .set(
+                        mapOf(
+                            "uid" to userID,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    ).await()
+            } catch(_:Exception) {
+                // Presence must never interrupt Global Chat.
+            }
+
+            kotlinx.coroutines.delay(25_000L)
+
+            if(epoch!=generation)return@launch
+        }
+    }
+}
+
+fun stopPresence(remove:Boolean=true) {
+    val db=database
+    val userID=uid
+
+    presenceListener?.remove()
+    presenceListener=null
+
+    presenceJob?.cancel()
+    presenceJob=null
+
+    activeUserIDs=emptyList()
+
+    if(remove && db!=null && userID!=null) {
+        viewModelScope.launch {
+            try {
+                db.collection("globalChatPresence")
+                    .document(userID)
+                    .delete()
+                    .await()
+            } catch(_:Exception) {
+                // Best-effort cleanup.
+            }
+        }
+    }
+}
+
+private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
+    val db=database ?: return
+    val missing=ids.filter { profiles[it]==null }
+
+    if(missing.isEmpty())return
+
+    viewModelScope.launch {
+        for(chunk in missing.chunked(20)) {
+            try {
+                val result=db.collection("profiles")
+                    .whereIn(FieldPath.documentId(),chunk)
+                    .limit(20)
+                    .get()
+                    .await()
+
+                if(epoch!=generation)return@launch
+
+                profiles=profiles+result.documents.map {
+                    it.id to Profile.from(it)
+                }
+            } catch(_:Exception) {
+                // Profile failure must not break presence or chat.
+            }
+        }
+    }
+}
     fun seed(known:Map<String,Profile>){profiles=profiles+known}
-    fun stop(){generation++;listener?.remove();listener=null;sending=false;loadingOlder=false}
+    fun stop(){
+    stopPresence()
+    generation++
+    listener?.remove()
+    listener=null
+    sending=false
+    loadingOlder=false
+}
     override fun onCleared(){stop()}
     private fun merge(docs:List<DocumentSnapshot>,epoch:Int) {
         docs.forEach{d -> val sender=d.getString("senderID");val text=d.getString("text");if(sender!=null && text!=null)history[d.id]=Message(d.id,sender,text,d.metadata.hasPendingWrites(),d.getTimestamp("createdAt",DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)?.toDate()?.time ?: System.currentTimeMillis())}
@@ -107,15 +219,52 @@ class GlobalChatModel:ViewModel() {
 
 @Composable fun GlobalChatScreen(vm:CapyModel,social:SocialModel,signIn:()->Unit,onProfile:(Profile)->Unit,onClose:()->Unit){
     val chat:GlobalChatModel=viewModel();var draft by remember{mutableStateOf("")};val list=rememberLazyListState()
+    val lifecycleOwner=LocalLifecycleOwner.current
     val known=social.friends + listOfNotNull(social.ownProfile).associateBy{it.id}
     LaunchedEffect(known){chat.seed(known)}
-    DisposableEffect(vm.user?.uid){chat.start(vm.db,vm.user?.uid,known);onDispose{chat.stop()}}
+    DisposableEffect(vm.user?.uid,lifecycleOwner){
+    chat.start(vm.db,vm.user?.uid,known)
+
+    val observer=LifecycleEventObserver{_,event ->
+        when(event){
+            Lifecycle.Event.ON_START -> chat.startPresence()
+            Lifecycle.Event.ON_STOP -> chat.stopPresence()
+            else -> Unit
+        }
+    }
+
+    lifecycleOwner.lifecycle.addObserver(observer)
+
+    if(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)){
+        chat.startPresence()
+    }
+
+    onDispose{
+        lifecycleOwner.lifecycle.removeObserver(observer)
+        chat.stop()
+    }
+}
+    chat.start(vm.db,vm.user?.uid,known)
+    chat.startPresence()
+
+    onDispose{
+        chat.stop()
+    }
+}
     BackHandler(onBack=onClose)
     LaunchedEffect(chat.messages.lastOrNull()?.id){if(list.firstVisibleItemIndex==0)list.animateScrollToItem(0)}
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(16.dp)){
         Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Text("Global Chat",fontSize=20.sp,fontWeight=FontWeight.Bold)}
         if(vm.user==null){Text("Sign in to chat with CapyFlow listeners.");Button(onClick=signIn){Text("Continue with Google")};Spacer(Modifier.weight(1f))}
         else {
+            if(chat.activeUserIDs.isNotEmpty()){
+        GlobalChatPresenceStrip(
+        userIDs=chat.activeUserIDs,
+        profiles=chat.profiles,
+        onProfile=onProfile
+    )
+    Spacer(Modifier.height(8.dp))
+}
             if(chat.loading)LinearProgressIndicator(Modifier.fillMaxWidth(),color=Violet)
             LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,reverseLayout=true,verticalArrangement=Arrangement.spacedBy(14.dp),contentPadding=PaddingValues(vertical=12.dp)){
                 val ordered=chat.messages.reversed()
@@ -150,5 +299,147 @@ class GlobalChatModel:ViewModel() {
             }
             if(own)Box(Modifier.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,32)}
         }
+    }
+}
+
+
+@Composable
+private fun GlobalChatPresenceStrip(
+    userIDs:List<String>,
+    profiles:Map<String,Profile>,
+    onProfile:(Profile)->Unit
+){
+    var showUsers by remember{mutableStateOf(false)}
+    val visible=userIDs.take(4)
+
+    Surface(
+        shape=RoundedCornerShape(16.dp),
+        color=Raised,
+        modifier=Modifier
+            .fillMaxWidth()
+            .clickable{showUsers=true}
+    ){
+        Row(
+            modifier=Modifier.padding(horizontal=12.dp,vertical=9.dp),
+            verticalAlignment=Alignment.CenterVertically
+        ){
+            Box(
+                modifier=Modifier.width(
+                    if(visible.isEmpty()) 0.dp
+                    else 28.dp + ((visible.size-1)*20).dp
+                )
+            ){
+                visible.forEachIndexed{index,userID ->
+                    Box(
+                        modifier=Modifier
+                            .offset(x=(index*20).dp)
+                            .size(28.dp)
+                    ){
+                        ProfileAvatar(profiles[userID],28)
+                    }
+                }
+            }
+
+            Spacer(Modifier.width(10.dp))
+
+            Text(
+                "In chat · ${userIDs.size}",
+                color=Color.White,
+                fontSize=14.sp,
+                fontWeight=FontWeight.SemiBold
+            )
+
+            if(userIDs.size>4){
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    "+${userIDs.size-4}",
+                    color=Color.White.copy(alpha=.6f),
+                    fontSize=12.sp
+                )
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            Text(
+                "›",
+                color=Color.White.copy(alpha=.45f),
+                fontSize=22.sp
+            )
+        }
+    }
+
+    if(showUsers){
+        AlertDialog(
+            onDismissRequest={showUsers=false},
+            title={
+                Text(
+                    "In chat · ${userIDs.size}",
+                    color=Color.White
+                )
+            },
+            text={
+                LazyColumn(
+                    modifier=Modifier
+                        .fillMaxWidth()
+                        .heightIn(max=420.dp),
+                    verticalArrangement=Arrangement.spacedBy(8.dp)
+                ){
+                    items(userIDs,key={it}){userID ->
+                        val person=profiles[userID]
+
+                        Row(
+                            modifier=Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .clickable(enabled=person!=null){
+                                    if(person!=null){
+                                        showUsers=false
+                                        onProfile(person)
+                                    }
+                                }
+                                .padding(10.dp),
+                            verticalAlignment=Alignment.CenterVertically
+                        ){
+                            ProfileAvatar(person,42)
+
+                            Spacer(Modifier.width(12.dp))
+
+                            Column(Modifier.weight(1f)){
+                                Text(
+                                    person?.displayName ?: "Loading profile…",
+                                    color=Color.White,
+                                    fontWeight=FontWeight.SemiBold,
+                                    maxLines=1,
+                                    overflow=TextOverflow.Ellipsis
+                                )
+
+                                if(person!=null){
+                                    Text(
+                                        "@${person.username}",
+                                        color=Color.White.copy(alpha=.55f),
+                                        fontSize=12.sp,
+                                        maxLines=1,
+                                        overflow=TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape)
+                                    .background(Color.Green)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton={
+                TextButton(onClick={showUsers=false}){
+                    Text("Close",color=Violet)
+                }
+            },
+            containerColor=Night
+        )
     }
 }
