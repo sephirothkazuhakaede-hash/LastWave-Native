@@ -217,7 +217,7 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
     }
 }
 
-@Composable fun GlobalChatScreen(vm:CapyModel,social:SocialModel,signIn:()->Unit,onProfile:(Profile)->Unit,onClose:()->Unit){
+@Composable fun GlobalChatScreen(vm:CapyModel,social:SocialModel,signIn:()->Unit,onProfile:(Profile)->Unit,onOpenPlayer:()->Unit,onClose:()->Unit){
     val chat:GlobalChatModel=viewModel();var draft by remember{mutableStateOf("")};val list=rememberLazyListState()
     val lifecycleOwner=LocalLifecycleOwner.current
     val known=social.friends + listOfNotNull(social.ownProfile).associateBy{it.id}
@@ -246,7 +246,7 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
 }
     
     BackHandler(onBack=onClose)
-    LaunchedEffect(chat.messages.lastOrNull()?.id){if(list.firstVisibleItemIndex==0)list.animateScrollToItem(0)}
+    LaunchedEffect(chat.messages.lastOrNull()?.id){if(list.firstVisibleItemIndex<=1)list.animateScrollToItem(0)}
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(16.dp)){
         Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Text("Global Chat",fontSize=20.sp,fontWeight=FontWeight.Bold)}
         if(vm.user==null){Text("Sign in to chat with CapyFlow listeners.");Button(onClick=signIn){Text("Continue with Google")};Spacer(Modifier.weight(1f))}
@@ -273,6 +273,7 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
             }
         }
         chat.error?.let{Text(it,color=Violet,fontSize=12.sp);TextButton(onClick={chat.start(vm.db,vm.user?.uid,known)}){Text("Reconnect")}}
+        vm.current?.let{MiniPlayer(it,vm,onOpenPlayer)}
         if(vm.user!=null)Row(verticalAlignment=Alignment.Bottom){TextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),colors=TextFieldDefaults.colors(focusedContainerColor=Raised,unfocusedContainerColor=Raised,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent),maxLines=5);Spacer(Modifier.width(8.dp));FilledIconButton(onClick={val submitted=draft;chat.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!chat.sending&&social.ownProfile!=null){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Night)}}
     }
 }
