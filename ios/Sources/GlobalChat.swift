@@ -456,7 +456,10 @@ struct GlobalChatView: View {
                                         .padding(.vertical, 8)
                                     }
 
-                                    messageRow(message)
+                                    let previousSame = index > 0 && chat.messages[index - 1].senderID == message.senderID
+                                    let nextSame = index + 1 < chat.messages.count && chat.messages[index + 1].senderID == message.senderID
+                                    messageRow(message, previousSame: previousSame, nextSame: nextSame)
+                                        .padding(.top, previousSame ? -11 : 0)
                                         .id(message.id)
                                 }
                             }
@@ -610,99 +613,58 @@ struct GlobalChatView: View {
         }
     }
 
-    private func messageRow(_ message: DirectMessage) -> some View {
+    private func messageRow(_ message: DirectMessage, previousSame: Bool, nextSame: Bool) -> some View {
         let own = message.senderID == social.currentUserID
         let person = chat.profiles[message.senderID]
 
-        return HStack(alignment: .top, spacing: 8) {
-            if own {
-                Spacer(minLength: 45)
-            }
+        return HStack(alignment: .bottom, spacing: 7) {
+            if own { Spacer(minLength: 44) }
 
             if !own {
-                if let person {
-                    NavigationLink {
-                        SocialPersonProfileView(person: person)
-                    } label: {
-                        SocialAvatar(profile: person, size: 32)
-                    }
-                    .buttonStyle(.plain)
+                if !nextSame, let person {
+                    NavigationLink { SocialPersonProfileView(person: person) } label: {
+                        SocialAvatar(profile: person, size: 30)
+                    }.buttonStyle(.plain)
                 } else {
-                    Circle()
-                        .fill(CapyColor.surfaceStrong)
-                        .frame(width: 32, height: 32)
+                    Color.clear.frame(width: 30, height: 1)
                 }
             }
 
-            VStack(
-                alignment: own ? .trailing : .leading,
-                spacing: 4
-            ) {
-                if let person {
-                    NavigationLink {
-                        SocialPersonProfileView(person: person)
-                    } label: {
-                        Text(person.displayName)
-                            .font(.capyCaption)
-                            .foregroundStyle(CapyColor.accent)
-                            .lineLimit(1)
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(CapyColor.surfaceStrong)
-                        .frame(width: 96, height: 12)
-                        .accessibilityLabel("Loading profile")
+            VStack(alignment: own ? .trailing : .leading, spacing: 3) {
+                if !previousSame, let person {
+                    Text(person.displayName)
+                        .font(.capyCaption)
+                        .foregroundStyle(CapyColor.accent)
+                        .lineLimit(1)
                 }
 
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(message.text)
-                        .font(.capyBody)
-                        .fixedSize(
-                            horizontal: false,
-                            vertical: true
-                        )
-                        .textSelection(.enabled)
-
-                    Text(
-                        message.pending
-                            ? "Sending…"
-                            : message.createdAt.formatted(
-                                date: .omitted,
-                                time: .shortened
-                            )
+                Text(message.text)
+                    .font(.capyBody)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .foregroundStyle(own ? CapyColor.background : Color.white)
+                    .background(
+                        own ? CapyColor.accent : CapyColor.surfaceStrong,
+                        in: RoundedRectangle(cornerRadius: previousSame || nextSame ? 13 : 18, style: .continuous)
                     )
+
+                Text(message.pending ? "Sending…" : message.createdAt.formatted(date: .omitted, time: .shortened))
                     .font(.caption2)
-                    .opacity(0.65)
-                }
-                .padding(.horizontal, 13)
-                .padding(.vertical, 10)
-                .foregroundStyle(
-                    own ? CapyColor.background : Color.white
-                )
-                .background(
-                    own
-                        ? CapyColor.accent
-                        : CapyColor.surfaceStrong,
-                    in: RoundedRectangle(
-                        cornerRadius: 18,
-                        style: .continuous
-                    )
-                )
+                    .foregroundStyle(CapyColor.secondaryText)
             }
 
-            if own, let person {
-                NavigationLink {
-                    SocialPersonProfileView(person: person)
-                } label: {
-                    SocialAvatar(profile: person, size: 32)
+            if own {
+                if !nextSame, let person {
+                    NavigationLink { SocialPersonProfileView(person: person) } label: {
+                        SocialAvatar(profile: person, size: 30)
+                    }.buttonStyle(.plain)
+                } else {
+                    Color.clear.frame(width: 30, height: 1)
                 }
-                .buttonStyle(.plain)
             }
 
-            if !own {
-                Spacer(minLength: 45)
-            }
+            if !own { Spacer(minLength: 44) }
         }
-    }
-}
+    }}
