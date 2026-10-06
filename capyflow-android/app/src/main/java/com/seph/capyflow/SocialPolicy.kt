@@ -7,7 +7,7 @@ class PeopleSearchGate {
     fun accepts(request:Long)=request==generation
     companion object { fun normalize(raw:String)=raw.trim().removePrefix("@").lowercase(java.util.Locale.ROOT) }
 }
-data class AppNotice(val title:String,val body:String,val peerID:String?=null,val id:Long=System.nanoTime(),val global:Boolean=false)
+data class AppNotice(val title:String,val body:String,val peerID:String?=null,val id:Long=System.nanoTime(),val global:Boolean=false,val profile:Profile?=null)
 fun activityStatus(playing:Boolean,updated:Long,expires:Long,now:Long):String {
     if(playing && expires>now && updated>0 && now-updated<300000)return "Listening now"
     if(updated<=0)return "Listened recently"

@@ -1,10 +1,4 @@
-What’s new
-
-• Join Global Chat from your profile menu.
-• Choose whether to show message and Global Chat banners while you use CapyFlow.
-• Choose Global Chat notifications for when you’re outside the app with a separate switch.
-• Swipe up to dismiss a banner, or let it disappear after four seconds.
-• Messages are grouped by date, so conversations are easier to follow.
-• Starting a new chat is more reliable.
-
-Your account, playlists, messages and downloads stay with you when you update.
+• Message notifications now show the sender’s name and profile picture. Swipe up to dismiss them.
+• A smaller, cleaner profile side panel.
+• Your Global Chat messages appear on the right, with clearer chat bubbles.
+• Saved names and photos appear immediately when you return to Global Chat and refresh quietly in the background.

@@ -123,7 +123,12 @@ class MainActivity : ComponentActivity() {
     LaunchedEffect(vm.user?.uid){chatPeer=null;selectedProfile=null;social.clearPeopleSearch()}
     LaunchedEffect(requestedPeer,vm.user?.uid){if(requestedPeer!=null && vm.user!=null && requestedPeer!=vm.user?.uid){if(requestedPeer=="global-chat"){showGlobalChat=true}else{social.openChat(requestedPeer);chatPeer=requestedPeer};onPeerConsumed()}}
     GlobalChatAlerts(vm.user?.uid,showGlobalChat){notice=it}
-    LaunchedEffect(social){social.notices.collect{if(it.peerID==null || ChatPreferences.enabled(updateContext,"messageBanners"))notice=it}}
+    LaunchedEffect(social,vm.user?.uid){social.notices.collect{event->
+        if(event.peerID==null || ChatPreferences.enabled(updateContext,"messageBanners")){
+            val person=event.peerID?.let{id->social.friends[id] ?: try{social.profile(id)}catch(_:Exception){null}}
+            if(event.peerID==null || ChatPreferences.enabled(updateContext,"messageBanners"))notice=event.copy(profile=person)
+        }
+    }}
     LaunchedEffect(Unit){PushNotices.events.collect{notice=it}}
     LaunchedEffect(notice?.id){if(notice!=null){kotlinx.coroutines.delay(4000);notice=null}}
     LaunchedEffect(vm.error,social.error){(vm.error ?: social.error)?.let{notice=AppNotice("CapyFlow",it);vm.error=null;social.error=null}}
@@ -234,7 +239,7 @@ class MainActivity : ComponentActivity() {
                     if(amount<0 || noticeDrag<0){change.consume();noticeDrag=(noticeDrag+amount).coerceAtMost(0f)}
                 }
             },enter=slideInVertically(initialOffsetY={-it})+fadeIn(),exit=slideOutVertically(targetOffsetY={-it})+fadeOut()){
-            notice?.let{n->Surface(shape=RoundedCornerShape(24.dp),color=Raised,tonalElevation=8.dp,shadowElevation=8.dp){Row(Modifier.fillMaxWidth().clickable{if(n.global)showGlobalChat=true;n.peerID?.let{if(vm.user!=null){social.openChat(it);chatPeer=it}};notice=null}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){Icon(if(n.peerID!=null)Icons.Default.Forum else Icons.Default.Info,null,tint=Violet);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(n.title,fontWeight=FontWeight.Bold);Text(n.body,maxLines=3,overflow=TextOverflow.Ellipsis,fontSize=13.sp)};IconButton(onClick={notice=null}){Icon(Icons.Default.Close,"Dismiss notification")}}}}
+            notice?.let{n->Surface(shape=RoundedCornerShape(24.dp),color=Raised,tonalElevation=8.dp,shadowElevation=8.dp){Row(Modifier.fillMaxWidth().clickable{if(n.global)showGlobalChat=true;n.peerID?.let{if(vm.user!=null){social.openChat(it);chatPeer=it}};notice=null}.padding(16.dp),verticalAlignment=Alignment.CenterVertically){if(n.profile!=null)ProfileAvatar(n.profile,42) else Icon(if(n.peerID!=null)Icons.Default.Forum else Icons.Default.Info,null,tint=Violet);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(n.profile?.displayName ?: n.title,fontWeight=FontWeight.Bold,color=Violet);if(n.global)Text("Global Chat",fontSize=11.sp,color=Color.White.copy(alpha=.55f));Text(n.body,maxLines=2,overflow=TextOverflow.Ellipsis,fontSize=13.sp)};IconButton(onClick={notice=null}){Icon(Icons.Default.Close,"Dismiss notification")}}}}
         }
     }
     if(showQueue) ModalBottomSheet(onDismissRequest={showQueue=false},sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night) { QueueSheet(vm) }

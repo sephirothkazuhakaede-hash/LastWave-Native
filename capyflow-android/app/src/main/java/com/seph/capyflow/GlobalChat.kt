@@ -3,6 +3,9 @@ package com.seph.capyflow
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.material.icons.Icons
@@ -52,8 +55,9 @@ class GlobalChatModel:ViewModel() {
     private val history=mutableMapOf<String,Message>()
     private val requestedProfiles=mutableSetOf<String>()
     private var lastSent=0L
-    fun start(db:FirebaseFirestore?,userID:String?) {
-        stop();database=db;uid=userID;messages=emptyList();profiles=emptyMap();history.clear();requestedProfiles.clear();oldest=null;hasMore=false;error=null
+    fun start(db:FirebaseFirestore?,userID:String?,known:Map<String,Profile> = emptyMap()) {
+        val retained=if(uid==userID)profiles else emptyMap()
+        stop();database=db;uid=userID;messages=emptyList();profiles=retained+known;history.clear();requestedProfiles.clear();oldest=null;hasMore=false;error=null
         loading=db!=null && userID!=null
         if(db==null || userID==null)return
         val epoch=generation
@@ -64,6 +68,7 @@ class GlobalChatModel:ViewModel() {
             if(snapshot!=null){error=null;merge(snapshot.documents,epoch);if(oldest==null){oldest=snapshot.documents.lastOrNull();hasMore=snapshot.size()==50}}
         }
     }
+    fun seed(known:Map<String,Profile>){profiles=profiles+known}
     fun stop(){generation++;listener?.remove();listener=null;sending=false;loadingOlder=false}
     override fun onCleared(){stop()}
     private fun merge(docs:List<DocumentSnapshot>,epoch:Int) {
@@ -75,7 +80,11 @@ class GlobalChatModel:ViewModel() {
         requestedProfiles.addAll(missing)
         viewModelScope.launch{
             for(ids in missing.chunked(20))try{
-                val result=database?.collection("profiles")?.whereIn(FieldPath.documentId(),ids)?.limit(20)?.get()?.await() ?: return@launch
+                val query=database?.collection("profiles")?.whereIn(FieldPath.documentId(),ids)?.limit(20) ?: return@launch
+                val cached=try{query.get(Source.CACHE).await()}catch(_:Exception){null}
+                if(epoch!=generation)return@launch
+                cached?.let{profiles=it.documents.associate{d->d.id to Profile.from(d)}+profiles}
+                val result=query.get(Source.SERVER).await()
                 if(epoch!=generation)return@launch
                 profiles=profiles+result.documents.map{it.id to Profile.from(it)}
             }catch(e:Exception){if(epoch==generation){requestedProfiles.removeAll(ids.toSet());error="Some profiles couldn’t load. Please try again."}}
@@ -98,11 +107,13 @@ class GlobalChatModel:ViewModel() {
 
 @Composable fun GlobalChatScreen(vm:CapyModel,social:SocialModel,signIn:()->Unit,onProfile:(Profile)->Unit,onClose:()->Unit){
     val chat:GlobalChatModel=viewModel();var draft by remember{mutableStateOf("")};val list=rememberLazyListState()
-    DisposableEffect(vm.user?.uid){chat.start(vm.db,vm.user?.uid);onDispose{chat.stop()}}
+    val known=social.friends + listOfNotNull(social.ownProfile).associateBy{it.id}
+    LaunchedEffect(known){chat.seed(known)}
+    DisposableEffect(vm.user?.uid){chat.start(vm.db,vm.user?.uid,known);onDispose{chat.stop()}}
     BackHandler(onBack=onClose)
     LaunchedEffect(chat.messages.lastOrNull()?.id){if(list.firstVisibleItemIndex==0)list.animateScrollToItem(0)}
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(16.dp)){
-        Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Text("Global Chat",fontSize=24.sp,fontWeight=FontWeight.Bold)}
+        Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Text("Global Chat",fontSize=20.sp,fontWeight=FontWeight.Bold)}
         if(vm.user==null){Text("Sign in to chat with CapyFlow listeners.");Button(onClick=signIn){Text("Continue with Google")};Spacer(Modifier.weight(1f))}
         else {
             if(chat.loading)LinearProgressIndicator(Modifier.fillMaxWidth(),color=Violet)
@@ -112,20 +123,32 @@ class GlobalChatModel:ViewModel() {
                 itemsIndexed(ordered,key={_,m->m.id}){index,m ->
                     Column{
                         if(index==ordered.lastIndex || chatDay(m.date)!=chatDay(ordered[index+1].date))Text(chatDateLabel(m.date),fontSize=12.sp,color=Color.White.copy(alpha=.55f),modifier=Modifier.fillMaxWidth().padding(vertical=10.dp))
-                        Row(verticalAlignment=Alignment.Top,horizontalArrangement=Arrangement.spacedBy(12.dp)){
-                            val person=chat.profiles[m.sender]
-                            Box(Modifier.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,40)}
-                            Column(Modifier.weight(1f)){
-                                Row(verticalAlignment=Alignment.CenterVertically){Text(person?.displayName ?: "CapyFlow listener",color=Violet,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f));Text(if(m.pending)"Sending…" else chatTime(m.date),fontSize=11.sp,color=Color.White.copy(alpha=.55f))}
-                                Text(m.text,modifier=Modifier.padding(top=5.dp))
-                            }
-                        }
+                        GlobalMessageRow(m,chat.profiles[m.sender],m.sender==vm.user?.uid,onProfile)
                     }
                 }
                 if(chat.hasMore)item{TextButton(onClick={chat.loadOlder()},enabled=!chat.loadingOlder){Text(if(chat.loadingOlder)"Loading…" else "Load older messages")}}
             }
         }
-        chat.error?.let{Text(it,color=Violet,fontSize=12.sp);TextButton(onClick={chat.start(vm.db,vm.user?.uid)}){Text("Reconnect")}}
-        if(vm.user!=null)Row(verticalAlignment=Alignment.Bottom){OutlinedTextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message Global Chat")},modifier=Modifier.weight(1f),maxLines=5);IconButton(onClick={val submitted=draft;chat.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!chat.sending&&social.ownProfile!=null){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Violet)}}
+        chat.error?.let{Text(it,color=Violet,fontSize=12.sp);TextButton(onClick={chat.start(vm.db,vm.user?.uid,known)}){Text("Reconnect")}}
+        if(vm.user!=null)Row(verticalAlignment=Alignment.Bottom){TextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),colors=TextFieldDefaults.colors(focusedContainerColor=Raised,unfocusedContainerColor=Raised,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent),maxLines=5);Spacer(Modifier.width(8.dp));FilledIconButton(onClick={val submitted=draft;chat.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!chat.sending&&social.ownProfile!=null){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Night)}}
+    }
+}
+
+@Composable private fun GlobalMessageRow(message:Message,person:Profile?,own:Boolean,onProfile:(Profile)->Unit){
+    BoxWithConstraints(Modifier.fillMaxWidth()){
+        Row(Modifier.align(if(own)Alignment.CenterEnd else Alignment.CenterStart).widthIn(max=maxWidth*.86f),verticalAlignment=Alignment.Top,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+            if(!own)Box(Modifier.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,32)}
+            Column(Modifier.weight(1f,false),horizontalAlignment=if(own)Alignment.End else Alignment.Start){
+                if(person!=null)Text(person.displayName,color=Violet,fontSize=12.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                else Box(Modifier.padding(vertical=4.dp).size(96.dp,12.dp).clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha=.1f)))
+                Surface(shape=RoundedCornerShape(18.dp),color=if(own)Violet else Raised,modifier=Modifier.padding(top=4.dp)){
+                    Column(Modifier.padding(horizontal=13.dp,vertical=10.dp)){
+                        Text(message.text,color=if(own)Night else Color.White)
+                        Text(if(message.pending)"Sending…" else chatTime(message.date),fontSize=10.sp,color=(if(own)Night else Color.White).copy(alpha=.6f),modifier=Modifier.align(Alignment.End).padding(top=4.dp))
+                    }
+                }
+            }
+            if(own)Box(Modifier.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,32)}
+        }
     }
 }
