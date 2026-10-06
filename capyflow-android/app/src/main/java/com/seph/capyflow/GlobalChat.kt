@@ -244,13 +244,7 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
         chat.stop()
     }
 }
-    chat.start(vm.db,vm.user?.uid,known)
-    chat.startPresence()
-
-    onDispose{
-        chat.stop()
-    }
-}
+    
     BackHandler(onBack=onClose)
     LaunchedEffect(chat.messages.lastOrNull()?.id){if(list.firstVisibleItemIndex==0)list.animateScrollToItem(0)}
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(16.dp)){
