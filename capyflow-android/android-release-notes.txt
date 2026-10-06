@@ -1,3 +1,4 @@
+• Repeat your current song with the new Now Playing button.
 • Message notifications now show the sender’s name and profile picture. Swipe up to dismiss them.
 • A smaller, cleaner profile side panel.
 • Your Global Chat messages appear on the right, with clearer chat bubbles.

@@ -50,6 +50,8 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
     var audioDetails by mutableStateOf("Not playing"); private set
     private val downloadingIDs=mutableSetOf<String>()
     private val downloadSlots=kotlinx.coroutines.sync.Semaphore(2)
+    var repeatSong by mutableStateOf(prefs.getBoolean("repeatSong",false)); private set
+    fun toggleRepeat(){repeatSong=!repeatSong;prefs.edit().putBoolean("repeatSong",repeatSong).apply();controller?.repeatMode=if(repeatSong)Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF}
     var playing by mutableStateOf(false); private set
     var loading by mutableStateOf(false); private set
     var elapsed by mutableDoubleStateOf(0.0); private set
@@ -128,7 +130,9 @@ class CapyModel(app: Application) : AndroidViewModel(app) {
         controllerFuture.addListener({
             runCatching { controllerFuture.get() }.onSuccess { c ->
                 controller = c
+                c.repeatMode=if(repeatSong)Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
                 c.addListener(object : Player.Listener {
+                    override fun onRepeatModeChanged(repeatMode:Int){repeatSong=repeatMode==Player.REPEAT_MODE_ONE;prefs.edit().putBoolean("repeatSong",repeatSong).apply()}
                     override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying
                         if(isPlaying)current?.let{track -> recentTracks=(listOf(track)+recentTracks.filterNot{it.playableID==track.playableID}).take(40);prefs.edit().putString("recentTracks",JSONArray(recentTracks.map{it.json()}).toString()).apply()}
                     }
