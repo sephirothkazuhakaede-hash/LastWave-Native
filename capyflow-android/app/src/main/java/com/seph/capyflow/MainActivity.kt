@@ -244,7 +244,7 @@ class MainActivity : ComponentActivity() {
             BackHandler{social.closeChat();chatPeer=null}
             Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();ChatScreen(id,vm,social,{selectedProfile=it}){social.closeChat();chatPeer=null}}
         }}
-        if(showGlobalChat)Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();GlobalChatScreen(vm,social,signIn,{selectedProfile=it},{showPlayer=true}){showGlobalChat=false}}
+        if(showGlobalChat)Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();GlobalChatScreen(vm,social,signIn,{selectedProfile=it}){showGlobalChat=false}}
         AnimatedVisibility(showSettings,enter=fadeIn(tween(200)),exit=fadeOut(tween(200))){Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha=.55f)).clickable{showSettings=false})}
         AnimatedVisibility(showSettings,enter=slideInHorizontally(tween(300),initialOffsetX={-it}),exit=slideOutHorizontally(tween(260),targetOffsetX={-it})){
             AccountDrawer(vm,social,signIn,{showSettings=false;settingsStartPage="CapyFlow"},{selectedProfile=it},{tab="Social";showSettings=false},{tab="Messages";showSettings=false},{showGlobalChat=true;showSettings=false},settingsStartPage)
