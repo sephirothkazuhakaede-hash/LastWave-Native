@@ -289,33 +289,40 @@ struct RootView: View {
         // the inset cannot reduce its drawing bounds to the content region.
         .background { WaveBackdrop() }
         .overlay {
-            if showProfileDrawer {
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        Color.black.opacity(0.48)
-                            .ignoresSafeArea()
-                            .contentShape(Rectangle())
-                            .onTapGesture { closeDrawer() }
-                        ProfileDrawerView(
-                            close: { closeDrawer() },
-                            openProfile: { drawerPerson = nil; openDrawerDestination(.profile) },
-                            openSettings: { openDrawerDestination(.settings) },
-                            openActivity: { openDrawerDestination(.activity) },
-                            openUpdates: { openDrawerDestination(.updates) },
-                            openMessages: { openDrawerDestination(.messages) },
-                            openGlobalChat: { openDrawerDestination(.globalChat) },
-                            openPerson: { person in drawerPerson = person; openDrawerDestination(.profile) }
-                        )
-                        .frame(width: min(350, geometry.size.width * 0.88))
-                        .frame(maxHeight: .infinity)
-                        .background(CapyColor.background)
-                        .transition(.move(edge: .leading))
-                        .shadow(color: .black.opacity(0.45), radius: 30, x: 12)
-                    }
+    if showProfileDrawer {
+        GeometryReader { geometry in
+            ProfileDrawerContainer(
+                width: min(350, geometry.size.width * 0.88),
+                close: { closeDrawer() },
+                openProfile: {
+                    drawerPerson = nil
+                    openDrawerDestination(.profile)
+                },
+                openSettings: {
+                    openDrawerDestination(.settings)
+                },
+                openActivity: {
+                    openDrawerDestination(.activity)
+                },
+                openUpdates: {
+                    openDrawerDestination(.updates)
+                },
+                openMessages: {
+                    openDrawerDestination(.messages)
+                },
+                openGlobalChat: {
+                    openDrawerDestination(.globalChat)
+                },
+                openPerson: { person in
+                    drawerPerson = person
+                    openDrawerDestination(.profile)
                 }
-                .zIndex(40)
-            }
+            )
         }
+        .transition(.opacity)
+        .zIndex(40)
+    }
+}
         .sheet(isPresented: $showPlayer) {
             PlayerView()
                 .messageBanners(messaging)
@@ -376,13 +383,17 @@ struct RootView: View {
     }
 
     private func openDrawer() {
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) { showProfileDrawer = true }
-        CapyHaptics.selection()
+    withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+        showProfileDrawer = true
     }
+    CapyHaptics.selection()
+}
 
-    private func closeDrawer() {
-        withAnimation(.easeOut(duration: 0.2)) { showProfileDrawer = false }
+private func closeDrawer() {
+    withAnimation(.spring(response: 0.30, dampingFraction: 0.90)) {
+        showProfileDrawer = false
     }
+}
 
     private func openDrawerDestination(_ destination: ProfileDrawerDestination) {
         closeDrawer()
@@ -430,10 +441,8 @@ private struct CapyProfileButton: View {
     }
 }
 
-private struct ProfileDrawerView: View {
-    @EnvironmentObject private var messaging: MessagingStore
-    @EnvironmentObject private var auth: AuthSession
-    @EnvironmentObject private var social: SocialStore
+private struct ProfileDrawerContainer: View {
+    let width: CGFloat
     let close: () -> Void
     let openProfile: () -> Void
     let openSettings: () -> Void
@@ -443,77 +452,280 @@ private struct ProfileDrawerView: View {
     let openGlobalChat: () -> Void
     let openPerson: (SocialProfile) -> Void
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("CapyFlow").font(.capyTitle)
-                Spacer()
-                Button(action: close) {
-                    Image(systemName: "xmark").frame(width: 48, height: 48).contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close profile menu")
-            }
-            .padding(.horizontal, 18)
+    @State private var dragOffset: CGFloat = 0
+    @State private var suppressActions = false
 
-            Button(action: openProfile) {
-                HStack(spacing: 14) {
-                    Group {
-                        if let profile = social.profile {
-                            SocialAvatar(profile: profile, size: 72)
+    var body: some View {
+        ZStack(alignment: .leading) {
+            Color.black
+                .opacity(0.48 * Double(max(0, 1 + dragOffset / width)))
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard !suppressActions else { return }
+                    close()
+                }
+
+            ProfileDrawerView(
+                suppressActions: suppressActions,
+                openProfile: openProfile,
+                openSettings: openSettings,
+                openActivity: openActivity,
+                openUpdates: openUpdates,
+                openMessages: openMessages,
+                openGlobalChat: openGlobalChat,
+                openPerson: openPerson
+            )
+            .frame(width: width)
+            .frame(maxHeight: .infinity)
+            .background(CapyColor.background)
+            .offset(x: dragOffset)
+            .shadow(color: .black.opacity(0.45), radius: 30, x: 12)
+            .transition(.move(edge: .leading))
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 10)
+                    .onChanged { value in
+                        let horizontal =
+                            abs(value.translation.width) >
+                            abs(value.translation.height)
+
+                        guard horizontal,
+                              value.translation.width < 0 else {
+                            return
+                        }
+
+                        suppressActions = true
+                        dragOffset = value.translation.width
+                    }
+                    .onEnded { value in
+                        let horizontal =
+                            abs(value.translation.width) >
+                            abs(value.translation.height)
+
+                        let shouldClose =
+                            horizontal &&
+                            (
+                                value.translation.width < -(width * 0.28) ||
+                                value.predictedEndTranslation.width < -(width * 0.50)
+                            )
+
+                        if shouldClose {
+                            withAnimation(
+                                .spring(
+                                    response: 0.30,
+                                    dampingFraction: 0.90
+                                )
+                            ) {
+                                dragOffset = -width
+                            }
+
+                            DispatchQueue.main.asyncAfter(
+                                deadline: .now() + 0.12
+                            ) {
+                                close()
+                            }
                         } else {
-                            Image(systemName: "person.crop.circle.fill")
-                                .resizable().scaledToFit().foregroundStyle(CapyColor.accent)
+                            withAnimation(
+                                .spring(
+                                    response: 0.30,
+                                    dampingFraction: 0.86
+                                )
+                            ) {
+                                dragOffset = 0
+                            }
+                        }
+
+                        DispatchQueue.main.asyncAfter(
+                            deadline: .now() + 0.18
+                        ) {
+                            suppressActions = false
                         }
                     }
-                    .frame(width: 72, height: 72).clipShape(Circle())
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(social.profile?.displayName ?? auth.user?.displayName ?? "Your profile")
-                            .font(.title3.bold()).lineLimit(2)
-                        Text(social.profile.map { "@" + $0.username } ?? (auth.user == nil ? "Sign in to connect" : "Profile is being prepared"))
-                            .font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(2)
-                        Text("View profile").font(.capyCaption).foregroundStyle(CapyColor.accent)
-                    }
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: "chevron.right").foregroundStyle(CapyColor.tertiaryText)
-                }
-                .padding(16).contentShape(Rectangle()).waveSurface(radius: 22, highlighted: true)
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 16).padding(.top, 12)
-
-            VStack(spacing: 8) {
-                drawerButton("Profile & friends", icon: "person.2.fill", action: openProfile)
-                drawerButton(messaging.unreadCount == 0 ? "Messages" : "Messages (\(messaging.unreadCount) unread)", icon: "bubble.left.and.bubble.right.fill", action: openMessages)
-                drawerButton("Global Chat", icon: "globe", action: openGlobalChat)
-                drawerButton("Settings", icon: "gearshape.fill", action: openSettings)
-                drawerButton("Friend Activity privacy", icon: "hand.raised", action: openActivity)
-                drawerButton("Updates", icon: "arrow.down.circle", action: openUpdates)
-            }
-            .padding(.horizontal, 16).padding(.top, 20)
-
-            ScrollView {
-                FriendActivityShelf(openPerson: openPerson).padding(18)
-            }
-            Text("Your music and downloads work even when social features are offline.")
-                .font(.capyCaption).foregroundStyle(CapyColor.tertiaryText)
-                .padding(20)
+            )
         }
-        .padding(.top, 8)
+    }
+}
+
+private struct ProfileDrawerView: View {
+    @EnvironmentObject private var messaging: MessagingStore
+    @EnvironmentObject private var auth: AuthSession
+    @EnvironmentObject private var social: SocialStore
+
+    let suppressActions: Bool
+    let openProfile: () -> Void
+    let openSettings: () -> Void
+    let openActivity: () -> Void
+    let openUpdates: () -> Void
+    let openMessages: () -> Void
+    let openGlobalChat: () -> Void
+    let openPerson: (SocialProfile) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("CapyFlow")
+                        .font(.capyTitle)
+
+                    Spacer()
+                }
+                .padding(.horizontal, 18)
+
+                Button {
+                    perform(openProfile)
+                } label: {
+                    HStack(spacing: 14) {
+                        Group {
+                            if let profile = social.profile {
+                                SocialAvatar(profile: profile, size: 72)
+                            } else {
+                                Image(systemName: "person.crop.circle.fill")
+                                    .resizable()
+                                    .scaledToFit()
+                                    .foregroundStyle(CapyColor.accent)
+                            }
+                        }
+                        .frame(width: 72, height: 72)
+                        .clipShape(Circle())
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(
+                                social.profile?.displayName ??
+                                auth.user?.displayName ??
+                                "Your profile"
+                            )
+                            .font(.title3.bold())
+                            .lineLimit(2)
+
+                            Text(
+                                social.profile.map {
+                                    "@" + $0.username
+                                } ??
+                                (
+                                    auth.user == nil
+                                    ? "Sign in to connect"
+                                    : "Profile is being prepared"
+                                )
+                            )
+                            .font(.capyCaption)
+                            .foregroundStyle(CapyColor.secondaryText)
+                            .lineLimit(2)
+
+                            Text("View profile")
+                                .font(.capyCaption)
+                                .foregroundStyle(CapyColor.accent)
+                        }
+                        .frame(
+                            minWidth: 0,
+                            maxWidth: .infinity,
+                            alignment: .leading
+                        )
+
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(CapyColor.tertiaryText)
+                    }
+                    .padding(16)
+                    .contentShape(Rectangle())
+                    .waveSurface(radius: 22, highlighted: true)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+
+                VStack(spacing: 8) {
+                    drawerButton(
+                        "Profile & friends",
+                        icon: "person.2.fill",
+                        action: openProfile
+                    )
+
+                    drawerButton(
+                        messaging.unreadCount == 0
+                            ? "Messages"
+                            : "Messages (\(messaging.unreadCount) unread)",
+                        icon: "bubble.left.and.bubble.right.fill",
+                        action: openMessages
+                    )
+
+                    drawerButton(
+                        "Global Chat",
+                        icon: "globe",
+                        action: openGlobalChat
+                    )
+
+                    drawerButton(
+                        "Settings",
+                        icon: "gearshape.fill",
+                        action: openSettings
+                    )
+
+                    drawerButton(
+                        "Friend Activity privacy",
+                        icon: "hand.raised",
+                        action: openActivity
+                    )
+
+                    drawerButton(
+                        "Updates",
+                        icon: "arrow.down.circle",
+                        action: openUpdates
+                    )
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 20)
+
+                FriendActivityShelf(
+                    openPerson: { person in
+                        guard !suppressActions else { return }
+                        openPerson(person)
+                    }
+                )
+                .padding(18)
+
+                Text(
+                    "Your music and downloads work even when social features are offline."
+                )
+                .font(.capyCaption)
+                .foregroundStyle(CapyColor.tertiaryText)
+                .padding(20)
+            }
+            .padding(.top, 8)
+        }
         .safeAreaPadding(.top)
         .safeAreaPadding(.bottom)
+        }
     }
 
-    private func drawerButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func perform(_ action: () -> Void) {
+        guard !suppressActions else { return }
+        action()
+    }
+
+    private func drawerButton(
+        _ title: String,
+        icon: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            perform(action)
+        } label: {
             HStack(spacing: 14) {
-                Image(systemName: icon).foregroundStyle(CapyColor.accent).frame(width: 28)
-                Text(title).font(.capyCallout)
+                Image(systemName: icon)
+                    .foregroundStyle(CapyColor.accent)
+                    .frame(width: 28)
+
+                Text(title)
+                    .font(.capyCallout)
+
                 Spacer()
-                Image(systemName: "chevron.right").foregroundStyle(CapyColor.tertiaryText)
+
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(CapyColor.tertiaryText)
             }
-            .frame(maxWidth: .infinity, minHeight: 52).contentShape(Rectangle())
-            .padding(.horizontal, 14).waveSurface(radius: 18)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .contentShape(Rectangle())
+            .padding(.horizontal, 14)
+            .waveSurface(radius: 18)
         }
         .buttonStyle(.plain)
     }
