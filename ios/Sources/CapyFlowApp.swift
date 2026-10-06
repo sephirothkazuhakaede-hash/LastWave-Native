@@ -1226,7 +1226,7 @@ private struct SearchHomeView: View {
     private func search(showSpinner: Bool = true) async {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !term.isEmpty else { return }
-        if showSpinner { focused = false }; rememberSearch(term); searching = true
+        if showSpinner { focused = false; rememberSearch(term) }; searching = true
         defer { searching = false }
         do {
             switch mode {
