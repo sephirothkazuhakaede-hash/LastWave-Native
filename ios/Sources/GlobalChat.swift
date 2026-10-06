@@ -1,6 +1,280 @@
 import SwiftUI
-import FirebaseAuth
 import FirebaseFirestore
+
+struct ChatDate {
+    static func label(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        if calendar.isDate(date, inSameDayAs: now) { return "Today" }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) { return "Yesterday" }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
+}
+
+/// One listener for the newest 50 messages; older pages and profiles are fetched on demand.
+@MainActor final class GlobalChatSession: ObservableObject {
+    @Published private(set) var messages: [DirectMessage] = []
+    @Published private(set) var profiles: [String: SocialProfile] = [:]
+    @Published private(set) var loading = true
+    @Published private(set) var sending = false
+    @Published private(set) var loadingOlder = false
+    @Published private(set) var hasMore = false
+    @Published private(set) var error: String?
+    private let db = Firestore.firestore()
+    private var listener: ListenerRegistration?
+    private var epoch = UUID()
+    private var uid: String?
+    private var oldest: DocumentSnapshot?
+    private var history: [String: DirectMessage] = [:]
+    private var requestedProfiles = Set<String>()
+    private var lastSent = Date.distantPast
+
+    func start(userID: String?) {
+        stop(); uid = userID; messages = []; profiles = [:]; history = [:]; requestedProfiles = []; oldest = nil
+        loading = userID != nil; error = nil; hasMore = false
+        guard userID != nil else { return }
+        let session = epoch
+        listener = db.collection("globalMessages").order(by: "createdAt", descending: true).limit(to: 50)
+            .addSnapshotListener(includeMetadataChanges: true) { [weak self] snapshot, failure in
+                Task { @MainActor in
+                    guard let self, self.epoch == session else { return }
+                    self.loading = false
+                    if failure != nil { self.error = "Global Chat couldn’t connect. Please try again."; return }
+                    guard let snapshot else { return }
+                    self.error = nil; self.merge(snapshot.documents, session: session)
+                    if self.oldest == nil { self.oldest = snapshot.documents.last; self.hasMore = snapshot.documents.count == 50 }
+                }
+            }
+    }
+    func stop() { epoch = UUID(); listener?.remove(); listener = nil; sending = false; loadingOlder = false }
+    private func merge(_ docs: [QueryDocumentSnapshot], session: UUID) {
+        for doc in docs { if let message = DirectMessage(document: doc) { history[message.id] = message } }
+        messages = Array(history.values.sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }.suffix(500))
+        history = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
+        if messages.count >= 500 { hasMore = false }
+        let missing = Array(Set(messages.map(\.senderID)).subtracting(requestedProfiles))
+        requestedProfiles.formUnion(missing)
+        Task { [weak self] in
+            guard let self else { return }
+            for start in stride(from: 0, to: missing.count, by: 20) {
+                let ids = Array(missing[start..<min(start + 20, missing.count)])
+                do {
+                    let result = try await self.db.collection("profiles").whereField(FieldPath.documentID(), in: ids).limit(to: 20).getDocuments()
+                    guard self.epoch == session else { return }
+                    for doc in result.documents { if let person = SocialProfile(id: doc.documentID, data: doc.data()) { self.profiles[person.id] = person } }
+                } catch {
+                    guard self.epoch == session else { return }
+                    self.requestedProfiles.subtract(ids)
+                    self.error = "Some profiles couldn’t load. Please try again."
+                }
+            }
+        }
+    }
+    func loadOlder() async {
+        guard !loadingOlder, hasMore, let oldest else { return }
+        loadingOlder = true; let session = epoch
+        defer { if epoch == session { loadingOlder = false } }
+        do {
+            let result = try await db.collection("globalMessages").order(by: "createdAt", descending: true).start(afterDocument: oldest).limit(to: 50).getDocuments()
+            guard epoch == session else { return }
+            merge(result.documents, session: session); self.oldest = result.documents.last; hasMore = result.documents.count == 50 && messages.count < 500
+        } catch { if epoch == session { self.error = "Older messages couldn’t load. Please try again." } }
+    }
+    func send(_ raw: String) async -> Bool {
+        guard !sending, let uid, let text = DirectMessage.cleaned(raw) else { return false }
+        guard Date().timeIntervalSince(lastSent) >= 2 else { error = "Give it a moment before sending another message."; return false }
+        sending = true; error = nil; let session = epoch
+        defer { if epoch == session { sending = false } }
+        let ref = db.collection("globalMessages").document()
+        let batch = db.batch(), timestamp = FieldValue.serverTimestamp()
+        batch.setData(["senderID": uid, "text": text, "createdAt": timestamp], forDocument: ref)
+        batch.setData(["lastSentAt": timestamp, "messageID": ref.documentID], forDocument: db.collection("globalChatSenders").document(uid))
+        do { try await batch.commit(); if epoch == session { lastSent = Date() }; return epoch == session }
+        catch { if epoch == session { self.error = "Message wasn’t sent. Wait a moment and try again." }; return false }
+    }
+}
+
+@MainActor
+final class GlobalChatPresenceSession: ObservableObject {
+    @Published private(set) var userIDs: [String] = []
+    @Published private(set) var profiles: [String: SocialProfile] = [:]
+
+    private let db = Firestore.firestore()
+    private var listener: ListenerRegistration?
+    private var heartbeatTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
+    private var uid: String?
+    private var epoch = UUID()
+    private var requestedProfiles = Set<String>()
+
+    func start(userID: String?) {
+        stop(removePresence: false)
+
+        guard let userID else {
+            userIDs = []
+            profiles = [:]
+            return
+        }
+
+        uid = userID
+        let session = epoch
+
+        listener = db.collection("globalChatPresence")
+            .addSnapshotListener { [weak self] snapshot, _ in
+                Task { @MainActor in
+                    guard let self, self.epoch == session else { return }
+                    guard let snapshot else { return }
+
+                    self.updatePresence(
+                        documents: snapshot.documents,
+                        session: session
+                    )
+                }
+            }
+
+        heartbeatTask = Task { [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                await self.writePresence()
+
+                try? await Task.sleep(for: .seconds(25))
+
+                guard self.epoch == session else { return }
+            }
+        }
+
+        refreshTask = Task { [weak self] in
+            guard let self else { return }
+
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+
+                guard self.epoch == session else { return }
+
+                await self.refreshPresence(session: session)
+            }
+        }
+    }
+
+    func stop(removePresence: Bool = true) {
+        let previousUID = uid
+
+        epoch = UUID()
+
+        listener?.remove()
+        listener = nil
+
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+
+        refreshTask?.cancel()
+        refreshTask = nil
+
+        uid = nil
+        userIDs = []
+        profiles = [:]
+        requestedProfiles = []
+
+        if removePresence, let previousUID {
+            Task {
+                try? await db.collection("globalChatPresence")
+                    .document(previousUID)
+                    .delete()
+            }
+        }
+    }
+
+    private func writePresence() async {
+        guard let uid else { return }
+
+        do {
+            try await db.collection("globalChatPresence")
+                .document(uid)
+                .setData([
+                    "uid": uid,
+                    "updatedAt": FieldValue.serverTimestamp()
+                ])
+        } catch {
+            // Presence is best-effort and must never interrupt chat.
+        }
+    }
+
+    private func refreshPresence(session: UUID) async {
+        do {
+            let snapshot = try await db.collection("globalChatPresence")
+                .getDocuments()
+
+            guard epoch == session else { return }
+
+            updatePresence(
+                documents: snapshot.documents,
+                session: session
+            )
+        } catch {
+            // Presence failures must never interrupt Global Chat.
+        }
+    }
+
+    private func updatePresence(
+        documents: [QueryDocumentSnapshot],
+        session: UUID
+    ) {
+        let cutoff = Date().addingTimeInterval(-75)
+
+        let activeIDs = documents.compactMap { document -> String? in
+            let data = document.data()
+
+            guard
+                let presenceUID = data["uid"] as? String,
+                let updatedAt = data["updatedAt"] as? Timestamp,
+                updatedAt.dateValue() >= cutoff
+            else {
+                return nil
+            }
+
+            return presenceUID
+        }
+
+        userIDs = Array(Set(activeIDs)).sorted()
+
+        let missing = userIDs.filter {
+            profiles[$0] == nil && !requestedProfiles.contains($0)
+        }
+
+        guard !missing.isEmpty else { return }
+
+        requestedProfiles.formUnion(missing)
+
+        Task { [weak self] in
+            guard let self else { return }
+
+            for start in stride(from: 0, to: missing.count, by: 20) {
+                let end = min(start + 20, missing.count)
+                let ids = Array(missing[start..<end])
+
+                do {
+                    let result = try await db.collection("profiles")
+                        .whereField(FieldPath.documentID(), in: ids)
+                        .limit(to: 20)
+                        .getDocuments()
+
+                    guard epoch == session else { return }
+
+                    for document in result.documents {
+                        if let profile = SocialProfile(
+                            id: document.documentID,
+                            data: document.data()
+                        ) {
+                            profiles[profile.id] = profile
+                        }
+                    }
+                } catch {
+                    guard epoch == session else { return }
+                    requestedProfiles.subtract(ids)
+                }
+            }
+        }
+    }
+}
 
 struct GlobalChatView: View {
     @EnvironmentObject private var messaging: MessagingStore
