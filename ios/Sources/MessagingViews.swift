@@ -207,7 +207,7 @@ struct DirectChatView: View {
                         Group { if chat.sending { ProgressView() } else { Image(systemName: "paperplane.fill")
                                 .rotationEffect(.degrees(45)) } }
                             .frame(width: 44, height: 44)
-                    }.buttonStyle(.borderedProminent).tint(CapyColor.accent).foregroundStyle(Color.black)
+                    }.buttonStyle(.plain).background(CapyColor.accent, in: Circle()).foregroundStyle(CapyColor.background)
                         .accessibilityLabel("Send message")
                         .disabled(chat.loading || chat.sending || DirectMessage.cleaned(draft) == nil || (!chat.exists && !social.isFollowing(person.id)))
                 }
@@ -243,7 +243,6 @@ private struct MessageBannerModifier: ViewModifier {
     @Environment(\.scenePhase) private var phase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedPerson: SocialProfile?
-    @State private var showGlobalChat = false
     @GestureState private var bannerDrag: CGFloat = 0
     @AppStorage("messageBanners") private var messageBanners = true
     @AppStorage("globalChatBanners") private var globalBanners = true
@@ -253,14 +252,14 @@ private struct MessageBannerModifier: ViewModifier {
                 if phase == .active, let event = messaging.banner, event.global ? globalBanners : messageBanners {
                     HStack(spacing: 12) {
                         Button {
-                            if event.global { showGlobalChat = true; messaging.dismissBanner() }
+                            if event.global { selectedPerson = nil; messaging.requestGlobalChat(); messaging.dismissBanner() }
                             else if let person = messaging.profiles[event.peerID] { selectedPerson = person; messaging.dismissBanner() }
                         } label: {
                             HStack(spacing: 12) {
                                 if let person = messaging.profiles[event.peerID] { SocialAvatar(profile: person, size: 42) }
                                 else { Image(systemName: "bubble.left.and.bubble.right.fill").foregroundStyle(CapyColor.accent) }
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(event.global ? "Global Chat" : messaging.profiles[event.peerID]?.displayName ?? "New message").font(.capyCallout).foregroundStyle(CapyColor.accent)
+                                    Text(messaging.profiles[event.peerID]?.displayName ?? (event.global ? "Global Chat" : "New message")).font(.capyCallout).foregroundStyle(CapyColor.accent)
                                     Text(event.preview).font(.capyCaption).foregroundStyle(Color.white).lineLimit(2)
                                 }
                                 Spacer(minLength: 0)
@@ -296,10 +295,6 @@ private struct MessageBannerModifier: ViewModifier {
             .onChange(of: phase) { _, phase in if phase != .active { messaging.dismissBanner() } }
             .onChange(of: messageBanners) { _, enabled in if !enabled, messaging.banner?.global == false { messaging.dismissBanner() } }
             .onChange(of: globalBanners) { _, enabled in if !enabled, messaging.banner?.global == true { messaging.dismissBanner() } }
-            .sheet(isPresented: $showGlobalChat) {
-                NavigationStack { GlobalChatView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showGlobalChat = false } } } }
-                    .environmentObject(messaging)
-            }
             .sheet(item: $selectedPerson) { person in
                 NavigationStack {
                     DirectChatView(person: person)

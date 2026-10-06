@@ -222,11 +222,13 @@ struct RootView: View {
     @State private var drawerDestination: ProfileDrawerDestination?
     @State private var dockFrame: CGRect = .zero
     @State private var conversationVisible = false
+    @State private var showGlobalChat = false
 #if DEBUG
     @State private var fixtureChatPresented = false
     @State private var fixtureOpenedChat = false
 #endif
     var body: some View {
+      NavigationStack {
         ZStack {
             WaveBackdrop()
             HomeDashboardView(selection: $tab, dockFrame: dockFrame) { openDrawer() }
@@ -242,7 +244,6 @@ struct RootView: View {
                 .allowsHitTesting(tab == .library)
                 .accessibilityHidden(tab != .library)
             if tab == .messages {
-                NavigationStack {
                     MessagesInboxView()
 #if DEBUG
                         .navigationDestination(isPresented: $fixtureChatPresented) {
@@ -259,12 +260,10 @@ struct RootView: View {
                                 CapyProfileButton(size: 32, action: openDrawer)
                             }
                         }
-                }
-                .environment(\.usesInlineChatPlayback, true)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 5) {
-            if tab != .messages || !conversationVisible {
+            if !showGlobalChat && (tab != .messages || !conversationVisible) {
             CapyDock(selection: $tab) { showPlayer = true }
                 .padding(.horizontal, 12)
                 .background {
@@ -272,6 +271,16 @@ struct RootView: View {
                         Color.clear.preference(key: DockFramePreference.self, value: geometry.frame(in: .global))
                     }
                 }
+            }
+        }
+        .navigationDestination(isPresented: $showGlobalChat) { GlobalChatView() }
+        .toolbar(tab == .messages || showGlobalChat ? .visible : .hidden, for: .navigationBar)
+        .onChange(of: messaging.globalChatRequest) { _, _ in
+            let modal = showPlayer || drawerDestination != nil
+            showPlayer = false; drawerDestination = nil; closeDrawer()
+            Task { @MainActor in
+                if modal { try? await Task.sleep(for: .milliseconds(350)) }
+                withAnimation { showGlobalChat = true }
             }
         }
         .onPreferenceChange(DockFramePreference.self) { dockFrame = $0 }
@@ -316,7 +325,7 @@ struct RootView: View {
                 .presentationBackground(.clear)
         }
         .sheet(isPresented: Binding(
-            get: { drawerDestination == .profile || drawerDestination == .activity || drawerDestination == .updates || drawerDestination == .messages || drawerDestination == .globalChat },
+            get: { drawerDestination == .profile || drawerDestination == .activity || drawerDestination == .updates || drawerDestination == .messages },
             set: { if !$0 { drawerDestination = nil } }
         )) {
             NavigationStack {
@@ -324,7 +333,6 @@ struct RootView: View {
                     if drawerDestination == .activity { FriendActivitySettingsView() }
                     else if drawerDestination == .updates { StableUpdatesView() }
                     else if drawerDestination == .messages { MessagesInboxView() }
-                    else if drawerDestination == .globalChat { GlobalChatView() }
                     else if let drawerPerson { SocialPersonProfileView(person: drawerPerson) }
                     else { ProfilePageView() }
                 }
@@ -363,6 +371,8 @@ struct RootView: View {
 #endif
             social.bind(to: auth.user)
         }
+      }
+      .environment(\.usesInlineChatPlayback, true)
     }
 
     private func openDrawer() {
@@ -376,6 +386,7 @@ struct RootView: View {
 
     private func openDrawerDestination(_ destination: ProfileDrawerDestination) {
         closeDrawer()
+        if destination == .globalChat { withAnimation { showGlobalChat = true }; return }
         withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
             drawerDestination = destination
         }
@@ -2430,6 +2441,15 @@ struct PlayerView: View {
                         }.buttonStyle(.plain).accessibilityLabel("Next song")
                     }
                     HStack(spacing: 8) {
+                        Button { player.repeatSong.toggle(); CapyHaptics.selection() } label: {
+                            Image(systemName: player.repeatSong ? "repeat.1" : "repeat")
+                                .frame(width: 48, height: 48).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(player.repeatSong ? CapyColor.accent : CapyColor.secondaryText)
+                        .background(player.repeatSong ? CapyColor.accent.opacity(0.18) : CapyColor.surfaceStrong, in: Capsule())
+                        .accessibilityLabel("Repeat song")
+                        .accessibilityValue(player.repeatSong ? "On" : "Off")
                         Button {
                             withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { showLyrics.toggle() }
                             CapyHaptics.selection()

@@ -119,19 +119,7 @@ struct GlobalChatView: View {
                                 if index == 0 || !Calendar.current.isDate(chat.messages[index - 1].createdAt, inSameDayAs: message.createdAt) {
                                     Text(ChatDate.label(message.createdAt)).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).frame(maxWidth: .infinity).padding(.vertical, 8)
                                 }
-                                HStack(alignment: .top, spacing: 12) {
-                                    if let person = chat.profiles[message.senderID] {
-                                        NavigationLink { SocialPersonProfileView(person: person) } label: { SocialAvatar(profile: person, size: 40) }.buttonStyle(.plain)
-                                    } else { Image(systemName: "person.crop.circle.fill").font(.system(size: 40)).foregroundStyle(CapyColor.accent) }
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        HStack(alignment: .firstTextBaseline) {
-                                            Text(chat.profiles[message.senderID]?.displayName ?? "CapyFlow listener").font(.capyCallout).foregroundStyle(CapyColor.accent)
-                                            Spacer(minLength: 4)
-                                            Text(message.pending ? "Sending…" : message.createdAt.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(CapyColor.secondaryText)
-                                        }
-                                        Text(message.text).font(.capyBody).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                                    }.frame(maxWidth: .infinity, alignment: .leading)
-                                }.id(message.id)
+                                messageRow(message).id(message.id)
                             }
                         }.padding(16)
                     }.scrollDismissesKeyboard(.interactively)
@@ -147,17 +135,47 @@ struct GlobalChatView: View {
                 }
                 if social.currentUserID != nil {
                     HStack(alignment: .bottom) {
-                        TextField("Message Global Chat", text: $draft, axis: .vertical).lineLimit(1...5).padding(12).background(CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 18))
+                        TextField("Message", text: $draft, axis: .vertical).lineLimit(1...5).padding(12).background(CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 18))
                         Button { let submitted = draft; Task { if await chat.send(submitted), draft == submitted { draft = "" } } } label: {
                             Image(systemName: "paperplane.fill").rotationEffect(.degrees(45)).frame(width: 44, height: 44)
-                        }.disabled(chat.sending || DirectMessage.cleaned(draft) == nil || social.profile == nil).foregroundStyle(CapyColor.accent).accessibilityLabel("Send message")
+                        }.background(CapyColor.accent, in: Circle()).disabled(chat.sending || DirectMessage.cleaned(draft) == nil || social.profile == nil).foregroundStyle(CapyColor.background).accessibilityLabel("Send message")
                     }
                 }
-            }.padding(12).background(CapyColor.background)
+            }.padding(12).background(.ultraThinMaterial)
         }
         .navigationTitle("Global Chat").navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(CapyColor.background, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
+        .toolbarBackground(.hidden, for: .navigationBar).toolbar(.visible, for: .navigationBar)
         .task(id: social.currentUserID) { messaging.globalChatVisible = true; chat.start(userID: social.currentUserID) }
         .onDisappear { messaging.globalChatVisible = false; chat.stop() }
+    }
+    private func messageRow(_ message: DirectMessage) -> some View {
+        let own = message.senderID == social.currentUserID
+        let person = chat.profiles[message.senderID]
+        return HStack(alignment: .top, spacing: 8) {
+            if own { Spacer(minLength: 45) }
+            if !own {
+                if let person {
+                    NavigationLink { SocialPersonProfileView(person: person) } label: { SocialAvatar(profile: person, size: 32) }.buttonStyle(.plain)
+                } else { Circle().fill(CapyColor.surfaceStrong).frame(width: 32, height: 32) }
+            }
+            VStack(alignment: own ? .trailing : .leading, spacing: 4) {
+                if let person {
+                    NavigationLink { SocialPersonProfileView(person: person) } label: {
+                        Text(person.displayName).font(.capyCaption).foregroundStyle(CapyColor.accent).lineLimit(1)
+                    }.buttonStyle(.plain)
+                } else { RoundedRectangle(cornerRadius: 6).fill(CapyColor.surfaceStrong).frame(width: 96, height: 12).accessibilityLabel("Loading profile") }
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(message.text).font(.capyBody).fixedSize(horizontal: false, vertical: true).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(message.pending ? "Sending…" : message.createdAt.formatted(date: .omitted, time: .shortened)).font(.caption2).opacity(0.65)
+                }
+                .padding(.horizontal, 13).padding(.vertical, 10)
+                .foregroundStyle(own ? CapyColor.background : Color.white)
+                .background(own ? CapyColor.accent : CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            if own, let person {
+                NavigationLink { SocialPersonProfileView(person: person) } label: { SocialAvatar(profile: person, size: 32) }.buttonStyle(.plain)
+            }
+            if !own { Spacer(minLength: 45) }
+        }
     }
 }

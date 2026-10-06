@@ -59,6 +59,24 @@ final class HomeDockUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Open Now Playing"].isHittable)
     }
 
+    func testNowPlayingRepeatButtonCanToggleWithoutLeavingPlayer() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--layout-fixture", "chat"]
+        app.launch()
+        let open = app.buttons["Open Now Playing"]
+        XCTAssertTrue(open.waitForExistence(timeout: 8))
+        open.tap()
+        let repeatButton = app.buttons["Repeat song"]
+        XCTAssertTrue(repeatButton.waitForExistence(timeout: 5))
+        if repeatButton.value as? String == "On" { repeatButton.tap() }
+        XCTAssertEqual(repeatButton.value as? String, "Off")
+        repeatButton.tap()
+        XCTAssertEqual(repeatButton.value as? String, "On")
+        repeatButton.tap()
+        XCTAssertEqual(repeatButton.value as? String, "Off")
+        XCTAssertTrue(app.buttons["Next song"].exists)
+    }
+
     func testMessagesIsAvailableInMainNavigation() {
         let app = XCUIApplication()
         app.launchArguments = ["--layout-fixture", "root"]
@@ -96,7 +114,7 @@ final class HomeDockUITests: XCTestCase {
         XCTAssertGreaterThan(footer.frame.height, 0)
         XCTAssertGreaterThanOrEqual(footer.frame.minY, home.frame.minY - 1)
         XCTAssertLessThanOrEqual(footer.frame.maxY, dock.frame.minY + 1)
-        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 26"))
+        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 27"))
         XCTAssertTrue(footer.label.contains("by Seph"))
         friends.tap()
         XCTAssertTrue(app.staticTexts["Find people"].waitForExistence(timeout: 4))
@@ -113,6 +131,12 @@ final class HomeDockUITests: XCTestCase {
         global.tap()
         XCTAssertTrue(app.navigationBars["Global Chat"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["Sign in to join Global Chat"].exists)
+        XCTAssertFalse(app.buttons["Done"].exists)
+        let back = app.navigationBars["Global Chat"].buttons.firstMatch
+        XCTAssertTrue(back.isHittable)
+        back.tap()
+        XCTAssertTrue(profile.waitForExistence(timeout: 4))
+        XCTAssertTrue(app.buttons["Messages"].firstMatch.exists)
     }
     func testChatNotificationSwitchesAreSeparate() {
         let app = XCUIApplication()

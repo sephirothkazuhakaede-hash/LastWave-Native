@@ -69,6 +69,10 @@ struct DownloadBatchSummary: Equatable {
     @Published var current: Track?
     @Published var queue: [Track] = []
     @Published var downloads: [Track] = []
+    @Published var repeatSong = UserDefaults.standard.bool(forKey: "repeatSong") {
+        didSet { UserDefaults.standard.set(repeatSong, forKey: "repeatSong") }
+    }
+    private var rewindingForRepeat = false
     @Published var playing = false
     @Published var loading = false
     @Published var elapsed = 0.0
@@ -206,7 +210,7 @@ struct DownloadBatchSummary: Equatable {
                    let expected = self.expectedDuration, expected > 0,
                    newElapsed >= expected - 0.35, !self.didReachExpectedEnd {
                     self.didReachExpectedEnd = true
-                    Task { await self.next() }
+                    Task { await self.finishCurrentTrack() }
                 }
             }
         }
@@ -217,7 +221,7 @@ struct DownloadBatchSummary: Equatable {
                 if let trackID = self.current?.id, endedAt.isFinite, endedAt > 0 {
                     self.adoptAuthoritativeDuration(endedAt, for: trackID, source: .playerItem)
                 }
-                await self.next()
+                await self.finishCurrentTrack()
             }
         }
         interruptionObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
@@ -412,6 +416,17 @@ struct DownloadBatchSummary: Equatable {
         elapsed = target
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         publishNowPlaying()
+    }
+    private func finishCurrentTrack() async {
+        guard !rewindingForRepeat else { return }
+        guard repeatSong, let item = player.currentItem else { await next(); return }
+        rewindingForRepeat = true
+        let session = generation
+        let finished = await player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+        defer { rewindingForRepeat = false }
+        guard finished, session == generation, item === player.currentItem else { return }
+        elapsed = 0; didReachExpectedEnd = false
+        player.play(); playing = true; publishNowPlaying()
     }
     func next() async {
         if queue.isEmpty, autoplayEnabled, let seed = current {

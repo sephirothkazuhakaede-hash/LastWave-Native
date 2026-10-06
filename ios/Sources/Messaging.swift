@@ -98,6 +98,8 @@ struct MessageArrivalTracker {
     var activePeerID: String?
     private var arrivals = MessageArrivalTracker()
     private var globalListener: ListenerRegistration?
+    @Published private(set) var globalChatRequest: UUID?
+    func requestGlobalChat() { globalChatRequest = UUID() }
     var globalChatVisible = false
     func dismissBanner() { banner = nil }
     private let db = Firestore.firestore()
