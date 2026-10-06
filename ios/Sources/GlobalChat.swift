@@ -1,3 +1,7 @@
+import SwiftUI
+import FirebaseAuth
+import FirebaseFirestore
+
 struct GlobalChatView: View {
     @EnvironmentObject private var messaging: MessagingStore
     @EnvironmentObject private var social: SocialStore
