@@ -266,7 +266,7 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
                 itemsIndexed(ordered,key={_,m->m.id}){index,m ->
                     Column{
                         if(index==ordered.lastIndex || chatDay(m.date)!=chatDay(ordered[index+1].date))Text(chatDateLabel(m.date),fontSize=12.sp,color=Color.White.copy(alpha=.55f),modifier=Modifier.fillMaxWidth().padding(vertical=10.dp))
-                        GlobalMessageRow(m,chat.profiles[m.sender],m.sender==vm.user?.uid,onProfile)
+                        GlobalMessageRow(m,chat.profiles[m.sender],m.sender==vm.user?.uid,onProfile,previousSame=index+1<ordered.size && ordered[index+1].sender==m.sender,nextSame=index>0 && ordered[index-1].sender==m.sender)
                     }
                 }
                 if(chat.hasMore)item{TextButton(onClick={chat.loadOlder()},enabled=!chat.loadingOlder){Text(if(chat.loadingOlder)"Loading…" else "Load older messages")}}
@@ -284,21 +284,18 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
     }
 }
 
-@Composable private fun GlobalMessageRow(message:Message,person:Profile?,own:Boolean,onProfile:(Profile)->Unit){
-    BoxWithConstraints(Modifier.fillMaxWidth()){
-        Row(Modifier.align(if(own)Alignment.CenterEnd else Alignment.CenterStart).widthIn(max=maxWidth*.86f),verticalAlignment=Alignment.Top,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-            if(!own)Box(Modifier.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,32)}
-            Column(Modifier.weight(1f,false),horizontalAlignment=if(own)Alignment.End else Alignment.Start){
-                if(person!=null)Text(person.displayName,color=Violet,fontSize=12.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
-                else Box(Modifier.padding(vertical=4.dp).size(96.dp,12.dp).clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha=.1f)))
-                Surface(shape=RoundedCornerShape(18.dp),color=if(own)Violet else Raised,modifier=Modifier.padding(top=4.dp)){
-                    Column(Modifier.padding(horizontal=13.dp,vertical=10.dp)){
-                        Text(message.text,color=if(own)Night else Color.White)
-                        Text(if(message.pending)"Sending…" else chatTime(message.date),fontSize=10.sp,color=(if(own)Night else Color.White).copy(alpha=.6f),modifier=Modifier.align(Alignment.End).padding(top=4.dp))
-                    }
+@Composable private fun GlobalMessageRow(message:Message,person:Profile?,own:Boolean,onProfile:(Profile)->Unit,previousSame:Boolean,nextSame:Boolean){
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(top=if(previousSame)2.dp else 8.dp)){
+        Row(Modifier.align(if(own)Alignment.CenterEnd else Alignment.CenterStart),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(7.dp)){
+            if(!own){if(!nextSame)Box(Modifier.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,30)} else Spacer(Modifier.width(30.dp))}
+            Column(horizontalAlignment=if(own)Alignment.End else Alignment.Start){
+                if(!previousSame && person!=null)Text(person.displayName,color=Violet,fontSize=12.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
+                Surface(shape=RoundedCornerShape(if(previousSame||nextSame)13.dp else 19.dp),color=if(own)Violet else Raised,modifier=Modifier.padding(top=if(!previousSame && person!=null)3.dp else 0.dp)){
+                    Text(message.text,color=if(own)Night else Color.White,modifier=Modifier.widthIn(max=280.dp).padding(horizontal=13.dp,vertical=9.dp))
                 }
+                Text(if(message.pending)"Sending…" else chatTime(message.date),fontSize=10.sp,color=Color.White.copy(alpha=.5f),modifier=Modifier.padding(top=2.dp))
             }
-            if(own)Box(Modifier.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,32)}
+            if(own){if(!nextSame)Box(Modifier.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,30)} else Spacer(Modifier.width(30.dp))}
         }
     }
 }
