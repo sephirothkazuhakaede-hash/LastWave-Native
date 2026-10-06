@@ -290,15 +290,9 @@ struct GlobalChatView: View {
             if social.currentUserID == nil {
                 ContentUnavailableView("Sign in to join Global Chat", systemImage: "globe", description: Text("Use your Google account to chat with CapyFlow listeners."))
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 16) {
-                            VStack(alignment: .leading, spacing: 10) {
-    Text("A shared chat for everyone on CapyFlow.")
-        .font(.capyCaption)
-        .foregroundStyle(CapyColor.secondaryText)
+    VStack(spacing: 0) {
 
-    if !presence.userIDs.isEmpty {
+        if !presence.userIDs.isEmpty {
         NavigationLink {
             GlobalChatActiveUsersView(
     presence: presence
@@ -358,8 +352,20 @@ struct GlobalChatView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
     }
 }
+        ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            VStack(alignment: .leading, spacing: 10) {
+    Text("A shared chat for everyone on CapyFlow.")
+        .font(.capyCaption)
+        .foregroundStyle(CapyColor.secondaryText)
+
+    
                             if chat.loading { ProgressView("Loading chat…") }
                             if chat.hasMore {
                                 Button(chat.loadingOlder ? "Loading…" : "Load older messages") {
@@ -379,6 +385,7 @@ struct GlobalChatView: View {
                 }
             }
         }
+    }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 8) {
                 if let error = chat.error {
