@@ -242,7 +242,7 @@ class MainActivity : ComponentActivity() {
             else fadeIn(tween(120)) togetherWith (slideOutHorizontally(tween(280),targetOffsetX={it})+fadeOut())
         },label="Chat navigation"){id->if(id!=null){
             BackHandler{social.closeChat();chatPeer=null}
-            Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();ChatScreen(id,vm,social,{selectedProfile=it},{showPlayer=true}){social.closeChat();chatPeer=null}}
+            Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();ChatScreen(id,vm,social,{selectedProfile=it}){social.closeChat();chatPeer=null}}
         }}
         if(showGlobalChat)Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();GlobalChatScreen(vm,social,signIn,{selectedProfile=it},{showPlayer=true}){showGlobalChat=false}}
         AnimatedVisibility(showSettings,enter=fadeIn(tween(200)),exit=fadeOut(tween(200))){Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha=.55f)).clickable{showSettings=false})}
@@ -432,10 +432,11 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
         }
     }
 }
-@Composable fun ChatScreen(peer: String,vm: CapyModel,social: SocialModel,onProfile:(Profile)->Unit,onOpenPlayer:()->Unit,onClose:()->Unit) {
+@Composable fun ChatScreen(peer: String,vm: CapyModel,social: SocialModel,onProfile:(Profile)->Unit,onClose:()->Unit) {
     var draft by remember(peer){mutableStateOf("")};val profile=liveProfile(social,peer)
     val ordered=remember(social.messages){social.messages.reversed()}
     val list=rememberLazyListState()
+    var chatPlayerOpen by remember(peer){mutableStateOf(false)}
     LaunchedEffect(social.messages.lastOrNull()?.id){if(list.firstVisibleItemIndex<=1)list.animateScrollToItem(0)}
     DisposableEffect(peer){PushNotices.activePeer=peer;onDispose{if(PushNotices.activePeer==peer)PushNotices.activePeer=null}}
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().navigationBarsPadding().padding(16.dp)) {
@@ -448,10 +449,25 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
                 }
             }
         }
-        vm.current?.let{MiniPlayer(it,vm,onOpenPlayer)}
-        Row(Modifier.padding(top=12.dp),verticalAlignment=Alignment.CenterVertically){OutlinedTextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),maxLines=4);IconButton(onClick={val submitted=draft;social.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!social.sending){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Violet)}}
+        Column(Modifier.fillMaxWidth().padding(top=10.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+            vm.current?.let{ChatMiniPlayer(it,vm){chatPlayerOpen=true}}
+            Row(verticalAlignment=Alignment.CenterVertically){OutlinedTextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),maxLines=4);IconButton(onClick={val submitted=draft;social.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!social.sending){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Violet)}}
+        }
+    }
+    if(chatPlayerOpen) {
+        BackHandler{chatPlayerOpen=false}
+        PlayerScreen(vm,{chatPlayerOpen=false},{},{})
     }
 }
+@Composable fun ChatMiniPlayer(track:Track,vm:CapyModel,onOpen:()->Unit){
+    Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(20.dp)).background(Raised.copy(alpha=.96f)).border(1.dp,Color.White.copy(alpha=.12f),RoundedCornerShape(20.dp)).clickable(onClick=onOpen).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
+        Artwork(track.artwork,42)
+        Column(Modifier.weight(1f).padding(horizontal=9.dp)){Text(track.title,maxLines=1,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold,fontSize=13.sp);Text(track.artist,maxLines=1,overflow=TextOverflow.Ellipsis,color=Violet,fontSize=11.sp)}
+        if(vm.loading)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp) else IconButton(onClick={vm.toggle()},modifier=Modifier.size(40.dp)){Icon(if(vm.playing)Icons.Default.Pause else Icons.Default.PlayArrow,"Play or pause",tint=Violet,modifier=Modifier.size(22.dp))}
+        IconButton(onClick={vm.next()},enabled=vm.queue.isNotEmpty(),modifier=Modifier.size(40.dp)){Icon(Icons.Default.SkipNext,"Next song",modifier=Modifier.size(21.dp))}
+    }
+}
+
 
 @Composable fun ExplicitBadge(){Box(Modifier.size(14.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha=.65f)),contentAlignment=Alignment.Center){Text("E",fontSize=9.sp,lineHeight=9.sp,fontWeight=FontWeight.Bold,color=Night)}}
 @Composable fun PlaylistDownloadBadge(playlist:Playlist,vm:CapyModel){
