@@ -107,6 +107,18 @@ class MainActivity : ComponentActivity() {
     var showSettings by remember { mutableStateOf(false) }
     var settingsStartPage by remember { mutableStateOf("CapyFlow") }
     val updater:AppUpdater=viewModel();val updateContext=LocalContext.current
+    val searchPrefs = remember { updateContext.getSharedPreferences("capyflow-search-history", android.content.Context.MODE_PRIVATE) }
+    var songHistory by remember { mutableStateOf(loadSearchHistory(searchPrefs, "songs")) }
+    var albumHistory by remember { mutableStateOf(loadSearchHistory(searchPrefs, "albums")) }
+    fun rememberSearch(term: String) {
+        val clean = term.trim()
+        if(clean.isEmpty()) return
+        val key = if(albumsOnly) "albums" else "songs"
+        val current = if(albumsOnly) albumHistory else songHistory
+        val updated = (listOf(clean) + current.filterNot { it.equals(clean, ignoreCase=true) }).take(10)
+        saveSearchHistory(searchPrefs,key,updated)
+        if(albumsOnly) albumHistory=updated else songHistory=updated
+    }
     updater.announcement?.let{update->AlertDialog(onDismissRequest={updater.later()},title={Text("Update available · ${update.name}")},text={Column(Modifier.heightIn(max=300.dp).verticalScroll(rememberScrollState())){Text("What’s new",fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Text(update.notes.ifBlank{"A new CapyFlow update is ready."})}},confirmButton={TextButton(onClick={updater.acceptAnnouncement();settingsStartPage="Updates";showSettings=true;updater.download(updateContext)}){Text("Update now")}},dismissButton={TextButton(onClick={updater.later()}){Text("Later")}})}
     var showQueue by remember { mutableStateOf(false) }
     var showNewPlaylist by remember { mutableStateOf(false) }
@@ -180,11 +192,16 @@ class MainActivity : ComponentActivity() {
                             LazyColumn { items(vm.albumTracks,key={it.id}) { t -> TrackRow(t,{vm.play(t,vm.albumTracks)},vm,{addTrack=t}) };if(!vm.albumLoading && vm.albumTracks.isEmpty())item{EmptyState("No tracks loaded","Tap Refresh to try again.",Icons.Default.Album)} }
                         } else {
                             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Glass).padding(4.dp)) { listOf(false to "Songs",true to "Albums").forEach { (mode,label) -> Text(label,color=if(albumsOnly==mode)Violet else Color.White.copy(alpha=.6f),fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).background(if(albumsOnly==mode)Violet.copy(alpha=.14f) else Color.Transparent).clickable{albumsOnly=mode}.padding(12.dp)) } }
-                            OutlinedTextField(query,{query=it},placeholder={Text(if(albumsOnly)"Search albums or artists" else "Search songs or artists")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(top=12.dp),shape=RoundedCornerShape(24.dp),trailingIcon={IconButton(onClick={vm.search(query,albumsOnly)}){Icon(Icons.Default.Search,"Search")}})
+                            OutlinedTextField(query,{query=it},placeholder={Text(if(albumsOnly)"Search albums or artists" else "Search songs or artists")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(top=12.dp),shape=RoundedCornerShape(24.dp),trailingIcon={IconButton(onClick={rememberSearch(query);vm.search(query,albumsOnly)}){Icon(Icons.Default.Search,"Search")}})
                             LaunchedEffect(query,albumsOnly){kotlinx.coroutines.delay(400);vm.search(query,albumsOnly)}
                             if(vm.searching)LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical=12.dp))
                             LazyColumn(Modifier.padding(top=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                                if(query.isBlank())item{EmptyState("Find your favorites","Search by title or artist.",Icons.Default.Search)}
+                                if(query.isBlank()){
+                                    val history=if(albumsOnly)albumHistory else songHistory
+                                    item { Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("Recent searches",fontSize=21.sp,fontWeight=FontWeight.Bold);Text(if(albumsOnly)"Albums" else "Songs",fontSize=12.sp,color=Color.White.copy(alpha=.55f))};if(history.isNotEmpty())TextButton(onClick={saveSearchHistory(searchPrefs,if(albumsOnly)"albums" else "songs",emptyList());if(albumsOnly)albumHistory=emptyList() else songHistory=emptyList()}){Text("Clear")}} }
+                                    if(history.isEmpty())item{EmptyState("No recent searches","Your recent searches will appear here.",Icons.Default.History)}
+                                    else items(history,key={it}){term->Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Glass).padding(start=14.dp),verticalAlignment=Alignment.CenterVertically){Row(Modifier.weight(1f).clickable{query=term;vm.search(term,albumsOnly)}.padding(vertical=15.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.History,null,tint=Violet);Spacer(Modifier.width(12.dp));Text(term,maxLines=1,overflow=TextOverflow.Ellipsis)};IconButton(onClick={val updated=history.filterNot{it==term};saveSearchHistory(searchPrefs,if(albumsOnly)"albums" else "songs",updated);if(albumsOnly)albumHistory=updated else songHistory=updated}){Icon(Icons.Default.Close,"Remove")}}}
+                                }
                                 else if(!vm.searching && (if(albumsOnly)vm.albums.isEmpty() else vm.results.isEmpty()))item{EmptyState("No results found","Try another title or artist.",Icons.Default.Search)}
                                 if(albumsOnly)items(vm.albums,key={it.id}){a -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Glass).clickable{selectedAlbum=a;vm.openAlbum(a)}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(a.artwork,72);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(a.title,fontWeight=FontWeight.Bold);Text(a.artist,color=Violet,fontSize=13.sp);a.year?.let{Text(it,fontSize=12.sp)}};Icon(Icons.Default.ChevronRight,null)} }
                                 else items(vm.results,key={it.id}){t -> TrackRow(t,{vm.play(t,vm.results)},vm,{addTrack=t})}
@@ -225,9 +242,9 @@ class MainActivity : ComponentActivity() {
             else fadeIn(tween(120)) togetherWith (slideOutHorizontally(tween(280),targetOffsetX={it})+fadeOut())
         },label="Chat navigation"){id->if(id!=null){
             BackHandler{social.closeChat();chatPeer=null}
-            Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();ChatScreen(id,vm,social,{selectedProfile=it}){social.closeChat();chatPeer=null}}
+            Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();ChatScreen(id,vm,social,{selectedProfile=it},{showPlayer=true}){social.closeChat();chatPeer=null}}
         }}
-        if(showGlobalChat)Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();GlobalChatScreen(vm,social,signIn,{selectedProfile=it}){showGlobalChat=false}}
+        if(showGlobalChat)Box(Modifier.fillMaxSize().background(Night)){AmbientBackground();GlobalChatScreen(vm,social,signIn,{selectedProfile=it},{showPlayer=true}){showGlobalChat=false}}
         AnimatedVisibility(showSettings,enter=fadeIn(tween(200)),exit=fadeOut(tween(200))){Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha=.55f)).clickable{showSettings=false})}
         AnimatedVisibility(showSettings,enter=slideInHorizontally(tween(300),initialOffsetX={-it}),exit=slideOutHorizontally(tween(260),targetOffsetX={-it})){
             AccountDrawer(vm,social,signIn,{showSettings=false;settingsStartPage="CapyFlow"},{selectedProfile=it},{tab="Social";showSettings=false},{tab="Messages";showSettings=false},{showGlobalChat=true;showSettings=false},settingsStartPage)
@@ -415,13 +432,15 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
         }
     }
 }
-@Composable fun ChatScreen(peer: String,vm: CapyModel,social: SocialModel,onProfile:(Profile)->Unit,onClose:()->Unit) {
+@Composable fun ChatScreen(peer: String,vm: CapyModel,social: SocialModel,onProfile:(Profile)->Unit,onOpenPlayer:()->Unit,onClose:()->Unit) {
     var draft by remember(peer){mutableStateOf("")};val profile=liveProfile(social,peer)
     val ordered=remember(social.messages){social.messages.reversed()}
+    val list=rememberLazyListState()
+    LaunchedEffect(social.messages.lastOrNull()?.id){if(list.firstVisibleItemIndex<=1)list.animateScrollToItem(0)}
     DisposableEffect(peer){PushNotices.activePeer=peer;onDispose{if(PushNotices.activePeer==peer)PushNotices.activePeer=null}}
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().navigationBarsPadding().padding(16.dp)) {
         Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Row(Modifier.clickable{profile?.let(onProfile)},verticalAlignment=Alignment.CenterVertically){ProfileAvatar(profile,40);Text(profile?.displayName ?: "Messages",fontSize=22.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(start=10.dp))}}
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(10.dp),reverseLayout=true){
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,verticalArrangement=Arrangement.spacedBy(10.dp),reverseLayout=true){
             itemsIndexed(ordered,key={_,m->m.id}){index,m ->
                 Column {
                     if(index==ordered.lastIndex || chatDay(m.date)!=chatDay(ordered[index+1].date))Text(chatDateLabel(m.date),fontSize=12.sp,color=Color.White.copy(alpha=.55f),modifier=Modifier.fillMaxWidth().padding(vertical=10.dp))
@@ -429,6 +448,7 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
                 }
             }
         }
+        vm.current?.let{MiniPlayer(it,vm,onOpenPlayer)}
         Row(Modifier.padding(top=12.dp),verticalAlignment=Alignment.CenterVertically){OutlinedTextField(draft,{if(it.length<=4000)draft=it},placeholder={Text("Message")},modifier=Modifier.weight(1f),shape=RoundedCornerShape(24.dp),maxLines=4);IconButton(onClick={val submitted=draft;social.send(submitted){if(draft==submitted)draft=""}},enabled=draft.isNotBlank()&&!social.sending){Icon(Icons.AutoMirrored.Filled.Send,"Send message",tint=Violet)}}
     }
 }
@@ -528,4 +548,12 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
         }
         TextButton(onClick={vm.closeAlbum();onClose();onSearch()}){Text("Open Search")}
     }}
+}
+
+
+private fun loadSearchHistory(prefs: android.content.SharedPreferences,key:String):List<String>{
+    return prefs.getString(key,"").orEmpty().split("\u001F").filter{it.isNotBlank()}.take(10)
+}
+private fun saveSearchHistory(prefs: android.content.SharedPreferences,key:String,values:List<String>){
+    prefs.edit().putString(key,values.take(10).joinToString("\u001F")).apply()
 }
