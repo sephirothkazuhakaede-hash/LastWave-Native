@@ -1,5 +1,5 @@
-• Repeat your current song with the new Now Playing button.
-• Message notifications now show the sender’s name and profile picture. Swipe up to dismiss them.
-• A smaller, cleaner profile side panel.
-• Your Global Chat messages appear on the right, with clearer chat bubbles.
-• Saved names and photos appear immediately when you return to Global Chat and refresh quietly in the background.
+• See who is currently active in Global Chat with the new live “In chat” presence display.
+• Tap the active-user display to view everyone currently in Global Chat and open their profiles.
+• Fixed Global Chat background notifications so they work independently from direct-message notifications.
+• Improved Global Chat presence handling when entering, leaving, or backgrounding CapyFlow.
+• Includes the existing repeat-song control, improved message banners, compact profile panel, and Global Chat improvements from 1.0.5.
