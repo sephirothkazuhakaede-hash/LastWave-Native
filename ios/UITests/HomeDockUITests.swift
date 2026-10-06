@@ -20,6 +20,10 @@ final class HomeDockUITests: XCTestCase {
             XCTAssertTrue(dock.waitForExistence(timeout: 5))
             XCTAssertTrue(dock.buttons["Home"].isHittable)
             XCTAssertFalse(composer.exists)
+            let avatar = app.buttons["Open profile and settings"].firstMatch
+            XCTAssertTrue(avatar.isHittable)
+            XCTAssertGreaterThanOrEqual(avatar.frame.height, 31.5)
+            XCTAssertGreaterThanOrEqual(avatar.frame.width, 31.5)
             dock.buttons["Home"].tap()
             XCTAssertTrue(app.scrollViews["home-scroll"].isHittable)
             app.terminate()
@@ -92,9 +96,36 @@ final class HomeDockUITests: XCTestCase {
         XCTAssertGreaterThan(footer.frame.height, 0)
         XCTAssertGreaterThanOrEqual(footer.frame.minY, home.frame.minY - 1)
         XCTAssertLessThanOrEqual(footer.frame.maxY, dock.frame.minY + 1)
-        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 25"))
+        XCTAssertTrue(footer.label.contains("Version 0.4.11, Build 26"))
         XCTAssertTrue(footer.label.contains("by Seph"))
         friends.tap()
         XCTAssertTrue(app.staticTexts["Find people"].waitForExistence(timeout: 4))
     }
+    func testGlobalChatIsInProfileSidePanelAndRequiresSignIn() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--layout-fixture", "root"]
+        app.launch()
+        let profile = app.buttons["Open profile and settings"].firstMatch
+        XCTAssertTrue(profile.waitForExistence(timeout: 8))
+        profile.tap()
+        let global = app.buttons["Global Chat"]
+        XCTAssertTrue(global.waitForExistence(timeout: 4))
+        global.tap()
+        XCTAssertTrue(app.navigationBars["Global Chat"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["Sign in to join Global Chat"].exists)
+    }
+    func testChatNotificationSwitchesAreSeparate() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--layout-fixture", "root"]
+        app.launch()
+        let profile = app.buttons["Open profile and settings"].firstMatch
+        XCTAssertTrue(profile.waitForExistence(timeout: 8))
+        profile.tap()
+        app.buttons["Settings"].tap()
+        app.buttons["Notifications"].tap()
+        XCTAssertTrue(app.navigationBars["Notifications"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.switches["Message banners"].exists)
+        XCTAssertTrue(app.switches["Global Chat banners"].exists)
+    }
+
 }

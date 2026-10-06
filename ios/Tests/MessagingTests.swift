@@ -3,6 +3,16 @@ import FirebaseFirestore
 @testable import CapyFlow
 
 final class MessagingTests: XCTestCase {
+    func testDatesUseCalendarDaysAtMidnightAndAcrossYears() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
+        let today = calendar.date(from: DateComponents(year: 2026, month: 1, day: 1, hour: 0, minute: 5))!
+        let yesterday = calendar.date(from: DateComponents(year: 2025, month: 12, day: 31, hour: 23, minute: 55))!
+        XCTAssertEqual(ChatDate.label(today, now: today, calendar: calendar), "Today")
+        XCTAssertEqual(ChatDate.label(yesterday, now: today, calendar: calendar), "Yesterday")
+        XCTAssertNotEqual(ChatDate.label(today.addingTimeInterval(-3 * 86400), now: today, calendar: calendar), "Yesterday")
+    }
+
     func testConversationIdentityAndReadStatus() throws {
         XCTAssertEqual(DirectConversation.id(for: "bob", and: "alice"), DirectConversation.id(for: "alice", and: "bob"))
         let data: [String: Any] = ["memberIDs": ["alice", "bob"], "lastMessageID": "message", "lastText": "Hello", "lastSenderID": "alice",

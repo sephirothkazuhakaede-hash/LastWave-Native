@@ -69,6 +69,7 @@ struct MessageBannerEvent: Identifiable {
     let id: String
     let peerID: String
     let preview: String
+    var global = false
 }
 
 // The first server snapshot establishes a baseline; saved unread messages
@@ -96,6 +97,8 @@ struct MessageArrivalTracker {
     @Published private(set) var banner: MessageBannerEvent?
     var activePeerID: String?
     private var arrivals = MessageArrivalTracker()
+    private var globalListener: ListenerRegistration?
+    var globalChatVisible = false
     func dismissBanner() { banner = nil }
     private let db = Firestore.firestore()
     private var uid: String?
@@ -107,10 +110,11 @@ struct MessageArrivalTracker {
 
     func bind(userID: String?) {
         guard uid != userID else { return }
-        listener?.remove(); profileTask?.cancel(); epoch = UUID()
+        listener?.remove(); globalListener?.remove(); profileTask?.cancel(); epoch = UUID()
         uid = userID; arrivals = MessageArrivalTracker(); banner = nil; activePeerID = nil; limit = 50; conversations = []; profiles = [:]; error = nil; fromCache = false
         loading = userID != nil; hasMore = false
         listen()
+        listenGlobalBanners()
     }
     func retry() { error = nil; loading = true; listen() }
     func loadMore() { guard limit < 500 else { return }; limit += 50; listen() }
@@ -131,8 +135,27 @@ struct MessageArrivalTracker {
                     self.conversations = snapshot.documents.compactMap { DirectConversation(id: $0.documentID, data: $0.data()) }
                         .sorted { $0.updatedAt > $1.updatedAt }
                     self.hasMore = snapshot.documents.count == self.limit && self.limit < 500
-                    if let event = self.arrivals.receive(self.conversations, uid: uid, fromCache: self.fromCache, activePeerID: self.activePeerID) { self.banner = event }
+                    if let event = self.arrivals.receive(self.conversations, uid: uid, fromCache: self.fromCache, activePeerID: self.activePeerID) { if ChatNotificationPreferences.messages { self.banner = event } }
                     self.loadProfiles(session: session)
+                }
+            }
+    }
+    private func listenGlobalBanners() {
+        guard let uid else { return }
+        let session = epoch
+        var baseline = false
+        var seen = Set<String>()
+        globalListener = db.collection("globalMessages").order(by: "createdAt", descending: true).limit(to: 1)
+            .addSnapshotListener(includeMetadataChanges: true) { [weak self] snapshot, _ in
+                Task { @MainActor in
+                    guard let self, self.epoch == session, let snapshot, !snapshot.metadata.isFromCache, !snapshot.metadata.hasPendingWrites else { return }
+                    let documents = snapshot.documents
+                    defer { baseline = true; seen = Set(documents.map(\.documentID)) }
+                    guard baseline, UIApplication.shared.applicationState == .active, ChatNotificationPreferences.global, !self.globalChatVisible,
+                          let doc = documents.first, !seen.contains(doc.documentID),
+                          let message = DirectMessage(document: doc), message.senderID != uid,
+                          Date().timeIntervalSince(message.createdAt) < 120 else { return }
+                    self.banner = MessageBannerEvent(id: doc.documentID, peerID: message.senderID, preview: message.text, global: true)
                 }
             }
     }
@@ -177,6 +200,7 @@ struct MessageArrivalTracker {
     private var messageListener: ListenerRegistration?
     private var epoch = UUID()
     private var history: [String: DirectMessage] = [:]
+    private var messagePositions: [String: Int] = [:]
     private var oldest: DocumentSnapshot?
     private var lastReadAttempt: String?
     private var visible = false
@@ -184,14 +208,16 @@ struct MessageArrivalTracker {
     @Published private(set) var conversation: DirectConversation?
 
     func status(for message: DirectMessage) -> DirectMessageStatus {
-        DirectMessageStatus.resolve(messageID: message.id, pending: message.pending,
-                                    peerReadID: peerID.flatMap { conversation?.readMessageIDs[$0] },
-                                    orderedIDs: messages.map(\.id))
+        if message.pending { return .sending }
+        guard let peerID, let readID = conversation?.readMessageIDs[peerID] else { return .sent }
+        if readID == message.id { return .read }
+        guard let index = messagePositions[message.id], let readIndex = messagePositions[readID] else { return .sent }
+        return index <= readIndex ? .read : .sent
     }
 
     func start(userID: String?, peerID: String) {
         stop(); epoch = UUID(); uid = userID; self.peerID = peerID
-        loading = true; messages = []; history = [:]; exists = false; error = nil; hasMore = false
+        loading = true; messages = []; history = [:]; messagePositions = [:]; exists = false; error = nil; hasMore = false
         oldest = nil; conversation = nil
         guard let userID, userID != peerID else { loading = false; error = "Sign in to message a friend."; return }
         visible = true
@@ -210,7 +236,11 @@ struct MessageArrivalTracker {
                 guard let conversation = snapshot.data().flatMap({ DirectConversation(id: snapshot.documentID, data: $0) }) else { return }
                 self.exists = true; self.creationEstablished = true
                 self.conversation = conversation
-                if self.messageListener == nil { self.listenMessages(ref, session: session) }
+                // Local first-message writes can arrive before Firebase creates the parent.
+                // Child reads are authorized only after the parent is committed.
+                if !snapshot.metadata.hasPendingWrites && self.messageListener == nil {
+                    self.error = nil; self.listenMessages(ref, session: session)
+                }
                 self.markRead(conversation, ref: ref, session: session)
             }
         }
@@ -238,6 +268,7 @@ struct MessageArrivalTracker {
     private func merge(_ docs: [QueryDocumentSnapshot]) {
         for doc in docs { if let message = DirectMessage(document: doc) { history[message.id] = message } }
         messages = history.values.sorted { $0.createdAt == $1.createdAt ? $0.id < $1.id : $0.createdAt < $1.createdAt }
+        messagePositions = Dictionary(uniqueKeysWithValues: messages.enumerated().map { ($0.element.id, $0.offset) })
     }
     func loadOlder() async {
         guard !loadingOlder, hasMore, let thread, let oldest else { return }
@@ -254,22 +285,39 @@ struct MessageArrivalTracker {
         sending = true; error = nil; let session = epoch
         defer { if epoch == session { sending = false } }
         let id = UUID().uuidString
-        let batch = db.batch()
-        let timestamp = FieldValue.serverTimestamp()
-        batch.setData(["senderID": uid, "text": text, "createdAt": timestamp], forDocument: thread.collection("messages").document(id))
-        if exists {
-            batch.updateData(["lastMessageID": id, "lastText": text, "lastSenderID": uid, "updatedAt": timestamp,
-                              "readMessageIDs." + uid: id], forDocument: thread)
-        } else {
-            batch.setData(["memberIDs": [uid, peerID].sorted(), "lastMessageID": id, "lastText": text,
-                           "lastSenderID": uid, "createdAt": timestamp, "updatedAt": timestamp,
-                           "readMessageIDs": [uid: id, peerID: ""]], forDocument: thread)
-        }
+        let database = db
+        let follow = database.collection("follows").document(uid + "_" + peerID)
         do {
-            try await batch.commit()
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                database.runTransaction({ transaction, errorPointer -> Any? in
+                    do {
+                        // Resolve existence on the server so simultaneous first messages
+                        // cannot overwrite each other's creation time or member state.
+                        let current = try transaction.getDocument(thread)
+                        if !current.exists, !(try transaction.getDocument(follow)).exists {
+                            throw NSError(domain: "CapyFlow.Chat", code: 1, userInfo: [NSLocalizedDescriptionKey: "Follow this person before starting a conversation."])
+                        }
+                        let timestamp = FieldValue.serverTimestamp()
+                        transaction.setData(["senderID": uid, "text": text, "createdAt": timestamp], forDocument: thread.collection("messages").document(id))
+                        if current.exists {
+                            transaction.updateData(["lastMessageID": id, "lastText": text, "lastSenderID": uid, "updatedAt": timestamp,
+                                                    "readMessageIDs." + uid: id], forDocument: thread)
+                        } else {
+                            transaction.setData(["memberIDs": [uid, peerID].sorted(), "lastMessageID": id, "lastText": text,
+                                                 "lastSenderID": uid, "createdAt": timestamp, "updatedAt": timestamp,
+                                                 "readMessageIDs": [uid: id, peerID: ""]], forDocument: thread)
+                        }
+                        return nil
+                    } catch { errorPointer?.pointee = error as NSError; return nil }
+                }) { _, failure in
+                    if let failure { continuation.resume(throwing: failure) } else { continuation.resume(returning: ()) }
+                }
+            }
             return epoch == session
         } catch {
-            if epoch == session { self.error = "Message was not sent: " + error.localizedDescription }
+            if epoch == session {
+                self.error = (error as NSError).domain == "CapyFlow.Chat" ? error.localizedDescription : "Message wasn’t sent. Please reconnect and try again."
+            }
             return false
         }
     }

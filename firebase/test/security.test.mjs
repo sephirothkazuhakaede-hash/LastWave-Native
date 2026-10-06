@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { before, after, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, collection, query, limit, where, documentId, writeBatch, serverTimestamp, Bytes, Timestamp } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, deleteDoc, getDoc, getDocs, collection, query, limit, where, documentId, writeBatch, runTransaction, serverTimestamp, Bytes, Timestamp } from 'firebase/firestore';
 
 let env;
 before(async () => {
@@ -192,4 +192,68 @@ test('direct chats are participant-private, atomic and require following to star
   await assertSucceeds(message('bob', 'alice_bob', 'reply'));
   await assertFails(updateDoc(doc(bob, 'conversations', 'alice_bob', 'messages', 'reply'), { text: 'Changed' }));
   await assertFails(deleteDoc(doc(bob, 'conversations', 'alice_bob', 'messages', 'reply')));
+});
+
+const google = uid => env.authenticatedContext(uid, { firebase: { sign_in_provider: 'google.com' } }).firestore();
+function globalSend(db, uid, id, text = 'Hello everyone') {
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'globalMessages', id), { senderID: uid, text, createdAt: serverTimestamp() });
+  batch.set(doc(db, 'globalChatSenders', uid), { messageID: id, lastSentAt: serverTimestamp() });
+  return batch.commit();
+}
+test('global chat requires Google login, authentic authors, bounded reads and immutable messages', async () => {
+  await create('alice', 'alice_initial');
+  const db = google('alice');
+  await assertSucceeds(globalSend(db, 'alice', 'first', 'Hello\nCapyFlow'));
+  await assertSucceeds(getDocs(query(collection(google('bob'), 'globalMessages'), limit(50))));
+  await assertFails(getDocs(collection(db, 'globalMessages')));
+  await assertFails(getDocs(query(collection(db, 'globalMessages'), limit(51))));
+  await assertFails(getDocs(query(collection(env.unauthenticatedContext().firestore(), 'globalMessages'), limit(50))));
+  await assertFails(getDocs(query(collection(account('alice'), 'globalMessages'), limit(50))));
+  await assertFails(globalSend(google('bob'), 'alice', 'spoofed'));
+  await assertFails(updateDoc(doc(db, 'globalMessages', 'first'), { text: 'Changed' }));
+  await assertFails(deleteDoc(doc(db, 'globalMessages', 'first')));
+  await assertFails(getDoc(doc(google('bob'), 'globalChatSenders', 'alice')));
+});
+test('global chat validates messages and throttles atomic sends across devices', async () => {
+  await create('alice', 'alice_initial');
+  const db = google('alice');
+  await assertFails(globalSend(db, 'alice', 'blank', ' \n '));
+  await assertFails(globalSend(db, 'alice', 'long', 'x'.repeat(4001)));
+  await assertFails(setDoc(doc(db, 'globalMessages', 'no_gate'), { senderID: 'alice', text: 'Hi', createdAt: serverTimestamp() }));
+  await assertSucceeds(globalSend(db, 'alice', 'first'));
+  await assertFails(globalSend(db, 'alice', 'rapid'));
+  await env.withSecurityRulesDisabled(async c => { await updateDoc(doc(c.firestore(), 'globalChatSenders', 'alice'), { lastSentAt: Timestamp.fromMillis(Date.now() - 5000) }); });
+  await assertSucceeds(globalSend(db, 'alice', 'second'));
+});
+
+test('simultaneous first messages preserve the committed thread and both authors', async () => {
+  for (const [uid,peer] of [['alice','bob'],['bob','alice']]) await setDoc(doc(account(uid), 'follows', uid+'_'+peer), { followerID: uid, followingID: peer });
+  async function first(uid, id) {
+    const db = account(uid), ref = doc(db, 'conversations', 'alice_bob');
+    return runTransaction(db, async tx => {
+      const current = await tx.get(ref);
+      if(!current.exists()) await tx.get(doc(db,'follows',uid+'_'+(uid==='alice'?'bob':'alice')));
+      tx.set(doc(ref,'messages',id),{senderID:uid,text:id,createdAt:serverTimestamp()});
+      const data={lastMessageID:id,lastText:id,lastSenderID:uid,updatedAt:serverTimestamp()};
+      if(current.exists())tx.update(ref,{...data,['readMessageIDs.'+uid]:id});
+      else tx.set(ref,{...data,createdAt:serverTimestamp(),memberIDs:['alice','bob'],readMessageIDs:{alice:uid==='alice'?id:'',bob:uid==='bob'?id:''}});
+    });
+  }
+  await Promise.all([assertSucceeds(first('alice','one')),assertSucceeds(first('bob','two'))]);
+  await assertSucceeds(getDoc(doc(account('alice'),'conversations','alice_bob','messages','one')));
+  await assertSucceeds(getDoc(doc(account('bob'),'conversations','alice_bob','messages','two')));
+  await assertFails(getDoc(doc(account('mallory'),'conversations','alice_bob')));
+});
+
+test('Global push opt-ins are private and only their owner can change or remove them',async()=>{
+ const db=google('alice'),ref=doc(db,'globalPushDevices','installation');
+ const data={uid:'alice',token:'private-token',platform:'android',updatedAt:serverTimestamp()};
+ await assertSucceeds(setDoc(ref,data));
+ await assertSucceeds(getDoc(ref));
+ await assertFails(getDoc(doc(google('bob'),'globalPushDevices','installation')));
+ await assertFails(setDoc(doc(google('bob'),'globalPushDevices','installation'),{...data,uid:'bob'}));
+ await assertFails(getDocs(query(collection(db,'globalPushDevices'),limit(50))));
+ await assertFails(setDoc(doc(account('password'),'globalPushDevices','other'),{...data,uid:'password'}));
+ await assertSucceeds(deleteDoc(ref));
 });

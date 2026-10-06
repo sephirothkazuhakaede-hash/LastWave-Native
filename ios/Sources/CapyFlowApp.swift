@@ -200,7 +200,7 @@ private enum WaveTab: String, CaseIterable {
 }
 
 private enum ProfileDrawerDestination: String, Identifiable {
-    case profile, settings, activity, updates, messages
+    case profile, settings, activity, updates, messages, globalChat
     var id: String { rawValue }
 }
 
@@ -256,7 +256,7 @@ struct RootView: View {
 #endif
                         .toolbar {
                             ToolbarItem(placement: .topBarLeading) {
-                                CapyProfileButton(action: openDrawer)
+                                CapyProfileButton(size: 32, action: openDrawer)
                             }
                         }
                 }
@@ -294,6 +294,7 @@ struct RootView: View {
                             openActivity: { openDrawerDestination(.activity) },
                             openUpdates: { openDrawerDestination(.updates) },
                             openMessages: { openDrawerDestination(.messages) },
+                            openGlobalChat: { openDrawerDestination(.globalChat) },
                             openPerson: { person in drawerPerson = person; openDrawerDestination(.profile) }
                         )
                         .frame(width: min(350, geometry.size.width * 0.88))
@@ -315,7 +316,7 @@ struct RootView: View {
                 .presentationBackground(.clear)
         }
         .sheet(isPresented: Binding(
-            get: { drawerDestination == .profile || drawerDestination == .activity || drawerDestination == .updates || drawerDestination == .messages },
+            get: { drawerDestination == .profile || drawerDestination == .activity || drawerDestination == .updates || drawerDestination == .messages || drawerDestination == .globalChat },
             set: { if !$0 { drawerDestination = nil } }
         )) {
             NavigationStack {
@@ -323,6 +324,7 @@ struct RootView: View {
                     if drawerDestination == .activity { FriendActivitySettingsView() }
                     else if drawerDestination == .updates { StableUpdatesView() }
                     else if drawerDestination == .messages { MessagesInboxView() }
+                    else if drawerDestination == .globalChat { GlobalChatView() }
                     else if let drawerPerson { SocialPersonProfileView(person: drawerPerson) }
                     else { ProfilePageView() }
                 }
@@ -389,13 +391,14 @@ struct RootView: View {
 private struct CapyProfileButton: View {
     @EnvironmentObject private var auth: AuthSession
     @EnvironmentObject private var social: SocialStore
+    var size: CGFloat = 48
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Group {
                 if let profile = social.profile {
-                    SocialAvatar(profile: profile, size: 48)
+                    SocialAvatar(profile: profile, size: size)
                 } else if let url = auth.user?.photoURL {
                     AsyncImage(url: url) { image in
                         image.resizable().scaledToFill()
@@ -406,7 +409,7 @@ private struct CapyProfileButton: View {
                     Image(systemName: "person.fill").foregroundStyle(CapyColor.accent)
                 }
             }
-            .frame(width: 48, height: 48)
+            .frame(width: size, height: size)
             .clipShape(Circle())
             .overlay { Circle().stroke(CapyColor.surfaceStroke, lineWidth: 0.8) }
             .contentShape(Circle())
@@ -426,6 +429,7 @@ private struct ProfileDrawerView: View {
     let openActivity: () -> Void
     let openUpdates: () -> Void
     let openMessages: () -> Void
+    let openGlobalChat: () -> Void
     let openPerson: (SocialProfile) -> Void
 
     var body: some View {
@@ -470,6 +474,7 @@ private struct ProfileDrawerView: View {
             VStack(spacing: 8) {
                 drawerButton("Profile & friends", icon: "person.2.fill", action: openProfile)
                 drawerButton(messaging.unreadCount == 0 ? "Messages" : "Messages (\(messaging.unreadCount) unread)", icon: "bubble.left.and.bubble.right.fill", action: openMessages)
+                drawerButton("Global Chat", icon: "globe", action: openGlobalChat)
                 drawerButton("Settings", icon: "gearshape.fill", action: openSettings)
                 drawerButton("Friend Activity privacy", icon: "hand.raised", action: openActivity)
                 drawerButton("Updates", icon: "arrow.down.circle", action: openUpdates)
@@ -1001,6 +1006,9 @@ private struct SettingsPageView: View {
                                 }
                                 .buttonStyle(.plain)
 
+                                NavigationLink { ChatNotificationSettingsView() } label: {
+                                    settingsRow("Notifications", icon: "bell")
+                                }.buttonStyle(.plain)
                                 NavigationLink { FriendActivitySettingsView() } label: {
                                     settingsRow("Friend Activity", icon: "person.2.wave.2")
                                 }.buttonStyle(.plain)

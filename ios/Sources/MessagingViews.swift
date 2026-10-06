@@ -135,7 +135,10 @@ struct DirectChatView: View {
                             }.disabled(chat.loadingOlder)
                         }
                         if !chat.loading && chat.messages.isEmpty { Text("Start your conversation with @\(person.username)").font(.capyCaption).foregroundStyle(CapyColor.secondaryText).padding(24) }
-                        ForEach(chat.messages) { message in
+                        ForEach(Array(chat.messages.enumerated()), id: \.element.id) { index, message in
+                            if index == 0 || !Calendar.current.isDate(chat.messages[index - 1].createdAt, inSameDayAs: message.createdAt) {
+                                Text(ChatDate.label(message.createdAt)).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).padding(.vertical, 8)
+                            }
                             let mine = message.senderID == social.currentUserID
                             HStack {
                                 if mine { Spacer(minLength: 40) }
@@ -240,24 +243,29 @@ private struct MessageBannerModifier: ViewModifier {
     @Environment(\.scenePhase) private var phase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedPerson: SocialProfile?
+    @State private var showGlobalChat = false
+    @GestureState private var bannerDrag: CGFloat = 0
+    @AppStorage("messageBanners") private var messageBanners = true
+    @AppStorage("globalChatBanners") private var globalBanners = true
     func body(content: Content) -> some View {
         content
             .overlay(alignment: .top) {
-                if phase == .active, let event = messaging.banner {
+                if phase == .active, let event = messaging.banner, event.global ? globalBanners : messageBanners {
                     HStack(spacing: 12) {
                         Button {
-                            if let person = messaging.profiles[event.peerID] { selectedPerson = person; messaging.dismissBanner() }
+                            if event.global { showGlobalChat = true; messaging.dismissBanner() }
+                            else if let person = messaging.profiles[event.peerID] { selectedPerson = person; messaging.dismissBanner() }
                         } label: {
                             HStack(spacing: 12) {
                                 if let person = messaging.profiles[event.peerID] { SocialAvatar(profile: person, size: 42) }
                                 else { Image(systemName: "bubble.left.and.bubble.right.fill").foregroundStyle(CapyColor.accent) }
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(messaging.profiles[event.peerID]?.displayName ?? "New message").font(.capyCallout).foregroundStyle(CapyColor.accent)
+                                    Text(event.global ? "Global Chat" : messaging.profiles[event.peerID]?.displayName ?? "New message").font(.capyCallout).foregroundStyle(CapyColor.accent)
                                     Text(event.preview).font(.capyCaption).foregroundStyle(Color.white).lineLimit(2)
                                 }
                                 Spacer(minLength: 0)
                             }.contentShape(Rectangle())
-                        }.buttonStyle(.plain).disabled(messaging.profiles[event.peerID] == nil)
+                        }.buttonStyle(.plain).disabled(!event.global && messaging.profiles[event.peerID] == nil)
                         Button { messaging.dismissBanner() } label: { Image(systemName: "xmark").padding(8) }
                             .foregroundStyle(CapyColor.secondaryText).accessibilityLabel("Dismiss message notification")
                     }
@@ -270,15 +278,28 @@ private struct MessageBannerModifier: ViewModifier {
                     }
                     .shadow(color: .black.opacity(0.45), radius: 16, y: 6)
                     .padding(.horizontal, 12).padding(.top, 8)
+                    .offset(y: bannerDrag)
+                    .simultaneousGesture(DragGesture(minimumDistance: 12)
+                        .updating($bannerDrag) { value, state, _ in state = min(0, value.translation.height) }
+                        .onEnded { value in
+                            if value.translation.height < -32 || value.predictedEndTranslation.height < -60 { messaging.dismissBanner() }
+                        })
+                    .accessibilityAction(named: "Dismiss notification") { messaging.dismissBanner() }
                     .zIndex(100)
                     .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
                     .task(id: event.id) {
-                        do { try await Task.sleep(for: .seconds(6)); if messaging.banner?.id == event.id { messaging.dismissBanner() } } catch { }
+                        do { try await Task.sleep(for: .seconds(4)); if messaging.banner?.id == event.id { messaging.dismissBanner() } } catch { }
                     }
                 }
             }
             .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.9), value: messaging.banner?.id)
             .onChange(of: phase) { _, phase in if phase != .active { messaging.dismissBanner() } }
+            .onChange(of: messageBanners) { _, enabled in if !enabled, messaging.banner?.global == false { messaging.dismissBanner() } }
+            .onChange(of: globalBanners) { _, enabled in if !enabled, messaging.banner?.global == true { messaging.dismissBanner() } }
+            .sheet(isPresented: $showGlobalChat) {
+                NavigationStack { GlobalChatView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showGlobalChat = false } } } }
+                    .environmentObject(messaging)
+            }
             .sheet(item: $selectedPerson) { person in
                 NavigationStack {
                     DirectChatView(person: person)
