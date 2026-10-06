@@ -65,12 +65,55 @@ object PushRegistry {
         registering=true
         status="Turning on message notifications…"
         FirebaseMessaging.getInstance().token.addOnSuccessListener{token->if(FirebaseAuth.getInstance().currentUser?.uid==uid && registeredUID==uid && epoch==generation){
-            val db=FirebaseFirestore.getInstance();val batch=db.batch()
-            if(ChatPreferences.enabled(context,"globalPush",false))batch.set(db.collection("globalPushDevices").document(device),mapOf("uid" to uid,"token" to token,"platform" to "android","updatedAt" to FieldValue.serverTimestamp()))
-            batch.set(db.collection("users").document(uid).collection("devices").document(device),mapOf("token" to token,"platform" to "android","updatedAt" to FieldValue.serverTimestamp()))
-            batch.commit()
-                .addOnSuccessListener{if(registeredUID==uid && epoch==generation){registered=true;registering=false;status="Ready to receive message notifications."}}
-                .addOnFailureListener{if(registeredUID==uid && epoch==generation){registered=false;registering=false;status="Couldn’t enable notifications. Please try again."}}
+            val db=FirebaseFirestore.getInstance()
+
+// DM push registration is independent from Global Chat push.
+db.collection("users")
+    .document(uid)
+    .collection("devices")
+    .document(device)
+    .set(
+        mapOf(
+            "token" to token,
+            "platform" to "android",
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+    )
+    .addOnSuccessListener{
+        if(registeredUID==uid && epoch==generation){
+            registered=true
+            registering=false
+            status="Ready to receive message notifications."
+        }
+    }
+    .addOnFailureListener{
+        if(registeredUID==uid && epoch==generation){
+            registered=false
+            registering=false
+            status="Couldn’t enable message notifications. Please try again."
+        }
+    }
+
+// Global Chat push is optional and must never break DM push registration.
+if(ChatPreferences.enabled(context,"globalPush",false)){
+    db.collection("globalPushDevices")
+        .document(device)
+        .set(
+            mapOf(
+                "uid" to uid,
+                "token" to token,
+                "platform" to "android",
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+        )
+        .addOnFailureListener{
+            // Best-effort only. DM push remains registered.
+        }
+}else{
+    db.collection("globalPushDevices")
+        .document(device)
+        .delete()
+}
         }}.addOnFailureListener{if(registeredUID==uid && epoch==generation){registered=false;registering=false;status="Couldn’t enable notifications. Check your connection and try again."}}
     }
 }
@@ -78,8 +121,8 @@ class CapyMessagingService:FirebaseMessagingService(){
     override fun onNewToken(token:String){PushRegistry.bind(this,FirebaseAuth.getInstance().currentUser?.uid)}
     override fun onMessageReceived(message:RemoteMessage){
         val uid=FirebaseAuth.getInstance().currentUser?.uid ?: return
-        if(message.data["recipientID"]!=uid)return
         val global=message.data["kind"]=="global"
+        if(!global && message.data["recipientID"]!=uid)return
         if(global && !ChatPreferences.enabled(this,"globalPush",false))return
         val peer=message.data["senderID"] ?: return
         if(peer==uid || (!global && PushNotices.foreground && PushNotices.activePeer==peer))return
