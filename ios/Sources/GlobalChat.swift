@@ -640,7 +640,7 @@ struct GlobalChatView: View {
 
                 Text(message.text)
                     .font(.capyBody)
-                    .fixedSize(horizontal: true, vertical: true)
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
@@ -667,4 +667,5 @@ struct GlobalChatView: View {
 
             if !own { Spacer(minLength: 44) }
         }
-    }}
+    }
+}
