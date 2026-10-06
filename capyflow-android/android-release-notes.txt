@@ -1,5 +1,5 @@
-Global Chat is here. Open your profile side panel and join the conversation with your Google account. See each listener’s picture, name and message time.
+Choose your chat alerts in Settings → Notifications. Message banners and Global Chat banners have separate switches. Global Chat push notifications have their own switch, so you can choose alerts while using the app, in the background, or both.
 
-Chats now separate messages by date. Starting a new conversation is more reliable, including when both people send their first message at the same time. Global Chat loads older messages on demand and keeps profile fetching efficient.
+Global Chat is available from your profile side panel. Chats include dates, and starting a conversation is more reliable.
 
 Your account, playlists, messages and downloads remain in place when updating.

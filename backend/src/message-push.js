@@ -1,3 +1,4 @@
+import {deliverGlobalPush} from './global-push-core.js';
 import {readFile} from 'node:fs/promises';
 import {MessagePushDispatcher} from './message-push-core.js';
 import {MessagePushState} from './message-push-state.js';
@@ -35,9 +36,31 @@ export async function startMessagePush(config,logger=console){
       clearTimeout(watchTimer);watchTimer=setTimeout(watch,30000);watchTimer.unref();
     });
   };
+  let globalUnsubscribe=()=>{},globalTimer,globalQueue=Promise.resolve();
+  const watchGlobal=()=>{
+    if(stopped)return;globalUnsubscribe();
+    globalUnsubscribe=db.collection('globalMessages').where('createdAt','>=',Timestamp.fromMillis(Date.now()-120000)).onSnapshot(snapshot=>{
+      for(const change of snapshot.docChanges())if(change.type==='added'){
+        const id=change.doc.id,message=change.doc.data();
+        globalQueue=globalQueue.then(async()=>{
+          if(stopped)return;
+          // Fetch current opt-ins for each delivery; removing a subscription stops future fan-out.
+          const devices=[];let cursor;
+          do {
+            let query=db.collection('globalPushDevices').orderBy('__name__').limit(500);
+            if(cursor)query=query.startAfter(cursor);
+            const page=await query.get();devices.push(...page.docs.map(d=>d.data()));cursor=page.size===500?page.docs.at(-1):null;
+          } while(cursor);
+          await deliverGlobalPush({id,message,devices,state,send:(token,data)=>messaging.send({token,data,android:{priority:'high',ttl:120000,collapseKey:'global-chat'}})});
+        }).catch(error=>logger.warn('Global Chat push delivery failed ('+(error.code ?? 'connection failure')+').'));
+      }
+    },()=>{clearTimeout(globalTimer);globalTimer=setTimeout(watchGlobal,30000);globalTimer.unref();});
+  };
+  watchGlobal();
+  const globalRefresh=setInterval(watchGlobal,60000);globalRefresh.unref();
   watch();
   const retry=setInterval(()=>void dispatcher.retry(),60000);retry.unref();
   const refresh=setInterval(watch,3600000);refresh.unref();
   logger.info('Message push worker started; waiting for Firebase conversations.');
-  return {close:async()=>{stopped=true;clearTimeout(watchTimer);clearInterval(retry);clearInterval(refresh);unsubscribe();await dispatcher.close();await deleteApp(app);}};
+  return {close:async()=>{stopped=true;globalUnsubscribe();clearTimeout(globalTimer);clearInterval(globalRefresh);await globalQueue;clearTimeout(watchTimer);clearInterval(retry);clearInterval(refresh);unsubscribe();await dispatcher.close();await deleteApp(app);}};
 }

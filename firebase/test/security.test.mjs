@@ -307,3 +307,15 @@ test('simultaneous first messages preserve the committed thread and both authors
   await assertSucceeds(getDoc(doc(account('bob'),'conversations','alice_bob','messages','two')));
   await assertFails(getDoc(doc(account('mallory'),'conversations','alice_bob')));
 });
+
+test('Global push opt-ins are private and only their owner can change or remove them',async()=>{
+ const db=google('alice'),ref=doc(db,'globalPushDevices','installation');
+ const data={uid:'alice',token:'private-token',platform:'android',updatedAt:serverTimestamp()};
+ await assertSucceeds(setDoc(ref,data));
+ await assertSucceeds(getDoc(ref));
+ await assertFails(getDoc(doc(google('bob'),'globalPushDevices','installation')));
+ await assertFails(setDoc(doc(google('bob'),'globalPushDevices','installation'),{...data,uid:'bob'}));
+ await assertFails(getDocs(query(collection(db,'globalPushDevices'),limit(50))));
+ await assertFails(setDoc(doc(account('password'),'globalPushDevices','other'),{...data,uid:'password'}));
+ await assertSucceeds(deleteDoc(ref));
+});

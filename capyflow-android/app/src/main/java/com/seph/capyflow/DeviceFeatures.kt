@@ -70,6 +70,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
         if(granted)bind()
     }
     val state=notificationButtonState(allowed,PushRegistry.registered,PushRegistry.registering)
+    Text("In-app notifications")
+    listOf("messageBanners" to "Message banners", "globalBanners" to "Global Chat banners", "globalPush" to "Global Chat push notifications").forEach { (key,label) ->
+        var enabled by remember { mutableStateOf(ChatPreferences.enabled(context,key,key!="globalPush")) }
+        Row(Modifier.fillMaxWidth(),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+            Text(label,modifier=Modifier.weight(1f))
+            Switch(checked=enabled,onCheckedChange={value -> enabled=value;ChatPreferences.set(context,key,value);if(key=="globalPush")bind()})
+        }
+    }
+    Text("Banners appear while you use CapyFlow. Global Chat push alerts arrive when the app is in the background and require notification permission.",fontSize=13.sp)
     Text("Message notifications")
     Text(PushRegistry.status,color=Violet,fontSize=13.sp)
     Text("Get alerts for new messages while CapyFlow is in the background.",fontSize=13.sp,color=androidx.compose.ui.graphics.Color.White.copy(alpha=.6f))

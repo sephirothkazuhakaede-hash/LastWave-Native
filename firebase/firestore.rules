@@ -33,6 +33,21 @@ service cloud.firestore {
     function googleAccount() {
       return signedIn() && request.auth.token.firebase.sign_in_provider == 'google.com';
     }
+    // Opt-in installation tokens are private; only the MSI worker can enumerate them.
+    match /globalPushDevices/{deviceID} {
+      allow get: if signedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && (!exists(/databases/$(database)/documents/globalPushDevices/$(deviceID)) || resource.data.uid == request.auth.uid);
+      allow list: if false;
+      allow create: if googleAccount() && request.resource.data.uid == request.auth.uid &&
+        request.resource.data.keys().hasOnly(['uid', 'token', 'platform', 'updatedAt']) &&
+        request.resource.data.token is string && request.resource.data.token.size() > 0 && request.resource.data.token.size() <= 4096 &&
+        request.resource.data.platform == 'android' && request.resource.data.updatedAt == request.time;
+      allow update: if googleAccount() && resource.data.uid == request.auth.uid && request.resource.data.uid == request.auth.uid &&
+        request.resource.data.keys().hasOnly(['uid', 'token', 'platform', 'updatedAt']) &&
+        request.resource.data.token is string && request.resource.data.token.size() > 0 && request.resource.data.token.size() <= 4096 &&
+        request.resource.data.platform == 'android' && request.resource.data.updatedAt == request.time;
+    }
+
     match /globalChatSenders/{uid} {
       allow get: if owns(uid) && googleAccount();
       allow list, delete: if false;
