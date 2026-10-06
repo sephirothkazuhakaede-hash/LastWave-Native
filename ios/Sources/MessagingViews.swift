@@ -141,24 +141,41 @@ struct DirectChatView: View {
                                 Text(ChatDate.label(message.createdAt)).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).padding(.vertical, 8)
                             }
                             let mine = message.senderID == social.currentUserID
-                            HStack {
-                                if mine { Spacer(minLength: 40) }
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(message.text).font(.capyBody).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                                    HStack(spacing: 6) {
+                            let previousSame = index > 0 && chat.messages[index - 1].senderID == message.senderID
+                            let nextSame = index + 1 < chat.messages.count && chat.messages[index + 1].senderID == message.senderID
+                            let avatarProfile = mine ? social.profile : person
+                            HStack(alignment: .bottom, spacing: 7) {
+                                if mine { Spacer(minLength: 44) }
+                                if !mine {
+                                    if !nextSame { SocialAvatar(profile: person, size: 30) }
+                                    else { Color.clear.frame(width: 30, height: 1) }
+                                }
+                                VStack(alignment: mine ? .trailing : .leading, spacing: 3) {
+                                    Text(message.text)
+                                        .font(.capyBody)
+                                        .fixedSize(horizontal: true, vertical: true)
+                                        .textSelection(.enabled)
+                                        .padding(.horizontal, 12).padding(.vertical, 9)
+                                        .foregroundStyle(mine ? Color.black : Color.white)
+                                        .background(mine ? CapyColor.accent : CapyColor.surfaceStrong,
+                                                    in: RoundedRectangle(cornerRadius: previousSame || nextSame ? 13 : 18, style: .continuous))
+                                    HStack(spacing: 5) {
                                         Text(message.createdAt.formatted(date: .omitted, time: .shortened))
                                         if mine {
                                             let status = chat.status(for: message)
                                             Image(systemName: status == .sending ? "clock" : (status == .read ? "checkmark.circle.fill" : "checkmark"))
-                                            Text(status.rawValue)
                                         }
                                     }
-                                    .font(.caption2).opacity(0.8)
+                                    .font(.caption2).foregroundStyle(CapyColor.secondaryText)
                                 }
-                                .padding(12).foregroundStyle(mine ? Color.black : Color.white)
-                                .background(mine ? CapyColor.accent : CapyColor.surfaceStrong, in: RoundedRectangle(cornerRadius: 18))
-                                if !mine { Spacer(minLength: 40) }
-                            }.id(message.id)
+                                if mine {
+                                    if !nextSame, let avatarProfile { SocialAvatar(profile: avatarProfile, size: 30) }
+                                    else { Color.clear.frame(width: 30, height: 1) }
+                                }
+                                if !mine { Spacer(minLength: 44) }
+                            }
+                            .padding(.top, previousSame ? -8 : 0)
+                            .id(message.id)
                         }
                     }.padding(.horizontal, 16).padding(.vertical, 18)
                 }
