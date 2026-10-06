@@ -445,7 +445,20 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
             itemsIndexed(ordered,key={_,m->m.id}){index,m ->
                 Column {
                     if(index==ordered.lastIndex || chatDay(m.date)!=chatDay(ordered[index+1].date))Text(chatDateLabel(m.date),fontSize=12.sp,color=Color.White.copy(alpha=.55f),modifier=Modifier.fillMaxWidth().padding(vertical=10.dp))
-                    Row(Modifier.fillMaxWidth(),horizontalArrangement=if(m.sender==vm.user?.uid)Arrangement.End else Arrangement.Start){Column(Modifier.widthIn(max=280.dp).clip(RoundedCornerShape(20.dp)).background(if(m.sender==vm.user?.uid)Violet.copy(alpha=.22f) else Glass).padding(14.dp)){Text(m.text);Row(horizontalArrangement=Arrangement.spacedBy(6.dp)){if(m.date>0)Text(chatTime(m.date),fontSize=10.sp,color=Color.White.copy(alpha=.5f));if(m.sender==vm.user?.uid)Text(social.messageStatus(m),fontSize=10.sp,color=Color.White.copy(alpha=.5f))}}}
+                    val own=m.sender==vm.user?.uid
+                    val previousSame=index+1<ordered.size && ordered[index+1].sender==m.sender
+                    val nextSame=index>0 && ordered[index-1].sender==m.sender
+                    val avatar=if(own)social.ownProfile else profile
+                    Row(Modifier.fillMaxWidth().padding(top=if(previousSame)2.dp else 8.dp),horizontalArrangement=if(own)Arrangement.End else Arrangement.Start,verticalAlignment=Alignment.Bottom){
+                        if(!own){if(!nextSame)ProfileAvatar(avatar,30) else Spacer(Modifier.width(30.dp));Spacer(Modifier.width(7.dp))}
+                        Column(horizontalAlignment=if(own)Alignment.End else Alignment.Start){
+                            Surface(shape=RoundedCornerShape(if(previousSame||nextSame)13.dp else 19.dp),color=if(own)Violet.copy(alpha=.22f) else Glass){
+                                Text(m.text,modifier=Modifier.widthIn(max=280.dp).padding(horizontal=13.dp,vertical=9.dp))
+                            }
+                            Row(Modifier.padding(top=2.dp),horizontalArrangement=Arrangement.spacedBy(5.dp)){if(m.date>0)Text(chatTime(m.date),fontSize=10.sp,color=Color.White.copy(alpha=.5f));if(own)Text(social.messageStatus(m),fontSize=10.sp,color=Color.White.copy(alpha=.5f))}
+                        }
+                        if(own){Spacer(Modifier.width(7.dp));if(!nextSame)ProfileAvatar(avatar,30) else Spacer(Modifier.width(30.dp))}
+                    }
                 }
             }
         }
