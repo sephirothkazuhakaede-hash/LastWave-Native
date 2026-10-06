@@ -1,11 +1,14 @@
 struct GlobalChatView: View {
     @EnvironmentObject private var messaging: MessagingStore
     @EnvironmentObject private var social: SocialStore
+    @EnvironmentObject private var player: WavePlayer
     @StateObject private var chat = GlobalChatSession()
     @StateObject private var presence = GlobalChatPresenceSession()
     @Environment(\.scenePhase) private var scenePhase
     @State private var draft = ""
     @State private var loadingHistory = false
+    @State private var showPlayer = false
+    @FocusState private var composerFocused: Bool
 
     var body: some View {
         ZStack {
@@ -205,6 +208,30 @@ struct GlobalChatView: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 8) {
+                if let track = player.current {
+                    HStack(spacing: 10) {
+                        Button { showPlayer = true } label: {
+                            HStack(spacing: 10) {
+                                Artwork(track: track, size: 36, radius: 9)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(track.title).font(.capyCaption).lineLimit(1)
+                                    Text(track.artist).font(.caption2).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain).accessibilityLabel("Open Now Playing")
+                        if player.loading { ProgressView().tint(CapyColor.accent) }
+                        Button { player.toggle() } label: {
+                            Image(systemName: player.playing ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
+                        }.buttonStyle(.plain).foregroundStyle(CapyColor.accent).accessibilityLabel(player.playing ? "Pause music" : "Play music")
+                        Button { Task { await player.next() } } label: {
+                            Image(systemName: "forward.end.fill").frame(width: 44, height: 44)
+                        }.buttonStyle(.plain).accessibilityLabel("Next song")
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("global-chat-music-controls")
+                }
+
                 if let error = chat.error {
                     Text(error)
                         .font(.capyCaption)
@@ -227,6 +254,7 @@ struct GlobalChatView: View {
                             axis: .vertical
                         )
                         .lineLimit(1...5)
+                        .focused($composerFocused)
                         .padding(12)
                         .background(
                             CapyColor.surfaceStrong,
@@ -234,6 +262,14 @@ struct GlobalChatView: View {
                                 cornerRadius: 18
                             )
                         )
+
+                        Button { composerFocused = false } label: {
+                            Image(systemName: "keyboard.chevron.compact.down")
+                                .frame(width: 38, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(CapyColor.secondaryText)
+                        .accessibilityLabel("Dismiss keyboard")
 
                         Button {
                             let submitted = draft
@@ -263,6 +299,11 @@ struct GlobalChatView: View {
             .padding(12)
             .background(.ultraThinMaterial)
         }
+        .sheet(isPresented: $showPlayer) {
+            PlayerView().messageBanners(messaging)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+        }
         .navigationTitle("Global Chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
@@ -282,9 +323,11 @@ struct GlobalChatView: View {
                 presence.stop()
             }
         }
+        .onAppear {
+            messaging.globalChatVisible = true
+        }
         .onDisappear {
             messaging.globalChatVisible = false
-            chat.stop()
             presence.stop()
         }
     }
