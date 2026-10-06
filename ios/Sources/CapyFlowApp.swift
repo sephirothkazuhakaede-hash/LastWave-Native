@@ -1023,6 +1023,8 @@ private struct SearchHomeView: View {
     @Binding var lastSearchSignature: String
     let openProfileDrawer: () -> Void
     @FocusState private var focused: Bool
+    @AppStorage("capy.search.history.songs") private var songHistoryJSON = "[]"
+    @AppStorage("capy.search.history.albums") private var albumHistoryJSON = "[]"
     var body: some View {
       NavigationStack {
         ScrollView {
@@ -1036,9 +1038,10 @@ private struct SearchHomeView: View {
                     if searching {
                         HStack(spacing: 12) { ProgressView(); Text("Searching for music…").foregroundStyle(.secondary) }
                             .frame(maxWidth: .infinity).padding(28).waveGlass(radius: 24)
+                    } else if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        recentSearches
                     } else if results.isEmpty && albums.isEmpty {
                         discoveryHero
-                        featureStrip
                     } else if mode == .albums {
                         albumSectionHeader
                         ForEach(albums) { album in
@@ -1054,7 +1057,21 @@ private struct SearchHomeView: View {
                 }
                 .padding(.top, 10).padding(.bottom, 150)
             }
-        }.scrollIndicators(.hidden)
+        }
+        .scrollIndicators(.hidden)
+        .scrollDismissesKeyboard(.interactively)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button {
+                    focused = false
+                } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                        .foregroundStyle(CapyColor.accent)
+                }
+                .accessibilityLabel("Dismiss keyboard")
+            }
+        }
         // NavigationStack owns an opaque hosting surface. Put the decorative
         // backdrop inside that surface so its safe areas share the ambience.
         .background { WaveBackdrop() }
@@ -1090,6 +1107,84 @@ private struct SearchHomeView: View {
                 Button { query = ""; results = []; albums = []; lastSearchSignature = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
             }
         }.font(.body.weight(.semibold)).padding(.horizontal, 18).frame(height: 58).waveGlass(radius: 22)
+    }
+
+    private var recentSearches: some View {
+        let history = mode == .songs ? songHistory : albumHistory
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                CapySectionHeader("Recent searches", subtitle: mode == .songs ? "Songs" : "Albums")
+                Spacer()
+                if !history.isEmpty {
+                    Button("Clear") { setHistory([]) }
+                        .font(.capyCaption)
+                        .foregroundStyle(CapyColor.accent)
+                }
+            }
+            if history.isEmpty {
+                Text("Your recent \(mode.rawValue.lowercased()) searches will appear here.")
+                    .font(.capyBody)
+                    .foregroundStyle(CapyColor.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(18)
+                    .waveGlass(radius: 20)
+            } else {
+                ForEach(history, id: \.self) { term in
+                    HStack(spacing: 12) {
+                        Button {
+                            query = term
+                            focused = true
+                            Task { await search(showSpinner: false) }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                    .foregroundStyle(CapyColor.accent)
+                                Text(term).font(.capyBody).lineLimit(1)
+                                Spacer()
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            setHistory(history.filter { $0 != term })
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.caption.bold())
+                                .foregroundStyle(CapyColor.secondaryText)
+                                .frame(width: 36, height: 36)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Remove \(term) from search history")
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 54)
+                    .waveGlass(radius: 18)
+                }
+            }
+        }
+    }
+
+    private var songHistory: [String] { decodeHistory(songHistoryJSON) }
+    private var albumHistory: [String] { decodeHistory(albumHistoryJSON) }
+
+    private func decodeHistory(_ raw: String) -> [String] {
+        guard let data = raw.data(using: .utf8),
+              let values = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Array(values.prefix(10))
+    }
+
+    private func setHistory(_ values: [String]) {
+        let trimmed = Array(values.prefix(10))
+        guard let data = try? JSONEncoder().encode(trimmed),
+              let raw = String(data: data, encoding: .utf8) else { return }
+        if mode == .songs { songHistoryJSON = raw } else { albumHistoryJSON = raw }
+    }
+
+    private func rememberSearch(_ term: String) {
+        var history = mode == .songs ? songHistory : albumHistory
+        history.removeAll { $0.caseInsensitiveCompare(term) == .orderedSame }
+        history.insert(term, at: 0)
+        setHistory(Array(history.prefix(10)))
     }
 
     private var discoveryHero: some View {
@@ -1131,7 +1226,7 @@ private struct SearchHomeView: View {
     private func search(showSpinner: Bool = true) async {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !term.isEmpty else { return }
-        if showSpinner { focused = false }; searching = true
+        if showSpinner { focused = false }; rememberSearch(term); searching = true
         defer { searching = false }
         do {
             switch mode {
