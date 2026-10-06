@@ -2108,6 +2108,7 @@ private struct PlaylistDetailView: View {
     @State private var showRemoveDownloads = false
     @State private var showCollaborate = false
     @State private var showSongPicker = false
+    @State private var showPlayer = false
     private var playlist: ImportedPlaylist? { player.playlists.first { $0.id == playlistID } }
     @ViewBuilder var body: some View {
         if let shared = social.sharedPlaylist(for: playlistID) {
@@ -2154,6 +2155,18 @@ private struct PlaylistDetailView: View {
                     .padding(.top, 18).padding(.bottom, 120)
                 }
             }.scrollIndicators(.hidden)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 6) {
+            if player.current != nil {
+                PlaylistNowPlayingBar { showPlayer = true }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+            }
+        }
+        .sheet(isPresented: $showPlayer) {
+            PlayerView()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
         }
         .navigationTitle(playlist?.name ?? "Playlist")
         .navigationBarTitleDisplayMode(.inline)
@@ -2603,6 +2616,41 @@ private struct FeatureChip: View {
             Image(systemName: icon).foregroundStyle(Color.waveBlue)
             Text(text).font(.caption2.weight(.bold)).lineLimit(1)
         }.frame(maxWidth: .infinity).padding(.vertical, 16).waveGlass(radius: 20)
+    }
+}
+
+struct PlaylistNowPlayingBar: View {
+    @EnvironmentObject private var player: WavePlayer
+    let expand: () -> Void
+    var body: some View {
+        if let track = player.current {
+            HStack(spacing: 10) {
+                Button(action: expand) {
+                    HStack(spacing: 10) {
+                        Artwork(track: track, size: 42, radius: 11)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(track.title).font(.capyCallout).lineLimit(1)
+                            Text(track.artist).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if player.loading { ProgressView().tint(CapyColor.accent) }
+                Button { player.toggle() } label: {
+                    Image(systemName: player.playing ? "pause.fill" : "play.fill").frame(width: 42, height: 42)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CapyColor.accent)
+                Button { Task { await player.next() } } label: {
+                    Image(systemName: "forward.end.fill").frame(width: 42, height: 42)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(8)
+            .waveGlass(radius: 22, highlighted: true)
+        }
     }
 }
 
