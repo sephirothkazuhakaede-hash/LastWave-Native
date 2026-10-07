@@ -819,6 +819,7 @@ private struct HomeDashboardView: View {
                     CapyScreenContainer {
                         VStack(alignment: .leading, spacing: 30) {
                             homeHeader
+                            CapyWelcomeCard(viewport: viewportFrame)
                             flowHero
                             if !player.recentTracks.isEmpty { recentlyPlayed }
                             libraryShelf
