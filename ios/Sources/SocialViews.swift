@@ -193,10 +193,7 @@ struct ProfilePageView: View {
                 CapyScreenContainer {
                     VStack(spacing: 20) {
                         if let profile = social.profile {
-                            ProfileCoverView(coverID: profile.coverID)
-                            SocialAvatar(profile: profile, size: 132)
-                                .overlay { Circle().stroke(CapyColor.surfaceStroke, lineWidth: 1) }
-                                .shadow(color: .black.opacity(0.3), radius: 24, y: 12)
+                            ProfileIdentityHeader(profile: profile, size: 132)
                             VStack(spacing: 6) {
                                 Text(profile.displayName).font(.system(size: 32, weight: .black, design: .rounded)).multilineTextAlignment(.center)
                                 Text("@" + profile.username).font(.capyBody).foregroundStyle(CapyColor.accent)
@@ -819,8 +816,7 @@ struct SocialPersonProfileView: View {
             ScrollView {
                 CapyScreenContainer {
                     VStack(spacing: 18) {
-                        ProfileCoverView(coverID: loadedCoverID ?? person.coverID)
-                        SocialAvatar(profile: person, size: 124)
+                        ProfileIdentityHeader(profile: person, size: 124, coverID: loadedCoverID)
                         Text(person.displayName).font(.capyTitle).multilineTextAlignment(.center)
                         Text("@" + person.username).foregroundStyle(CapyColor.accent)
                         if !person.bio.isEmpty { Text(person.bio).foregroundStyle(CapyColor.secondaryText) }

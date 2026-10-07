@@ -26,3 +26,30 @@ struct ProfileCoverView: View {
         }
     }
 }
+
+struct ProfileIdentityHeader: View {
+    let profile: SocialProfile
+    let size: CGFloat
+    var coverID: String? = nil
+
+    var body: some View {
+        Group {
+            if (coverID ?? profile.coverID) == ProfileCoverChoice.parade {
+                ProfileCoverView(coverID: ProfileCoverChoice.parade)
+                    .padding(.bottom, size / 2 + 4)
+                    .overlay(alignment: .bottom) { avatar }
+            } else {
+                avatar
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var avatar: some View {
+        SocialAvatar(profile: profile, size: size)
+            .padding(4)
+            .background(CapyColor.background, in: Circle())
+            .overlay { Circle().stroke(CapyColor.surfaceStroke, lineWidth: 1) }
+            .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+    }
+}
