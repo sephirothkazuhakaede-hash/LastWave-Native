@@ -456,6 +456,11 @@ private struct CapyProfileButton: View {
     }
 }
 
+private struct FriendActivityFramePreference: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
 private struct ProfileDrawerContainer: View {
     let width: CGFloat
     let close: () -> Void
@@ -469,6 +474,7 @@ private struct ProfileDrawerContainer: View {
 
     @State private var dragOffset: CGFloat
     @State private var suppressActions = false
+    @State private var friendActivityFrame: CGRect = .zero
 
     init(
         width: CGFloat,
@@ -523,8 +529,9 @@ private struct ProfileDrawerContainer: View {
             .transition(.move(edge: .leading))
         }
         .simultaneousGesture(
-            DragGesture(minimumDistance: 10)
+            DragGesture(minimumDistance: 10, coordinateSpace: .named("profile-drawer"))
                 .onChanged { value in
+                    guard !friendActivityFrame.contains(value.startLocation) else { return }
                     let horizontal =
                         abs(value.translation.width) >
                         abs(value.translation.height)
@@ -538,6 +545,7 @@ private struct ProfileDrawerContainer: View {
                     dragOffset = value.translation.width
                 }
                 .onEnded { value in
+                    guard !friendActivityFrame.contains(value.startLocation) else { return }
                     let horizontal =
                         abs(value.translation.width) >
                         abs(value.translation.height)
@@ -582,6 +590,8 @@ private struct ProfileDrawerContainer: View {
                     }
                 }
         )
+        .coordinateSpace(name: "profile-drawer")
+        .onPreferenceChange(FriendActivityFramePreference.self) { friendActivityFrame = $0 }
         .onAppear {
             withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                 dragOffset = 0
@@ -725,6 +735,14 @@ private struct ProfileDrawerView: View {
                     }
                 )
                 .padding(18)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: FriendActivityFramePreference.self,
+                            value: geometry.frame(in: .named("profile-drawer"))
+                        )
+                    }
+                }
 
                 Text(
                     "Your music and downloads work even when social features are offline."
@@ -819,7 +837,7 @@ private struct HomeDashboardView: View {
                     CapyScreenContainer {
                         VStack(alignment: .leading, spacing: 30) {
                             homeHeader
-                            CapyWelcomeCard(viewport: viewportFrame)
+                            CapyWelcomeCard()
                             flowHero
                             if !player.recentTracks.isEmpty { recentlyPlayed }
                             libraryShelf

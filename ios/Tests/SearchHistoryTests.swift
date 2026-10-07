@@ -1,5 +1,6 @@
 import XCTest
 import ImageIO
+import UIKit
 @testable import CapyFlow
 
 final class SearchHistoryTests: XCTestCase {
@@ -32,6 +33,26 @@ final class SearchHistoryTests: XCTestCase {
         let raw = "[{}, " + String(json.dropFirst().dropLast()) + "]"
         XCTAssertEqual(SearchSelectionHistory.songs(raw), [valid])
         XCTAssertTrue(SearchSelectionHistory.songs("invalid").isEmpty)
+    }
+
+    @MainActor
+    func testHomeAnimationAdvancesOnscreenAndStopsWhenPaused() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        let canvas = CapyGIFCanvas(frame: CGRect(x: 0, y: 0, width: 320, height: 185))
+        window.addSubview(canvas)
+        window.isHidden = false
+        defer { canvas.setPlaying(false); window.isHidden = true }
+        canvas.layoutIfNeeded()
+        let imageView = try XCTUnwrap(canvas.subviews.first as? UIImageView)
+        let first = try XCTUnwrap(imageView.image?.pngData())
+        canvas.setPlaying(true)
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertGreaterThan(canvas.frameIndex, 0)
+        XCTAssertNotEqual(imageView.image?.pngData(), first)
+        canvas.setPlaying(false)
+        XCTAssertEqual(canvas.frameIndex, 0)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(canvas.frameIndex, 0)
     }
 
     func testHomeAnimationIsBundledAndContainsMultipleFrames() throws {

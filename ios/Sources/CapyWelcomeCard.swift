@@ -2,35 +2,18 @@ import SwiftUI
 import UIKit
 import ImageIO
 
-private struct CapyCardFrameKey: PreferenceKey {
-    static var defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
-}
-
 /// Decorative Home artwork; never participates in playback or navigation.
 struct CapyWelcomeCard: View {
-    let viewport: CGRect
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var cardFrame: CGRect = .zero
     @State private var appeared = false
 
-    private var isVisible: Bool {
-        appeared && !viewport.isEmpty && cardFrame.intersects(viewport)
-    }
-
     var body: some View {
-        CapyGIFImage(playing: isVisible && scenePhase == .active && !reduceMotion)
+        CapyGIFImage(playing: appeared && scenePhase == .active && !reduceMotion)
             .aspectRatio(1604.0 / 924.0, contentMode: .fit)
             .frame(maxWidth: 520)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .frame(maxWidth: .infinity)
-            .background {
-                GeometryReader { geometry in
-                    Color.clear.preference(key: CapyCardFrameKey.self, value: geometry.frame(in: .global))
-                }
-            }
-            .onPreferenceChange(CapyCardFrameKey.self) { cardFrame = $0 }
             .onAppear { appeared = true }
             .onDisappear { appeared = false }
             .allowsHitTesting(false)
@@ -47,11 +30,11 @@ private struct CapyGIFImage: UIViewRepresentable {
 }
 
 /// Keeps only the current downsampled frame, rather than all full-size GIF frames.
-private final class CapyGIFCanvas: UIView {
+final class CapyGIFCanvas: UIView {
     private let imageView = UIImageView()
     private var source: CGImageSource?
     private var frameCount = 0
-    private var frameIndex = 0
+    private(set) var frameIndex = 0
     private var displayLink: CADisplayLink?
     private var lastTimestamp: CFTimeInterval = 0
     private var elapsed: CFTimeInterval = 0
@@ -98,6 +81,7 @@ private final class CapyGIFCanvas: UIView {
     }
 
     @objc private func advance(_ link: CADisplayLink) {
+        guard isOnscreen else { lastTimestamp = 0; return }
         guard lastTimestamp > 0 else { lastTimestamp = link.timestamp; return }
         elapsed += min(link.timestamp - lastTimestamp, 0.25)
         lastTimestamp = link.timestamp
@@ -107,6 +91,17 @@ private final class CapyGIFCanvas: UIView {
         showFrame(frameIndex)
     }
 
+    private var isOnscreen: Bool {
+        guard let window, !isHidden, alpha > 0,
+              window.bounds.intersects(convert(bounds, to: window)) else { return false }
+        var ancestor = superview
+        while let view = ancestor {
+            if view.clipsToBounds && !view.bounds.intersects(convert(bounds, to: view)) { return false }
+            ancestor = view.superview
+        }
+        return true
+    }
+
     private func showFrame(_ index: Int) {
         guard let source, frameCount > 0 else { return }
         let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
@@ -114,14 +109,16 @@ private final class CapyGIFCanvas: UIView {
         let delay = (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double)
             ?? (gif?[kCGImagePropertyGIFDelayTime] as? Double) ?? 0.1
         frameDuration = max(0.02, delay)
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: 1024,
-            kCGImageSourceShouldCache: false,
-            kCGImageSourceShouldCacheImmediately: true
-        ]
-        if let frame = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) {
-            imageView.image = UIImage(cgImage: frame)
+        // Decode the requested frame explicitly, retaining only one scaled image.
+        guard let frame = CGImageSourceCreateImageAtIndex(source, index, [
+            kCGImageSourceShouldCache: false
+        ] as CFDictionary) else { return }
+        let scale = min(1, 1024.0 / CGFloat(max(frame.width, frame.height)))
+        let size = CGSize(width: CGFloat(frame.width) * scale, height: CGFloat(frame.height) * scale)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        imageView.image = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            UIImage(cgImage: frame).draw(in: CGRect(origin: .zero, size: size))
         }
     }
 }

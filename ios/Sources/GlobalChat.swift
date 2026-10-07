@@ -286,6 +286,7 @@ struct GlobalChatView: View {
     @State private var draft = ""
     @State private var loadingHistory = false
     @State private var showPlayer = false
+    @State private var showActiveUsers = false
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -303,10 +304,9 @@ struct GlobalChatView: View {
             } else {
                 VStack(spacing: 0) {
                     if !presence.userIDs.isEmpty {
-                        NavigationLink {
-                            GlobalChatActiveUsersView(
-                                presence: presence
-                            )
+                        Button {
+                            composerFocused = false
+                            showActiveUsers = true
                         } label: {
                             HStack(spacing: 10) {
                                 HStack(spacing: -8) {
@@ -579,6 +579,16 @@ struct GlobalChatView: View {
             }
             .padding(12)
             .background(.ultraThinMaterial)
+        }
+        .sheet(isPresented: $showActiveUsers) {
+            NavigationStack {
+                GlobalChatActiveUsersView(presence: presence)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showActiveUsers = false }
+                        }
+                    }
+            }
         }
         .sheet(isPresented: $showPlayer) {
             PlayerView().messageBanners(messaging)
