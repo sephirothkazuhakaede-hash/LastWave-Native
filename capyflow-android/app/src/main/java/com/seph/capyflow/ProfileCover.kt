@@ -2,6 +2,9 @@ package com.seph.capyflow
 
 import android.os.Build
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -40,4 +43,17 @@ object ProfileCoverChoice {
     AsyncImage(model=request, imageLoader=loader, contentDescription=null,
         contentScale=ContentScale.Crop,
         modifier=Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(22.dp)))
+}
+
+@Composable fun ProfileIdentityHeader(profile: Profile?) {
+    if(profile?.coverID == ProfileCoverChoice.PARADE) {
+        Box(Modifier.fillMaxWidth().height(203.dp)) {
+            ProfileCover(profile.coverID)
+            Box(Modifier.align(Alignment.BottomCenter).background(Night, CircleShape).padding(5.dp)) {
+                ProfileAvatar(profile, 96)
+            }
+        }
+    } else {
+        ProfileAvatar(profile, 96)
+    }
 }

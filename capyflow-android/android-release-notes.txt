@@ -1,9 +1,9 @@
-CapyFlow 1.0.7 — Stable
+CapyFlow 1.0.8 — Stable
 
-• Search history now remembers songs you play and albums you open from search, with artwork, replay, individual removal and clear controls in the CapyFlow style.
-• More compact chat bubbles with timestamps underneath and connected groups for consecutive messages.
-• Profile pictures line up with the center of the latest bubble in each group. Message status appears below your profile picture in direct messages.
-• Removed the dark outline around the compact chat music player while keeping its glass background and playback controls.
-• Includes the recent player, search, Global Chat presence and notification fixes.
+• Add an animated Capy parade cover from Profile → Edit profile → Profile cover. Choose Default to remove it.
+• Your cover choice is saved to your account and visible to other listeners on Android and iOS.
+• The profile photo overlaps the cover in one integrated header.
+• The animated cover is cropped to fit the profile card and plays without a separate download.
+• Includes the compact chat player, centered avatars, grouped bubbles, timestamps below messages and song/album search history improvements from 1.0.7.
 
 Your account, messages, playlists and downloads stay with you when updating.

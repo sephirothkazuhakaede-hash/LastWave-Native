@@ -58,8 +58,7 @@ import kotlinx.coroutines.*
                 if(people.isEmpty())item{Text("No ${relationship!!.lowercase()} yet",color=Color.White.copy(alpha=.6f))}
                 items(people,key={it}){id->ContactCard(social,id,{selectedID=it.id;relationship=null})}
             }else{
-                item{ProfileCover(p?.coverID ?: ProfileCoverChoice.NONE)}
-                item{Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally){ProfileAvatar(p,96);Text(p?.displayName ?: "Loading profile…",fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=14.dp));p?.let{Text("@${it.username}",color=Violet);if(it.bio.isNotBlank())Text(it.bio,modifier=Modifier.padding(top=14.dp))}}}
+                item{Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally){ProfileIdentityHeader(p);Text(p?.displayName ?: "Loading profile…",fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=14.dp));p?.let{Text("@${it.username}",color=Violet);if(it.bio.isNotBlank())Text(it.bio,modifier=Modifier.padding(top=14.dp))}}}
                 item{ProfileListeningCard(social,selectedID)}
                 item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){TextButton(onClick={relationship="Followers"}){Text("${followers.size} Followers")};TextButton(onClick={relationship="Following"}){Text("${following.size} Following")}}}
                 p?.let{person->item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.Center){if(person.id==userID)Button(onClick={editing=true}){Text("Edit profile")}else{Button(onClick={social.follow(person,person.id !in social.following)}){Text(if(person.id in social.following)"Unfollow" else "Follow")};Spacer(Modifier.width(12.dp));OutlinedButton(onClick={onChat(person.id)}){Text("Message")}}}}}
