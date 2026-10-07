@@ -456,8 +456,8 @@ struct GlobalChatView: View {
                                         .padding(.vertical, 8)
                                     }
 
-                                    let previousSame = index > 0 && chat.messages[index - 1].senderID == message.senderID
-                                    let nextSame = index + 1 < chat.messages.count && chat.messages[index + 1].senderID == message.senderID
+                                    let previousSame = index > 0 && chat.messages[index - 1].senderID == message.senderID && Calendar.current.isDate(chat.messages[index - 1].createdAt, inSameDayAs: message.createdAt)
+                                    let nextSame = index + 1 < chat.messages.count && chat.messages[index + 1].senderID == message.senderID && Calendar.current.isDate(chat.messages[index + 1].createdAt, inSameDayAs: message.createdAt)
                                     messageRow(message, previousSame: previousSame, nextSame: nextSame)
                                         .padding(.top, previousSame ? -11 : 0)
                                         .id(message.id)
@@ -609,6 +609,7 @@ struct GlobalChatView: View {
         }
         .onDisappear {
             messaging.globalChatVisible = false
+            chat.stop()
             presence.stop()
         }
     }
@@ -667,5 +668,44 @@ struct GlobalChatView: View {
 
             if !own { Spacer(minLength: 44) }
         }
+    }
+}
+private struct GlobalChatActiveUsersView: View {
+    @ObservedObject var presence: GlobalChatPresenceSession
+
+    var body: some View {
+        ZStack {
+            WaveBackdrop()
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(presence.userIDs, id: \.self) { uid in
+                        if let person = presence.profiles[uid] {
+                            NavigationLink {
+                                SocialPersonProfileView(person: person)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    SocialAvatar(profile: person, size: 42)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(person.displayName).font(.capyCallout).foregroundStyle(Color.white)
+                                        Text("@" + person.username).font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                                    }
+                                    Spacer()
+                                    Circle().fill(Color.green).frame(width: 8, height: 8)
+                                }.padding(12).waveSurface(radius: 18)
+                            }.buttonStyle(.plain)
+                        } else {
+                            HStack { ProgressView(); Text("Loading profile…"); Spacer() }
+                                .font(.capyCaption).foregroundStyle(CapyColor.secondaryText).padding(12)
+                        }
+                    }
+                    if presence.userIDs.isEmpty {
+                        Text("No listeners are active right now.")
+                            .font(.capyCaption).foregroundStyle(CapyColor.secondaryText).padding(24)
+                    }
+                }.padding(16)
+            }
+        }
+        .navigationTitle("In chat · \(presence.userIDs.count)")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

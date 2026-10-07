@@ -141,8 +141,8 @@ struct DirectChatView: View {
                                 Text(ChatDate.label(message.createdAt)).font(.capyCaption).foregroundStyle(CapyColor.secondaryText).padding(.vertical, 8)
                             }
                             let mine = message.senderID == social.currentUserID
-                            let previousSame = index > 0 && chat.messages[index - 1].senderID == message.senderID
-                            let nextSame = index + 1 < chat.messages.count && chat.messages[index + 1].senderID == message.senderID
+                            let previousSame = index > 0 && chat.messages[index - 1].senderID == message.senderID && Calendar.current.isDate(chat.messages[index - 1].createdAt, inSameDayAs: message.createdAt)
+                            let nextSame = index + 1 < chat.messages.count && chat.messages[index + 1].senderID == message.senderID && Calendar.current.isDate(chat.messages[index + 1].createdAt, inSameDayAs: message.createdAt)
                             let avatarProfile = mine ? social.profile : person
                             HStack(alignment: .bottom, spacing: 7) {
                                 if mine { Spacer(minLength: 44) }
@@ -153,7 +153,7 @@ struct DirectChatView: View {
                                 VStack(alignment: mine ? .trailing : .leading, spacing: 3) {
                                     Text(message.text)
                                         .font(.capyBody)
-                                        .fixedSize(horizontal: true, vertical: true)
+                                        .fixedSize(horizontal: false, vertical: true)
                                         .textSelection(.enabled)
                                         .padding(.horizontal, 12).padding(.vertical, 9)
                                         .foregroundStyle(mine ? Color.black : Color.white)
