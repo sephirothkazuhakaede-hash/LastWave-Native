@@ -21,10 +21,14 @@ struct CapyWelcomeCard: View {
     }
 }
 
-private struct CapyGIFImage: UIViewRepresentable {
+struct CapyGIFImage: UIViewRepresentable {
     let playing: Bool
+    var resourceName = "capy-welcome"
+    var contentMode: UIView.ContentMode = .scaleAspectFit
 
-    func makeUIView(context: Context) -> CapyGIFCanvas { CapyGIFCanvas() }
+    func makeUIView(context: Context) -> CapyGIFCanvas {
+        CapyGIFCanvas(resourceName: resourceName, contentMode: contentMode)
+    }
     func updateUIView(_ view: CapyGIFCanvas, context: Context) { view.setPlaying(playing) }
     static func dismantleUIView(_ view: CapyGIFCanvas, coordinator: ()) { view.setPlaying(false) }
 }
@@ -40,12 +44,13 @@ final class CapyGIFCanvas: UIView {
     private var elapsed: CFTimeInterval = 0
     private var frameDuration: CFTimeInterval = 0.1
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        imageView.contentMode = .scaleAspectFit
+    init(resourceName: String = "capy-welcome", contentMode: UIView.ContentMode = .scaleAspectFit) {
+        super.init(frame: .zero)
+        clipsToBounds = true
+        imageView.contentMode = contentMode
         imageView.isUserInteractionEnabled = false
         addSubview(imageView)
-        if let url = Bundle.main.url(forResource: "capy-welcome", withExtension: "gif") {
+        if let url = Bundle.main.url(forResource: resourceName, withExtension: "gif") {
             source = CGImageSourceCreateWithURL(url as CFURL, [
                 kCGImageSourceShouldCache: false
             ] as CFDictionary)
@@ -54,7 +59,7 @@ final class CapyGIFCanvas: UIView {
         }
     }
 
-    convenience init() { self.init(frame: .zero) }
+    override convenience init(frame: CGRect) { self.init(); self.frame = frame }
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
 
     override func layoutSubviews() {

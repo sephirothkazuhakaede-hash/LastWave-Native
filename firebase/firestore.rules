@@ -92,7 +92,7 @@ service cloud.firestore {
       allow get: if signedIn();
       allow list: if signedIn() && request.query.limit <= 20;
       allow create: if owns(uid) &&
-        request.resource.data.keys().hasOnly(['username', 'usernameKey', 'usernameIsGenerated', 'displayName', 'bio', 'avatarURL', 'avatarData', 'createdAt', 'updatedAt']) &&
+        request.resource.data.keys().hasOnly(['username', 'usernameKey', 'usernameIsGenerated', 'displayName', 'bio', 'avatarURL', 'avatarData', 'coverID', 'createdAt', 'updatedAt']) &&
         validUsername(request.resource.data.username) &&
         request.resource.data.usernameKey == request.resource.data.username &&
         request.resource.data.usernameIsGenerated == true &&
@@ -101,11 +101,12 @@ service cloud.firestore {
         request.resource.data.displayName.size() <= 60 &&
         request.resource.data.bio is string &&
         request.resource.data.bio.size() <= 160 &&
+        request.resource.data.get('coverID', 'none') in ['none', 'capy-parade-v1'] &&
         (!request.resource.data.keys().hasAny(['avatarData']) ||
           (request.resource.data.avatarData is bytes && request.resource.data.avatarData.size() <= 131072)) &&
         getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid;
       allow update: if owns(uid) &&
-        request.resource.data.keys().hasOnly(['username', 'usernameKey', 'usernameIsGenerated', 'usernameChangedAt', 'displayName', 'bio', 'avatarURL', 'avatarData', 'createdAt', 'updatedAt']) &&
+        request.resource.data.keys().hasOnly(['username', 'usernameKey', 'usernameIsGenerated', 'usernameChangedAt', 'displayName', 'bio', 'avatarURL', 'avatarData', 'coverID', 'createdAt', 'updatedAt']) &&
         validUsername(request.resource.data.username) &&
         request.resource.data.usernameKey == request.resource.data.username &&
         request.resource.data.displayName is string &&
@@ -113,13 +114,14 @@ service cloud.firestore {
         request.resource.data.displayName.size() <= 60 &&
         request.resource.data.bio is string &&
         request.resource.data.bio.size() <= 160 &&
+        request.resource.data.get('coverID', 'none') in ['none', 'capy-parade-v1'] &&
         (!request.resource.data.keys().hasAny(['avatarData']) ||
           (request.resource.data.avatarData is bytes && request.resource.data.avatarData.size() <= 131072)) &&
         getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid &&
         (
           (
             request.resource.data.username == resource.data.get('username', '') &&
-            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usernameKey', 'usernameIsGenerated', 'displayName', 'bio', 'avatarURL', 'avatarData', 'updatedAt']) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usernameKey', 'usernameIsGenerated', 'displayName', 'bio', 'avatarURL', 'avatarData', 'coverID', 'updatedAt']) &&
             request.resource.data.get('usernameIsGenerated', false) == resource.data.get('usernameIsGenerated', false)
           ) ||
           (

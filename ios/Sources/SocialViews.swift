@@ -193,6 +193,7 @@ struct ProfilePageView: View {
                 CapyScreenContainer {
                     VStack(spacing: 20) {
                         if let profile = social.profile {
+                            ProfileCoverView(coverID: profile.coverID)
                             SocialAvatar(profile: profile, size: 132)
                                 .overlay { Circle().stroke(CapyColor.surfaceStroke, lineWidth: 1) }
                                 .shadow(color: .black.opacity(0.3), radius: 24, y: 12)
@@ -288,6 +289,7 @@ private struct ProfileEditorSheet: View {
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var avatarData: Data?
     @State private var processingPhoto = false
+    @State private var coverID = ProfileCoverChoice.none
     var body: some View {
         NavigationStack {
             ZStack {
@@ -306,6 +308,16 @@ private struct ProfileEditorSheet: View {
                         .buttonStyle(.plain)
                         Text("Tap the photo to choose a custom profile picture.")
                             .font(.capyCaption).foregroundStyle(CapyColor.secondaryText).multilineTextAlignment(.center)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Profile cover").font(.capyCallout)
+                            ProfileCoverView(coverID: coverID)
+                            Picker("Profile cover", selection: $coverID) {
+                                Text("Default").tag(ProfileCoverChoice.none)
+                                Text("Capy parade").tag(ProfileCoverChoice.parade)
+                            }.pickerStyle(.segmented)
+                            Text("Visible on your profile to CapyFlow listeners on Android and iOS.")
+                                .font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
+                        }
                         TextField("Username", text: $username)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                             .padding(16).waveGlass(radius: 20)
@@ -333,7 +345,7 @@ private struct ProfileEditorSheet: View {
                     Button("Save") {
                         Task {
                             social.clearError()
-                            if await social.saveProfile(username: username, displayName: displayName, bio: bio, avatarData: avatarData) {
+                            if await social.saveProfile(username: username, displayName: displayName, bio: bio, avatarData: avatarData, coverID: coverID) {
                                 dismiss()
                             }
                         }
@@ -347,6 +359,7 @@ private struct ProfileEditorSheet: View {
                 displayName = social.profile?.displayName ?? ""
                 bio = social.profile?.bio ?? ""
                 avatarData = social.profile?.avatarData
+                coverID = social.profile?.coverID ?? ProfileCoverChoice.none
             }
             .task(id: username) {
                 try? await Task.sleep(nanoseconds: 350_000_000)
@@ -799,12 +812,14 @@ struct SocialPersonProfileView: View {
     @EnvironmentObject private var player: WavePlayer
     @StateObject private var listening = ProfileListeningActivityStore()
     let person: SocialProfile
+    @State private var loadedCoverID: String?
     var body: some View {
         ZStack {
             CapyAmbientBackdrop(seed: person.id, artworkURL: person.avatarURL)
             ScrollView {
                 CapyScreenContainer {
                     VStack(spacing: 18) {
+                        ProfileCoverView(coverID: loadedCoverID ?? person.coverID)
                         SocialAvatar(profile: person, size: 124)
                         Text(person.displayName).font(.capyTitle).multilineTextAlignment(.center)
                         Text("@" + person.username).foregroundStyle(CapyColor.accent)
@@ -826,7 +841,10 @@ struct SocialPersonProfileView: View {
                 }
             }
         }.navigationTitle(person.displayName).navigationBarTitleDisplayMode(.inline)
-        .task(id: social.currentUserID) { listening.start(profileID: person.id, signedIn: social.currentUserID != nil) }
+        .task(id: social.currentUserID) {
+            listening.start(profileID: person.id, signedIn: social.currentUserID != nil)
+            loadedCoverID = await social.loadProfile(person.id)?.coverID
+        }
         .onDisappear { listening.stop() }
     }
 

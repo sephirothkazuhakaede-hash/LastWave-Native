@@ -10,6 +10,7 @@ struct SocialProfile: Identifiable, Equatable {
     let bio: String
     let avatarURL: URL?
     let avatarData: Data?
+    let coverID: String
     let usernameChangedAt: Date?
     let usernameIsGenerated: Bool
 
@@ -21,6 +22,7 @@ struct SocialProfile: Identifiable, Equatable {
         self.bio = data["bio"] as? String ?? ""
         self.avatarURL = (data["avatarURL"] as? String).flatMap(URL.init(string:))
         self.avatarData = data["avatarData"] as? Data
+        self.coverID = ProfileCoverChoice.normalized(data["coverID"] as? String)
         self.usernameChangedAt = (data["usernameChangedAt"] as? Timestamp)?.dateValue()
         let generatedSuffix = "_" + String(id.prefix(6)).lowercased()
         self.usernameIsGenerated = data["usernameIsGenerated"] as? Bool ?? username.hasSuffix(generatedSuffix)
@@ -258,7 +260,8 @@ enum SocialConnectionState: Equatable {
         username rawUsername: String,
         displayName rawDisplayName: String,
         bio rawBio: String,
-        avatarData newAvatarData: Data? = nil
+        avatarData newAvatarData: Data? = nil,
+        coverID: String? = nil
     ) async -> Bool {
         guard let uid = userID else { error = "Sign in before saving your profile."; return false }
         let username = UsernamePolicy.key(from: rawUsername)
@@ -290,7 +293,8 @@ enum SocialConnectionState: Equatable {
                 displayName: displayName,
                 bio: bio,
                 avatarURL: profile?.avatarURL?.absoluteString ?? "",
-                avatarData: avatarData
+                avatarData: avatarData,
+                coverID: coverID.map(ProfileCoverChoice.normalized)
             )
             usernameAvailability = .current(username)
             connectionState = .ready
@@ -540,7 +544,8 @@ enum SocialConnectionState: Equatable {
         displayName: String,
         bio: String,
         avatarURL: String,
-        avatarData: Data?
+        avatarData: Data?,
+        coverID: String?
     ) async throws {
         let usernames = db.collection("usernames")
         let profileRef = db.collection("profiles").document(uid)
@@ -592,6 +597,7 @@ enum SocialConnectionState: Equatable {
                         "updatedAt": FieldValue.serverTimestamp()
                     ]
                     if let avatarData { update["avatarData"] = avatarData }
+                    if let coverID { update["coverID"] = coverID }
                     if isRename {
                         update["usernameIsGenerated"] = false
                         update["usernameChangedAt"] = FieldValue.serverTimestamp()

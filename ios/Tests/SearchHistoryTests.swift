@@ -4,6 +4,14 @@ import UIKit
 @testable import CapyFlow
 
 final class SearchHistoryTests: XCTestCase {
+    func testProfileCoverChoiceIsSharedAndBackwardCompatible() {
+        XCTAssertEqual(ProfileCoverChoice.normalized(nil), "none")
+        XCTAssertEqual(ProfileCoverChoice.normalized("unknown"), "none")
+        XCTAssertEqual(ProfileCoverChoice.normalized("capy-parade-v1"), "capy-parade-v1")
+        let profile = SocialProfile(id: "alice", data: ["username": "alice", "coverID": "capy-parade-v1"])
+        XCTAssertEqual(profile?.coverID, "capy-parade-v1")
+    }
+
     func testSongHistoryRetainsRecordingAndArtworkAfterReload() {
         var song = Track(id: "row", title: "Song", artist: "Artist", duration: 180, artworkURL: URL(string: "https://example.com/art.jpg"))
         song.mediaID = "recording"

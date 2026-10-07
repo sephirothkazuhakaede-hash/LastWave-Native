@@ -194,6 +194,68 @@ test('direct chats are participant-private, atomic and require following to star
   await assertFails(deleteDoc(doc(bob, 'conversations', 'alice_bob', 'messages', 'reply')));
 });
 
+
+test('delivery receipts are recipient-owned, latest-message-only, and private to participants', async () => {
+  await env.withSecurityRulesDisabled(async c => {
+    await setDoc(doc(c.firestore(), 'conversations', 'alice_bob'), {
+      memberIDs: ['alice', 'bob'], lastMessageID: 'latest', lastSenderID: 'alice',
+      lastText: 'Hello', readMessageIDs: {alice: 'latest', bob: ''},
+      createdAt: Timestamp.now(), updatedAt: Timestamp.now()
+    });
+  });
+  const receipt = db => doc(db, 'conversations', 'alice_bob', 'receipts', 'bob');
+  const fields = () => ({messageID: 'latest', receivedAt: serverTimestamp()});
+  await assertFails(setDoc(receipt(account('alice')), fields()));
+  await assertFails(setDoc(receipt(account('mallory')), fields()));
+  await assertFails(setDoc(receipt(account('bob')), {...fields(), messageID: 'old'}));
+  await assertSucceeds(setDoc(receipt(account('bob')), fields()));
+  await assertSucceeds(getDoc(receipt(account('alice'))));
+  await assertFails(getDoc(receipt(account('mallory'))));
+});
+
+test('deleting shared access does not delete the account-private source playlist', async () => {
+  const alice=account('alice'), bob=account('bob');
+  await assertSucceeds(setDoc(doc(alice,'playlists','shared'),{ownerID:'alice',sourceID:'source',memberIDs:['alice'],name:'Mix',tracks:[]}));
+  await assertSucceeds(updateDoc(doc(alice,'playlists','shared'),{memberIDs:['alice','bob']}));
+  await assertSucceeds(setDoc(doc(alice,'users','alice','library','source'),{playlistID:'source',deleted:false,payload:Bytes.fromUint8Array(new TextEncoder().encode('{"id":"source","name":"Mix","tracks":[]}')),updatedAt:serverTimestamp()}));
+  await assertFails(deleteDoc(doc(bob,'playlists','shared')));
+  await assertSucceeds(deleteDoc(doc(alice,'playlists','shared')));
+  await assertSucceeds(getDoc(doc(alice,'users','alice','library','source')));
+  await assertFails(getDoc(doc(bob,'users','alice','library','source')));
+});
+
+
+test('push tokens are account-private and reject oversized or extra fields', async () => {
+  const ref=doc(account('alice'), 'users/alice/devices/installation');
+  const data={token:'valid-token',platform:'android',updatedAt:serverTimestamp()};
+  await assertSucceeds(setDoc(ref,data));
+  await assertSucceeds(getDoc(ref));
+  await assertFails(getDoc(doc(account('bob'),'users/alice/devices/installation')));
+  await assertFails(setDoc(doc(account('bob'),'users/alice/devices/other'),data));
+  await assertFails(setDoc(ref,{...data,admin:true}));
+  await assertFails(setDoc(ref,{...data,token:'x'.repeat(4097)}));
+  await assertFails(setDoc(ref,{...data,platform:'ios'}));
+  await assertSucceeds(deleteDoc(ref));
+});
+
+test('stale read is rejected but transaction skips old message and reads the latest safely', async () => {
+  const alice=account('alice'),bob=account('bob');
+  await setDoc(doc(alice,'follows','alice_bob'),{followerID:'alice',followingID:'bob'});
+  await assertSucceeds(message('alice','alice_bob','first',{first:true}));
+  await assertSucceeds(message('alice','alice_bob','second'));
+  const ref=doc(bob,'conversations','alice_bob');
+  await assertFails(updateDoc(ref,{'readMessageIDs.bob':'first'}));
+  const mark=displayed=>runTransaction(bob,async tx=>{
+    const d=await tx.get(ref);
+    if(d.get('lastMessageID')===displayed && d.get('lastSenderID')!=='bob')
+      tx.update(ref,{'readMessageIDs.bob':displayed});
+  });
+  await assertSucceeds(mark('first'));
+  if((await getDoc(ref)).get('readMessageIDs.bob')!=='')throw new Error('Old callback changed read state');
+  await assertSucceeds(mark('second'));
+  if((await getDoc(ref)).get('readMessageIDs.bob')!=='second')throw new Error('Latest message was not read');
+});
+
 const google = uid => env.authenticatedContext(uid, { firebase: { sign_in_provider: 'google.com' } }).firestore();
 function globalSend(db, uid, id, text = 'Hello everyone') {
   const batch = writeBatch(db);
@@ -256,4 +318,18 @@ test('Global push opt-ins are private and only their owner can change or remove 
  await assertFails(getDocs(query(collection(db,'globalPushDevices'),limit(50))));
  await assertFails(setDoc(doc(account('password'),'globalPushDevices','other'),{...data,uid:'password'}));
  await assertSucceeds(deleteDoc(ref));
+});
+
+test('profile covers are optional, shared across clients and editable only by their owner', async () => {
+  await create('alice', 'alice_initial');
+  await create('bob', 'bob_initial');
+  await assertSucceeds(rename('alice', 'alice_initial', 'alice_custom'));
+  const alice = doc(account('alice'), 'profiles', 'alice');
+  await assertSucceeds(updateDoc(alice, { coverID: 'capy-parade-v1' }));
+  const viewed = await assertSucceeds(getDoc(doc(account('bob'), 'profiles', 'alice')));
+  if(viewed.data().coverID !== 'capy-parade-v1') throw Error('Cover choice must survive cross-client reads');
+  await assertFails(updateDoc(doc(account('bob'), 'profiles', 'alice'), { coverID: 'none' }));
+  await assertFails(updateDoc(alice, { coverID: 'https://untrusted.example/cover.gif' }));
+  await assertFails(updateDoc(alice, { coverID: 1 }));
+  await assertSucceeds(updateDoc(alice, { coverID: 'none' }));
 });
