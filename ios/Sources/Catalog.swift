@@ -65,7 +65,7 @@ struct Track: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
-struct Album: Identifiable, Hashable {
+struct Album: Identifiable, Hashable, Codable {
     let id: String
     let title: String
     let artist: String

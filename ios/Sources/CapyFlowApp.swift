@@ -1026,6 +1026,18 @@ private struct SearchHomeView: View {
     @FocusState private var focused: Bool
     @AppStorage("capy.search.history.songs") private var songHistoryJSON = "[]"
     @AppStorage("capy.search.history.albums") private var albumHistoryJSON = "[]"
+    @AppStorage("capy.search.history.playedSongs.v1") private var playedSongsJSON = "[]"
+    @AppStorage("capy.search.history.viewedAlbums.v1") private var viewedAlbumsJSON = "[]"
+
+    private var searchedSongs: [Track] { SearchSelectionHistory.songs(playedSongsJSON) }
+    private var viewedAlbums: [Album] { SearchSelectionHistory.albums(viewedAlbumsJSON) }
+    private func rememberSong(_ track: Track) {
+        playedSongsJSON = SearchSelectionHistory.encode(SearchSelectionHistory.remembering(track, in: searchedSongs))
+    }
+    private func rememberAlbum(_ album: Album) {
+        viewedAlbumsJSON = SearchSelectionHistory.encode(SearchSelectionHistory.remembering(album, in: viewedAlbums))
+    }
+
     var body: some View {
       NavigationStack {
         ScrollView {
@@ -1046,14 +1058,14 @@ private struct SearchHomeView: View {
                     } else if mode == .albums {
                         albumSectionHeader
                         ForEach(albums) { album in
-                            NavigationLink { AlbumDetailView(album: album) } label: { AlbumResultRow(album: album) }
+                            NavigationLink { AlbumDetailView(album: album).onAppear { rememberAlbum(album) } } label: { AlbumResultRow(album: album) }
                                 .buttonStyle(.plain)
                         }
                     } else {
                         if !artistSuggestions.isEmpty { artistSection }
                         if !matchingPlaylists.isEmpty { localPlaylistSection }
                         sectionHeader
-                        ForEach(results) { TrackCard(track: $0) }
+                        ForEach(results) { track in TrackCard(track: track, onPlay: rememberSong) }
                     }
                 }
                 .padding(.top, 10).padding(.bottom, 150)
@@ -1112,24 +1124,48 @@ private struct SearchHomeView: View {
 
     private var recentSearches: some View {
         let history = mode == .songs ? songHistory : albumHistory
+        let hasSelections = mode == .songs ? !searchedSongs.isEmpty : !viewedAlbums.isEmpty
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                CapySectionHeader("Recent searches", subtitle: mode == .songs ? "Songs" : "Albums")
+                CapySectionHeader("Recent searches", subtitle: mode == .songs ? "Songs you played" : "Albums you opened")
                 Spacer()
-                if !history.isEmpty {
-                    Button("Clear") { setHistory([]) }
-                        .font(.capyCaption)
-                        .foregroundStyle(CapyColor.accent)
+                if hasSelections || !history.isEmpty {
+                    Button("Clear") {
+                        setHistory([])
+                        if mode == .songs { playedSongsJSON = "[]" } else { viewedAlbumsJSON = "[]" }
+                    }.font(.capyCaption).foregroundStyle(CapyColor.accent)
                 }
             }
-            if history.isEmpty {
-                Text("Your recent \(mode.rawValue.lowercased()) searches will appear here.")
-                    .font(.capyBody)
-                    .foregroundStyle(CapyColor.secondaryText)
+            if !hasSelections && history.isEmpty {
+                Text(mode == .songs ? "Songs you play from search will appear here." : "Albums you open from search will appear here.")
+                    .font(.capyBody).foregroundStyle(CapyColor.secondaryText)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(18)
-                    .waveGlass(radius: 20)
+                    .padding(18).waveGlass(radius: 20)
+            }
+            if mode == .songs {
+                ForEach(searchedSongs, id: \.playableID) { track in
+                    HStack(spacing: 6) {
+                        TrackCard(track: track, onPlay: rememberSong)
+                        historyRemoveButton("Remove \(track.title) from search history") {
+                            playedSongsJSON = SearchSelectionHistory.encode(searchedSongs.filter { $0.playableID != track.playableID })
+                        }
+                    }
+                }
             } else {
+                ForEach(viewedAlbums) { album in
+                    HStack(spacing: 6) {
+                        NavigationLink {
+                            AlbumDetailView(album: album).onAppear { rememberAlbum(album) }
+                        } label: { AlbumResultRow(album: album) }
+                            .buttonStyle(.plain)
+                        historyRemoveButton("Remove \(album.title) from search history") {
+                            viewedAlbumsJSON = SearchSelectionHistory.encode(viewedAlbums.filter { $0.id != album.id })
+                        }
+                    }
+                }
+            }
+            if !history.isEmpty {
+                Text("Search terms").font(.capyCaption).foregroundStyle(CapyColor.secondaryText).padding(.top, 8)
                 ForEach(history, id: \.self) { term in
                     HStack(spacing: 12) {
                         Button {
@@ -1138,31 +1174,27 @@ private struct SearchHomeView: View {
                             Task { await search(showSpinner: false) }
                         } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: "clock.arrow.circlepath")
-                                    .foregroundStyle(CapyColor.accent)
+                                Image(systemName: "clock.arrow.circlepath").foregroundStyle(CapyColor.accent)
                                 Text(term).font(.capyBody).lineLimit(1)
                                 Spacer()
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        Button {
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                        historyRemoveButton("Remove \(term) from search history") {
                             setHistory(history.filter { $0 != term })
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.caption.bold())
-                                .foregroundStyle(CapyColor.secondaryText)
-                                .frame(width: 36, height: 36)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Remove \(term) from search history")
                     }
-                    .padding(.horizontal, 16)
-                    .frame(minHeight: 54)
-                    .waveGlass(radius: 18)
+                    .padding(.horizontal, 16).frame(minHeight: 54).waveGlass(radius: 18)
                 }
             }
         }
+    }
+
+    private func historyRemoveButton(_ label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.caption.bold()).foregroundStyle(CapyColor.secondaryText)
+                .frame(width: 36, height: 44)
+        }.buttonStyle(.plain).accessibilityLabel(label)
     }
 
     private var songHistory: [String] { decodeHistory(songHistoryJSON) }
@@ -2468,10 +2500,11 @@ private struct TrackCard: View {
     @EnvironmentObject var social: SocialStore
     let track: Track
     var titleIdentifier: String? = nil
+    var onPlay: ((Track) -> Void)? = nil
     @State private var showActions = false
     var body: some View {
         HStack(spacing: 14) {
-            Button { Task { await player.play(track) } } label: {
+            Button { onPlay?(track); Task { await player.play(track) } } label: {
                 HStack(spacing: 14) {
                     Artwork(track: track)
                     VStack(alignment: .leading, spacing: 4) {
