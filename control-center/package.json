@@ -43,9 +43,17 @@
         "to": "backend"
       },
       {
+        "from": "bundled-backend/node_modules",
+        "to": "backend/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
         "from": "bundled-tools",
         "to": "tools"
       }
-    ]
+    ],
+    "afterPack": "./verify-package.cjs"
   }
 }

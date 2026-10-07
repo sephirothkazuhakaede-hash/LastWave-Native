@@ -29,6 +29,8 @@ jobs:
       - run: pnpm dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify bundled backend runtime
+        run: node test-bundled-backend.mjs
       - name: Verify desktop startup
         run: |
           $desktopApp = Join-Path $PWD 'dist/win-unpacked/CapyFlow Control Center.exe'
