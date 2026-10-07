@@ -30,9 +30,21 @@ struct ProfileCoverView: View {
                 .onDisappear { appeared = false }
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
-                .task(id: banner?.revision) {
+                .task(id: "\(coverID)-\(banner?.revision ?? "")-\(catalog.baseURL?.absoluteString ?? "")") {
                     data = nil
-                    if let banner { data = try? await catalog.data(for: banner) }
+                    guard let banner else { return }
+                    for attempt in 0..<3 {
+                        do {
+                            let downloaded = try await catalog.data(for: banner)
+                            try Task.checkCancellation()
+                            data = downloaded
+                            return
+                        } catch is CancellationError { return }
+                        catch {
+                            if Task.isCancelled { return }
+                            if attempt < 2 { try? await Task.sleep(nanoseconds: 2_000_000_000) }
+                        }
+                    }
                 }
         }
     }

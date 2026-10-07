@@ -69,15 +69,14 @@ struct ProfileBannerEnvelope: Codable { let schemaVersion: Int; let banners: [Pr
         var origin = root
         if origin.lastPathComponent == "v1" { origin.deleteLastPathComponent() }
         let url = origin.appendingPathComponent(String(banner.path.dropFirst()))
-        var request = URLRequest(url: url); request.timeoutInterval = 15
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        var request = URLRequest(url: url); request.timeoutInterval = 60
+        let (temporaryFile, response) = try await URLSession.shared.download(for: request)
+        defer { try? FileManager.default.removeItem(at: temporaryFile) }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               response.expectedContentLength <= 5 * 1024 * 1024 else { throw URLError(.badServerResponse) }
-        var data = Data()
-        for try await byte in bytes {
-            guard data.count < 5 * 1024 * 1024 else { throw URLError(.dataLengthExceedsMaximum) }
-            data.append(byte)
-        }
+        let size = try temporaryFile.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size > 0, size <= 5 * 1024 * 1024 else { throw URLError(.dataLengthExceedsMaximum) }
+        let data = try Data(contentsOf: temporaryFile)
         guard data.starts(with: Data("GIF87a".utf8)) || data.starts(with: Data("GIF89a".utf8)) else { throw URLError(.cannotDecodeContentData) }
         try? data.write(to: file, options: .atomic)
         // Keep storage bounded while retaining the most recently used banners.
