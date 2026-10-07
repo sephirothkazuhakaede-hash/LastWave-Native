@@ -618,7 +618,7 @@ struct GlobalChatView: View {
         let own = message.senderID == social.currentUserID
         let person = chat.profiles[message.senderID]
 
-        return HStack(alignment: .bottom, spacing: 7) {
+        return HStack(alignment: .chatBubbleCenter, spacing: 7) {
             if own { Spacer(minLength: 44) }
 
             if !own {
@@ -650,6 +650,7 @@ struct GlobalChatView: View {
                         own ? CapyColor.accent : CapyColor.surfaceStrong,
                         in: RoundedRectangle(cornerRadius: previousSame || nextSame ? 13 : 18, style: .continuous)
                     )
+                    .alignmentGuide(.chatBubbleCenter) { $0[VerticalAlignment.center] }
 
                 Text(message.pending ? "Sending…" : message.createdAt.formatted(date: .omitted, time: .shortened))
                     .font(.caption2)

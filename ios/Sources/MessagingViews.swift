@@ -144,7 +144,7 @@ struct DirectChatView: View {
                             let previousSame = index > 0 && chat.messages[index - 1].senderID == message.senderID && Calendar.current.isDate(chat.messages[index - 1].createdAt, inSameDayAs: message.createdAt)
                             let nextSame = index + 1 < chat.messages.count && chat.messages[index + 1].senderID == message.senderID && Calendar.current.isDate(chat.messages[index + 1].createdAt, inSameDayAs: message.createdAt)
                             let avatarProfile = mine ? social.profile : person
-                            HStack(alignment: .bottom, spacing: 7) {
+                            HStack(alignment: .chatBubbleCenter, spacing: 7) {
                                 if mine { Spacer(minLength: 44) }
                                 if !mine {
                                     if !nextSame { SocialAvatar(profile: person, size: 30) }
@@ -159,17 +159,20 @@ struct DirectChatView: View {
                                         .foregroundStyle(mine ? Color.black : Color.white)
                                         .background(mine ? CapyColor.accent : CapyColor.surfaceStrong,
                                                     in: RoundedRectangle(cornerRadius: previousSame || nextSame ? 13 : 18, style: .continuous))
-                                    HStack(spacing: 5) {
-                                        Text(message.createdAt.formatted(date: .omitted, time: .shortened))
-                                        if mine {
-                                            let status = chat.status(for: message)
-                                            Image(systemName: status == .sending ? "clock" : (status == .read ? "checkmark.circle.fill" : "checkmark"))
-                                        }
-                                    }
-                                    .font(.caption2).foregroundStyle(CapyColor.secondaryText)
+                                        .alignmentGuide(.chatBubbleCenter) { $0[VerticalAlignment.center] }
+                                    Text(message.createdAt.formatted(date: .omitted, time: .shortened))
+                                        .font(.caption2).foregroundStyle(CapyColor.secondaryText)
                                 }
                                 if mine {
-                                    if !nextSame, let avatarProfile { SocialAvatar(profile: avatarProfile, size: 30) }
+                                    if !nextSame, let avatarProfile {
+                                        VStack(spacing: 3) {
+                                            SocialAvatar(profile: avatarProfile, size: 30)
+                                                .alignmentGuide(.chatBubbleCenter) { $0[VerticalAlignment.center] }
+                                            let status = chat.status(for: message)
+                                            Image(systemName: status == .sending ? "clock" : (status == .read ? "checkmark.circle.fill" : "checkmark"))
+                                                .font(.caption2).foregroundStyle(CapyColor.secondaryText)
+                                        }
+                                    }
                                     else { Color.clear.frame(width: 30, height: 1) }
                                 }
                                 if !mine { Spacer(minLength: 44) }
