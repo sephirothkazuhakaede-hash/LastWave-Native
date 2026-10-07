@@ -278,6 +278,7 @@ struct ProfilePageView: View {
 }
 
 private struct ProfileEditorSheet: View {
+    @StateObject private var bannerCatalog = ProfileBannerCatalog.shared
     @EnvironmentObject private var social: SocialStore
     @Environment(\.dismiss) private var dismiss
     @State private var username = ""
@@ -310,8 +311,13 @@ private struct ProfileEditorSheet: View {
                             ProfileCoverView(coverID: coverID)
                             Picker("Profile cover", selection: $coverID) {
                                 Text("Default").tag(ProfileCoverChoice.none)
-                                Text("Capy parade").tag(ProfileCoverChoice.parade)
-                            }.pickerStyle(.segmented)
+                                if !bannerCatalog.hasCatalog { Text("Capy parade").tag(ProfileCoverChoice.parade) }
+                                ForEach(bannerCatalog.banners) { banner in Text(banner.name).tag(banner.id) }
+                                if coverID != ProfileCoverChoice.none && !bannerCatalog.shows(coverID) {
+                                    Text("Unavailable banner (default shown)").tag(coverID)
+                                }
+                            }.pickerStyle(.menu)
+                            if bannerCatalog.offline { Text("Using saved banners while the server is unavailable.").font(.capyCaption) }
                             Text("Visible on your profile to CapyFlow listeners on Android and iOS.")
                                 .font(.capyCaption).foregroundStyle(CapyColor.secondaryText)
                         }

@@ -175,6 +175,17 @@ final class BackendConnectionStatus: ObservableObject {
 actor BackendClient {
     static let shared = BackendClient()
 
+    func profileBannerCatalog() async throws -> (Data, URL) {
+        await refreshDiscoveredConfigurationIfNeeded()
+        guard let configuration = BackendConfiguration.active else { throw URLError(.notConnectedToInternet) }
+        var root = configuration.baseURL
+        if root.lastPathComponent == "v1" { root.deleteLastPathComponent() }
+        let (data, _) = try await perform(url: root.appendingPathComponent("v1/profile-banners"), timeout: 6,
+                                          retryServerErrors: false, includeAuthentication: false)
+        guard data.count <= 262144 else { throw URLError(.dataLengthExceedsMaximum) }
+        return (data, root)
+    }
+
     private let session: URLSession
     private var healthyBaseURL: URL?
     private var healthyUntil = Date.distantPast

@@ -6,7 +6,7 @@ import UIKit
 final class SearchHistoryTests: XCTestCase {
     func testProfileCoverChoiceIsSharedAndBackwardCompatible() {
         XCTAssertEqual(ProfileCoverChoice.normalized(nil), "none")
-        XCTAssertEqual(ProfileCoverChoice.normalized("unknown"), "none")
+        XCTAssertEqual(ProfileCoverChoice.normalized("../unknown"), "none")
         XCTAssertEqual(ProfileCoverChoice.normalized("capy-parade-v1"), "capy-parade-v1")
         let profile = SocialProfile(id: "alice", data: ["username": "alice", "coverID": "capy-parade-v1"])
         XCTAssertEqual(profile?.coverID, "capy-parade-v1")

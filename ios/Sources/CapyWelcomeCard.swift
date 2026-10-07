@@ -25,9 +25,10 @@ struct CapyGIFImage: UIViewRepresentable {
     let playing: Bool
     var resourceName = "capy-welcome"
     var contentMode: UIView.ContentMode = .scaleAspectFit
+    var gifData: Data? = nil
 
     func makeUIView(context: Context) -> CapyGIFCanvas {
-        CapyGIFCanvas(resourceName: resourceName, contentMode: contentMode)
+        CapyGIFCanvas(resourceName: resourceName, contentMode: contentMode, gifData: gifData)
     }
     func updateUIView(_ view: CapyGIFCanvas, context: Context) { view.setPlaying(playing) }
     static func dismantleUIView(_ view: CapyGIFCanvas, coordinator: ()) { view.setPlaying(false) }
@@ -44,13 +45,17 @@ final class CapyGIFCanvas: UIView {
     private var elapsed: CFTimeInterval = 0
     private var frameDuration: CFTimeInterval = 0.1
 
-    init(resourceName: String = "capy-welcome", contentMode: UIView.ContentMode = .scaleAspectFit) {
+    init(resourceName: String = "capy-welcome", contentMode: UIView.ContentMode = .scaleAspectFit, gifData: Data? = nil) {
         super.init(frame: .zero)
         clipsToBounds = true
         imageView.contentMode = contentMode
         imageView.isUserInteractionEnabled = false
         addSubview(imageView)
-        if let url = Bundle.main.url(forResource: resourceName, withExtension: "gif") {
+        if let gifData {
+            source = CGImageSourceCreateWithData(gifData as CFData, [kCGImageSourceShouldCache: false] as CFDictionary)
+            if let source { frameCount = CGImageSourceGetCount(source) }
+            showFrame(0)
+        } else if let url = Bundle.main.url(forResource: resourceName, withExtension: "gif") {
             source = CGImageSourceCreateWithURL(url as CFURL, [
                 kCGImageSourceShouldCache: false
             ] as CFDictionary)

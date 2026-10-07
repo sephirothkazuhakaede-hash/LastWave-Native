@@ -89,6 +89,13 @@ service cloud.firestore {
     }
 
     match /profiles/{uid} {
+      function selectableCover(data) {
+        let id = data.get('coverID', 'none');
+        return id == 'none' || (id == 'capy-parade-v1' && !exists(/databases/$(database)/documents/profileBannerPermissions/$(id))) ||
+          (id is string && id.matches('^[a-z0-9][a-z0-9_-]{0,63}$') &&
+           exists(/databases/$(database)/documents/profileBannerPermissions/$(id)) &&
+           get(/databases/$(database)/documents/profileBannerPermissions/$(id)).data.published == true);
+      }
       allow get: if signedIn();
       allow list: if signedIn() && request.query.limit <= 20;
       allow create: if owns(uid) &&
@@ -101,7 +108,7 @@ service cloud.firestore {
         request.resource.data.displayName.size() <= 60 &&
         request.resource.data.bio is string &&
         request.resource.data.bio.size() <= 160 &&
-        request.resource.data.get('coverID', 'none') in ['none', 'capy-parade-v1'] &&
+        selectableCover(request.resource.data) &&
         (!request.resource.data.keys().hasAny(['avatarData']) ||
           (request.resource.data.avatarData is bytes && request.resource.data.avatarData.size() <= 131072)) &&
         getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid;
@@ -114,7 +121,7 @@ service cloud.firestore {
         request.resource.data.displayName.size() <= 60 &&
         request.resource.data.bio is string &&
         request.resource.data.bio.size() <= 160 &&
-        request.resource.data.get('coverID', 'none') in ['none', 'capy-parade-v1'] &&
+        (request.resource.data.get('coverID', 'none') == resource.data.get('coverID', 'none') || selectableCover(request.resource.data)) &&
         (!request.resource.data.keys().hasAny(['avatarData']) ||
           (request.resource.data.avatarData is bytes && request.resource.data.avatarData.size() <= 131072)) &&
         getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.uid == uid &&
@@ -140,6 +147,15 @@ service cloud.firestore {
         );
       allow delete: if owns(uid) &&
         !existsAfter(/databases/$(database)/documents/usernames/$(resource.data.username));
+    }
+
+    // Selection permissions only. GIF files and metadata stay on the existing backend.
+    match /profileBannerPermissions/{bannerID} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.uid == 'Q5bR8hqe3UXUHp09JSsZL1gMlj22' &&
+        bannerID.matches('^[a-z0-9][a-z0-9_-]{0,63}$') && bannerID != 'none' &&
+        request.resource.data.keys().hasOnly(['published']) && request.resource.data.published is bool;
+      allow delete: if false;
     }
 
     match /usernames/{username} {

@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { ProfileBannerStore, MAX_GIF_BYTES, readBody, authorizeBannerAdmin, mirrorBannerPermission } from './profile-banners.js';
 import { LyricsResolver, defaultLyricsAdapters } from './lyrics.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -48,8 +49,11 @@ export function createServer({
   fetchImpl = globalThis.fetch,
   logger = console,
   lyricsResolver = null,
+  bannerStore = null,
+  bannerPermissionMirror = null,
 }) {
   const startedAt = Date.now();
+  const banners = bannerStore ?? new ProfileBannerStore(config.bannerDir || path.join(config.cacheDir || '.', '..', 'data', 'profile-banners'));
   const lyrics = lyricsResolver ?? new LyricsResolver({ providers: defaultLyricsAdapters(fetchImpl), root: config.cacheDir ? path.join(config.cacheDir, "lyrics") : null });
 
   const server = http.createServer(async (request, response) => {
@@ -62,6 +66,50 @@ export function createServer({
     try {
       const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
       pathname = url.pathname;
+
+      if (request.method === 'GET' && pathname === '/v1/profile-banners') {
+        const items = await banners.list();
+        json(response, 200, { schemaVersion: 1, banners: items }); return;
+      }
+      const bannerFile = /^\/v1\/profile-banners\/([a-z0-9][a-z0-9_-]{0,63})\/([a-f0-9]{64})\.gif$/u.exec(pathname);
+      if (request.method === 'GET' && bannerFile) {
+        const data = await banners.file(bannerFile[1], bannerFile[2], false);
+        response.writeHead(200, { 'Content-Type': 'image/gif', 'Content-Length': data.length,
+          'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+        response.end(data); return;
+      }
+      if (pathname.startsWith('/v1/admin/')) {
+        const token = await authorizeBannerAdmin(request, config, tokenVerifier);
+        const mirror = bannerPermissionMirror ?? ((id, published) => mirrorBannerPermission(id, published, token, config, fetchImpl));
+        if (request.method === 'GET' && pathname === '/v1/admin/status') {
+          json(response, 200, { service: 'CapyFlow Control Center', uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+            banners: (await banners.list(true)).length, authMode: config.authMode }); return;
+        }
+        if (request.method === 'GET' && pathname === '/v1/admin/banners') {
+          json(response, 200, { schemaVersion: 1, banners: await banners.list(true) }); return;
+        }
+        const entry = /^\/v1\/admin\/banners\/([a-z0-9][a-z0-9_-]{0,63})$/u.exec(pathname);
+        if (entry && request.method === 'POST') {
+          if (request.headers['content-type']?.split(';')[0] !== 'image/gif') throw new HttpError(415, 'gif_required', 'Upload an animated GIF.');
+          const data = await readBody(request, MAX_GIF_BYTES);
+          json(response, 201, await banners.upload(entry[1], url.searchParams.get('name'), data)); return;
+        }
+        if (entry && request.method === 'PATCH') {
+          let patch; try { patch = JSON.parse((await readBody(request, 4096)).toString('utf8')); }
+          catch (error) { if (error instanceof HttpError) throw error; throw new HttpError(400, 'invalid_json', 'Invalid banner update.'); }
+          if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new HttpError(400, 'invalid_json', 'Invalid banner update.');
+          json(response, 200, await banners.update(entry[1], patch, mirror)); return;
+        }
+        if (entry && request.method === 'DELETE') {
+          json(response, 200, await banners.update(entry[1], { deleted: true }, mirror)); return;
+        }
+        const preview = /^\/v1\/admin\/banners\/([a-z0-9][a-z0-9_-]{0,63})\/([a-f0-9]{64})\.gif$/u.exec(pathname);
+        if (preview && request.method === 'GET') {
+          const data = await banners.file(preview[1], preview[2], true);
+          response.writeHead(200, { 'Content-Type': 'image/gif', 'Content-Length': data.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); response.end(data); return;
+        }
+        throw new HttpError(404, 'not_found', 'Admin route not found.');
+      }
 
       if (request.method === 'OPTIONS' && config.corsOrigin) {
         response.writeHead(204);

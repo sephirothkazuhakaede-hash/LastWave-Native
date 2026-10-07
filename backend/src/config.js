@@ -80,6 +80,8 @@ export function loadConfig() {
     allowAnonymousLan,
     authMode,
     firebaseProjectId,
+    adminUIDs: (process.env.CAPYFLOW_ADMIN_UIDS || '').split(',').map(value => value.trim()).filter(Boolean),
+    bannerDir: resolveFromBackend(process.env.BANNER_DIR?.trim() || './data/profile-banners'),
     ytDlpPath: resolveFromBackend(process.env.YTDLP_PATH?.trim() || './bin/yt-dlp.exe'),
     cacheDir: resolveFromBackend(process.env.CACHE_DIR?.trim() || './cache'),
     cacheMaxBytes: integerValue('CACHE_MAX_BYTES', 10 * 1024 * 1024 * 1024, { min: 64 * 1024 * 1024 }),

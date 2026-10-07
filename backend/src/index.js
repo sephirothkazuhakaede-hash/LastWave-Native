@@ -1,5 +1,7 @@
 import process from 'node:process';
 import os from 'node:os';
+import fs from 'node:fs/promises';
+import { ProfileBannerStore } from './profile-banners.js';
 import { CacheStore } from './cache-store.js';
 import { loadConfig } from './config.js';
 import { FirebaseTokenVerifier } from './firebase-auth.js';
@@ -31,10 +33,16 @@ async function main() {
     console.warn(`yt-dlp was not found at ${config.ytDlpPath}. Run npm run bootstrap before requesting audio.`);
   }
 
-  const tokenVerifier = config.authMode === 'firebase'
+  const tokenVerifier = config.firebaseProjectId
     ? new FirebaseTokenVerifier({ projectId: config.firebaseProjectId })
     : null;
-  const server = createServer({ config, resolver, cache, tokenVerifier, timings, ytDlpVersion });
+  const bannerStore = new ProfileBannerStore(config.bannerDir);
+  await bannerStore.init();
+  const defaultGIF = await fs.readFile(new URL('../assets/capy-parade-v1.gif', import.meta.url)).catch(error => {
+    if (error.code === 'ENOENT') return null; throw error;
+  });
+  if (defaultGIF) await bannerStore.seedDefault(defaultGIF);
+  const server = createServer({ config, resolver, cache, tokenVerifier, timings, ytDlpVersion, bannerStore });
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);

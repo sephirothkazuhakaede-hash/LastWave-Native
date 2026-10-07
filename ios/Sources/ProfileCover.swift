@@ -3,7 +3,10 @@ import SwiftUI
 enum ProfileCoverChoice {
     static let none = "none"
     static let parade = "capy-parade-v1"
-    static func normalized(_ value: String?) -> String { value == parade ? parade : none }
+    static func normalized(_ value: String?) -> String {
+        guard let value, value.range(of: "^[a-z0-9][a-z0-9_-]{0,63}$", options: .regularExpression) != nil else { return none }
+        return value
+    }
 }
 
 struct ProfileCoverView: View {
@@ -11,11 +14,15 @@ struct ProfileCoverView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
+    @StateObject private var catalog = ProfileBannerCatalog.shared
+    @State private var data: Data?
+    private var banner: ProfileBanner? { catalog.banners.first { $0.id == coverID } }
 
     @ViewBuilder var body: some View {
-        if coverID == ProfileCoverChoice.parade {
+        if catalog.shows(coverID) {
             CapyGIFImage(playing: appeared && scenePhase == .active && !reduceMotion,
-                         resourceName: "capy-profile-parade", contentMode: .scaleAspectFill)
+                         resourceName: coverID == ProfileCoverChoice.parade ? "capy-profile-parade" : "", contentMode: .scaleAspectFill, gifData: data)
+                .id(data)
                 .frame(height: 150)
                 .frame(maxWidth: .infinity)
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -23,6 +30,10 @@ struct ProfileCoverView: View {
                 .onDisappear { appeared = false }
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
+                .task(id: banner?.revision) {
+                    data = nil
+                    if let banner { data = try? await catalog.data(for: banner) }
+                }
         }
     }
 }
@@ -31,11 +42,12 @@ struct ProfileIdentityHeader: View {
     let profile: SocialProfile
     let size: CGFloat
     var coverID: String? = nil
+    @StateObject private var catalog = ProfileBannerCatalog.shared
 
     var body: some View {
         Group {
-            if (coverID ?? profile.coverID) == ProfileCoverChoice.parade {
-                ProfileCoverView(coverID: ProfileCoverChoice.parade)
+            if catalog.shows(coverID ?? profile.coverID) {
+                ProfileCoverView(coverID: coverID ?? profile.coverID)
                     .padding(.bottom, size / 2 + 4)
                     .overlay(alignment: .bottom) { avatar }
             } else {

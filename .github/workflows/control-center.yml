@@ -1,0 +1,33 @@
+name: Build CapyFlow Control Center
+on:
+  workflow_dispatch:
+  push:
+    branches: ['experiment/ui-polish-v1', 'feature/capyflow-android']
+    paths: ['control-center/**', '.github/workflows/control-center.yml']
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: control-center
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.19.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: node node_modules/electron/install.js
+      - run: pnpm test
+      - run: pnpm dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CapyFlow-Control-Center-Windows
+          path: control-center/dist/*Windows.exe
+          if-no-files-found: error
