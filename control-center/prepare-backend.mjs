@@ -21,7 +21,7 @@ for (const [repository, name, destination] of [
 ]) {
   const existing = path.join(tools, destination);
   try { if ((await fs.stat(existing)).size > 100000) continue; } catch {}
-  const releaseResponse = await fetch(`https://api.github.com/repos/${repository}/releases/latest`, { headers: { 'User-Agent': 'CapyFlow-Control-Center-Build', ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}) }, signal: AbortSignal.timeout(30000) });
+  const releaseResponse = await fetch(`https://api.github.com/repos/${repository}/releases/latest`, { headers: { 'User-Agent': 'CapyFlow-Control-Center-Build', ...(process.env.CAPYFLOW_BUILD_GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.CAPYFLOW_BUILD_GITHUB_TOKEN}` } : {}) }, signal: AbortSignal.timeout(30000) });
   if (!releaseResponse.ok) throw Error(`Could not load ${repository} runtime release (${releaseResponse.status}).`);
   const release = await releaseResponse.json(), asset = release.assets.find(asset => asset.name === name);
   if (!asset || !/^sha256:[a-f0-9]{64}$/u.test(asset.digest ?? '')) throw Error(`Missing verified checksum for ${name}.`);
