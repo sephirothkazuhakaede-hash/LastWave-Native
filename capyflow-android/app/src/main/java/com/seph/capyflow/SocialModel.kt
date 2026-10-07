@@ -12,8 +12,8 @@ import java.util.UUID
 import org.json.JSONObject
 import com.google.firebase.Timestamp
 
-data class Profile(val id: String, val username: String, val displayName: String, val bio: String, val avatar: String?, val avatarData: ByteArray? = null) {
-    companion object { fun from(d: DocumentSnapshot) = Profile(d.id, d.getString("username") ?: "", d.getString("displayName") ?: d.getString("username") ?: "CapyFlow listener", d.getString("bio") ?: "", d.getString("avatarURL"),d.getBlob("avatarData")?.toBytes()) }
+data class Profile(val id: String, val username: String, val displayName: String, val bio: String, val avatar: String?, val avatarData: ByteArray? = null, val coverID: String = ProfileCoverChoice.NONE) {
+    companion object { fun from(d: DocumentSnapshot) = Profile(d.id, d.getString("username") ?: "", d.getString("displayName") ?: d.getString("username") ?: "CapyFlow listener", d.getString("bio") ?: "", d.getString("avatarURL"),d.getBlob("avatarData")?.toBytes(),ProfileCoverChoice.normalized(d.getString("coverID"))) }
 }
 data class Conversation(val id: String, val peer: String, val text: String, val unread: Boolean, val date: Long)
 data class Message(val id: String, val sender: String, val text: String, val pending: Boolean, val date: Long = 0)
@@ -195,7 +195,7 @@ class SocialModel : ViewModel() {
             }.await()
         }catch(e:Exception){if(epoch==generation)error=UserMessages.failure(e)}}
     }
-    fun saveProfile(rawUsername: String,name: String,bio: String,photo: ByteArray?,onSaved:()->Unit){
+    fun saveProfile(rawUsername: String,name: String,bio: String,photo: ByteArray?,onSaved:()->Unit,coverID:String?=null){
         val database=db ?: return;val userID=uid ?: return
         val username=rawUsername.trim().removePrefix("@").lowercase();val display=name.trim()
         if(!UsernamePolicy.valid(username)){error="Choose a username with 3–20 lowercase letters, numbers, dots or underscores.";return}
@@ -219,6 +219,7 @@ class SocialModel : ViewModel() {
                 }
                 if(!claimed.exists())tx.set(reservation,mapOf("uid" to userID,"createdAt" to FieldValue.serverTimestamp()))
                 val fields=mutableMapOf<String,Any>("username" to username,"usernameKey" to username,"displayName" to display,"bio" to bio,"updatedAt" to FieldValue.serverTimestamp())
+                coverID?.let{fields["coverID"]=ProfileCoverChoice.normalized(it)}
                 photo?.let{fields["avatarData"]=Blob.fromBytes(it);fields["avatarURL"]=""}
                 if(previous!=username){fields["usernameIsGenerated"]=false;fields["usernameChangedAt"]=FieldValue.serverTimestamp()}
                 tx.update(ref,fields)

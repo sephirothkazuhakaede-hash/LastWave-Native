@@ -58,6 +58,7 @@ import kotlinx.coroutines.*
                 if(people.isEmpty())item{Text("No ${relationship!!.lowercase()} yet",color=Color.White.copy(alpha=.6f))}
                 items(people,key={it}){id->ContactCard(social,id,{selectedID=it.id;relationship=null})}
             }else{
+                item{ProfileCover(p?.coverID ?: ProfileCoverChoice.NONE)}
                 item{Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally){ProfileAvatar(p,96);Text(p?.displayName ?: "Loading profile…",fontSize=26.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(top=14.dp));p?.let{Text("@${it.username}",color=Violet);if(it.bio.isNotBlank())Text(it.bio,modifier=Modifier.padding(top=14.dp))}}}
                 item{ProfileListeningCard(social,selectedID)}
                 item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly){TextButton(onClick={relationship="Followers"}){Text("${followers.size} Followers")};TextButton(onClick={relationship="Following"}){Text("${following.size} Following")}}}
@@ -70,13 +71,21 @@ import kotlinx.coroutines.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun EditProfile(social:SocialModel,profile:Profile,onClose:()->Unit){
     var username by remember(profile.id){mutableStateOf(profile.username)};var name by remember(profile.id){mutableStateOf(profile.displayName)};var bio by remember(profile.id){mutableStateOf(profile.bio)};var photo by remember(profile.id){mutableStateOf<ByteArray?>(null)}
+    var coverID by remember(profile.id){mutableStateOf(profile.coverID)}
     val context=LocalContext.current;val scope=rememberCoroutineScope();var preparing by remember{mutableStateOf(false)}
     val picker=rememberLauncherForActivityResult(ActivityResultContracts.GetContent()){uri->if(uri!=null)scope.launch{preparing=true;try{photo=withContext(Dispatchers.IO){context.contentResolver.openInputStream(uri)?.use{val image=android.graphics.BitmapFactory.decodeStream(it) ?: error("Choose an image");boundedJpeg(image)} ?: error("Couldn’t open photo")}}catch(e:Exception){social.error=UserMessages.failure(e,"Couldn’t finish that action. Please try again.")}finally{preparing=false}}}
     ModalBottomSheet(onDismissRequest=onClose,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),containerColor=Night){Column(Modifier.fillMaxWidth().padding(24.dp).imePadding().navigationBarsPadding().verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(14.dp)){
         Section("Edit profile");ProfileAvatar(profile.copy(avatarData=photo ?: profile.avatarData),88);TextButton(onClick={picker.launch("image/*")},enabled=!preparing){Text(if(preparing)"Preparing picture…" else "Change picture")}
+        Section("Profile cover")
+        ProfileCover(coverID)
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
+            FilterChip(selected=coverID==ProfileCoverChoice.NONE,onClick={coverID=ProfileCoverChoice.NONE},label={Text("Default")})
+            FilterChip(selected=coverID==ProfileCoverChoice.PARADE,onClick={coverID=ProfileCoverChoice.PARADE},label={Text("Capy parade")})
+        }
+        Text("Visible on your profile to CapyFlow listeners on Android and iOS.",fontSize=12.sp,color=Color.White.copy(alpha=.6f))
         OutlinedTextField(username,{username=it},label={Text("Username")},prefix={Text("@")},singleLine=true,modifier=Modifier.fillMaxWidth());Text("Usernames can be changed once every 14 days. Your first custom username is free to choose.",fontSize=12.sp,color=Color.White.copy(alpha=.6f))
         OutlinedTextField(name,{if(it.length<=60)name=it},label={Text("Display name")},singleLine=true,modifier=Modifier.fillMaxWidth());OutlinedTextField(bio,{if(it.length<=160)bio=it},label={Text("Bio")},supportingText={Text("${bio.length}/160")},modifier=Modifier.fillMaxWidth())
-        Button(onClick={social.saveProfile(username,name,bio,photo,onClose)},enabled=!social.savingProfile&&!preparing,modifier=Modifier.fillMaxWidth()){Text(if(social.savingProfile)"Saving…" else "Save profile")}
+        Button(onClick={social.saveProfile(username,name,bio,photo,onClose,coverID)},enabled=!social.savingProfile&&!preparing,modifier=Modifier.fillMaxWidth()){Text(if(social.savingProfile)"Saving…" else "Save profile")}
     }}
 }
 @Composable fun DrawerRow(title:String,icon:androidx.compose.ui.graphics.vector.ImageVector,onClick:()->Unit){

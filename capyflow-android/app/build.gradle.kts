@@ -4,7 +4,7 @@ if (firebaseConfigured) apply(plugin = "com.google.gms.google-services")
 android {
     namespace = "com.seph.capyflow"
     compileSdk = 36
-    defaultConfig { applicationId = "com.seph.capyflow"; minSdk = 26; targetSdk = 36; versionCode = 20; versionName = "1.0.7"; buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString()) }
+    defaultConfig { applicationId = "com.seph.capyflow"; minSdk = 26; targetSdk = 36; versionCode = 21; versionName = "1.0.8"; buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString()) }
     val ciSigning = System.getenv("CAPYFLOW_CI_KEYSTORE")
     if(ciSigning != null) signingConfigs { getByName("debug") { storeFile = file(ciSigning);storePassword="android";keyAlias="capyflow-ci";keyPassword="android" } }
     else if (rootProject.file("signing/capyflow-preview.jks").exists()) signingConfigs { getByName("debug") { storeFile = rootProject.file("signing/capyflow-preview.jks"); storePassword = "android"; keyAlias = "capyflow-preview"; keyPassword = "android" } }
@@ -33,6 +33,7 @@ dependencies {
     implementation("androidx.media3:media3-session:1.6.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.6.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("io.coil-kt:coil-gif:2.7.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation(platform("com.google.firebase:firebase-bom:33.13.0"))
     implementation("com.google.firebase:firebase-auth")

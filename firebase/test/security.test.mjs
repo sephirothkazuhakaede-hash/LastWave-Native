@@ -319,3 +319,17 @@ test('Global push opt-ins are private and only their owner can change or remove 
  await assertFails(setDoc(doc(account('password'),'globalPushDevices','other'),{...data,uid:'password'}));
  await assertSucceeds(deleteDoc(ref));
 });
+
+test('profile covers are optional, shared across clients and editable only by their owner', async () => {
+  await create('alice', 'alice_initial');
+  await create('bob', 'bob_initial');
+  await assertSucceeds(rename('alice', 'alice_initial', 'alice_custom'));
+  const alice = doc(account('alice'), 'profiles', 'alice');
+  await assertSucceeds(updateDoc(alice, { coverID: 'capy-parade-v1' }));
+  const viewed = await assertSucceeds(getDoc(doc(account('bob'), 'profiles', 'alice')));
+  if(viewed.data().coverID !== 'capy-parade-v1') throw Error('Cover choice must survive cross-client reads');
+  await assertFails(updateDoc(doc(account('bob'), 'profiles', 'alice'), { coverID: 'none' }));
+  await assertFails(updateDoc(alice, { coverID: 'https://untrusted.example/cover.gif' }));
+  await assertFails(updateDoc(alice, { coverID: 1 }));
+  await assertSucceeds(updateDoc(alice, { coverID: 'none' }));
+});
