@@ -80,6 +80,8 @@ export function loadConfig() {
     allowAnonymousLan,
     authMode,
     firebaseProjectId,
+    adminUIDs: (process.env.CAPYFLOW_ADMIN_UIDS || '').split(',').map(value => value.trim()).filter(Boolean),
+    bannerDir: resolveFromBackend(process.env.BANNER_DIR?.trim() || './data/profile-banners'),
     pushEnabled: booleanValue("PUSH_NOTIFICATIONS", false),
     pushCredentials: process.env.PUSH_SERVICE_ACCOUNT?.trim() ? resolveFromBackend(process.env.PUSH_SERVICE_ACCOUNT.trim()) : null,
     pushStateFile: resolveFromBackend(process.env.PUSH_STATE_FILE?.trim() || "./state/message-push.json"),

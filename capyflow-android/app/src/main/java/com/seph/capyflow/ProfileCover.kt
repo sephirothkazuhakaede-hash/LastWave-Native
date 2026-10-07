@@ -22,13 +22,21 @@ import coil.request.ImageRequest
 object ProfileCoverChoice {
     const val NONE = "none"
     const val PARADE = "capy-parade-v1"
-    fun normalized(value: String?) = if(value == PARADE) PARADE else NONE
+    fun normalized(value: String?) = value?.takeIf{it.matches(Regex("[a-z0-9][a-z0-9_-]{0,63}"))} ?: NONE
 }
 
 @Composable fun ProfileCover(coverID: String) {
-    if(coverID != ProfileCoverChoice.PARADE) return
+    val library=rememberProfileBannerLibrary()
+    if(!library.shows(coverID)) return
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current
+    val banner=library.banners.firstOrNull{it.id==coverID}
+    var asset by remember(coverID,banner?.revision){mutableStateOf<java.io.File?>(null)}
+    LaunchedEffect(coverID,banner?.revision,library.root) {
+        if(banner!=null) try{asset=ProfileBannerRepository.asset(context,library,banner)}
+        catch(e:kotlinx.coroutines.CancellationException){throw e}
+        catch(_:Exception){ }
+    }
     val loader = remember(context) {
         ImageLoader.Builder(context).components {
             if(Build.VERSION.SDK_INT >= 28) add(ImageDecoderDecoder.Factory())
@@ -36,8 +44,8 @@ object ProfileCoverChoice {
         }.build()
     }
     DisposableEffect(loader) { onDispose { loader.shutdown() } }
-    val request = remember(context, lifecycle) {
-        ImageRequest.Builder(context).data(R.drawable.capy_profile_parade)
+    val request = remember(context, lifecycle,asset,coverID) {
+        ImageRequest.Builder(context).data(asset ?: if(coverID==ProfileCoverChoice.PARADE) R.drawable.capy_profile_parade else null)
             .lifecycle(lifecycle).size(720, 300).allowHardware(false).build()
     }
     AsyncImage(model=request, imageLoader=loader, contentDescription=null,
@@ -46,7 +54,8 @@ object ProfileCoverChoice {
 }
 
 @Composable fun ProfileIdentityHeader(profile: Profile?) {
-    if(profile?.coverID == ProfileCoverChoice.PARADE) {
+    val library=rememberProfileBannerLibrary()
+    if(profile!=null && library.shows(profile.coverID)) {
         Box(Modifier.fillMaxWidth().height(203.dp)) {
             ProfileCover(profile.coverID)
             Box(Modifier.align(Alignment.BottomCenter).background(Night, CircleShape).padding(5.dp)) {

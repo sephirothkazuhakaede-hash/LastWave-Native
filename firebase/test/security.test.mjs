@@ -13,6 +13,23 @@ after(async () => { await env?.cleanup(); });
 beforeEach(async () => { await env.clearFirestore(); });
 
 const account = uid => env.authenticatedContext(uid).firestore();
+
+test('only the owner manages banner permissions; selections require publication and removed IDs do not block profile edits', async () => {
+  const owner = account('Q5bR8hqe3UXUHp09JSsZL1gMlj22');
+  await create('alice', 'alice_initial');
+  const permission = doc(owner, 'profileBannerPermissions', 'sunset-capy');
+  await assertFails(setDoc(doc(account('alice'), 'profileBannerPermissions', 'sunset-capy'), { published: true }));
+  await assertSucceeds(setDoc(permission, { published: false }));
+  const person = doc(account('alice'), 'profiles', 'alice');
+  await assertFails(updateDoc(person, { coverID: 'sunset-capy' }));
+  await assertSucceeds(updateDoc(permission, { published: true }));
+  await assertSucceeds(updateDoc(person, { coverID: 'sunset-capy' }));
+  await assertSucceeds(updateDoc(permission, { published: false }));
+  await assertSucceeds(updateDoc(person, { bio: 'Still editable after removal' }));
+  await assertSucceeds(updateDoc(person, { coverID: 'none' }));
+  await assertFails(updateDoc(person, { coverID: 'sunset-capy' }));
+  await assertFails(setDoc(doc(owner, 'profileBannerPermissions', 'bad-payload'), { published: true, gifData: Bytes.fromUint8Array(new Uint8Array(10)) }));
+});
 const profile = username => ({ username, usernameKey: username, usernameIsGenerated: true,
   displayName: 'Listener', bio: '', avatarURL: '', createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
 async function create(uid, username) {

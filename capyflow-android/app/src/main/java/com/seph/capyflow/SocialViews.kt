@@ -69,6 +69,7 @@ import kotlinx.coroutines.*
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun EditProfile(social:SocialModel,profile:Profile,onClose:()->Unit){
+    val bannerLibrary=rememberProfileBannerLibrary()
     var username by remember(profile.id){mutableStateOf(profile.username)};var name by remember(profile.id){mutableStateOf(profile.displayName)};var bio by remember(profile.id){mutableStateOf(profile.bio)};var photo by remember(profile.id){mutableStateOf<ByteArray?>(null)}
     var coverID by remember(profile.id){mutableStateOf(profile.coverID)}
     val context=LocalContext.current;val scope=rememberCoroutineScope();var preparing by remember{mutableStateOf(false)}
@@ -77,9 +78,11 @@ import kotlinx.coroutines.*
         Section("Edit profile");ProfileAvatar(profile.copy(avatarData=photo ?: profile.avatarData),88);TextButton(onClick={picker.launch("image/*")},enabled=!preparing){Text(if(preparing)"Preparing picture…" else "Change picture")}
         Section("Profile cover")
         ProfileCover(coverID)
-        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(12.dp)){
+        Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)){
             FilterChip(selected=coverID==ProfileCoverChoice.NONE,onClick={coverID=ProfileCoverChoice.NONE},label={Text("Default")})
-            FilterChip(selected=coverID==ProfileCoverChoice.PARADE,onClick={coverID=ProfileCoverChoice.PARADE},label={Text("Capy parade")})
+            if(!bannerLibrary.hasCatalog) FilterChip(selected=coverID==ProfileCoverChoice.PARADE,onClick={coverID=ProfileCoverChoice.PARADE},label={Text("Capy parade")})
+            bannerLibrary.banners.forEach { banner -> FilterChip(selected=coverID==banner.id,onClick={coverID=banner.id},label={Text(banner.name)}) }
+            if(coverID!=ProfileCoverChoice.NONE && !bannerLibrary.shows(coverID)) Text("This banner is unavailable. Default appearance is shown.",fontSize=12.sp,color=Color.White.copy(alpha=.6f))
         }
         Text("Visible on your profile to CapyFlow listeners on Android and iOS.",fontSize=12.sp,color=Color.White.copy(alpha=.6f))
         OutlinedTextField(username,{username=it},label={Text("Username")},prefix={Text("@")},singleLine=true,modifier=Modifier.fillMaxWidth());Text("Usernames can be changed once every 14 days. Your first custom username is free to choose.",fontSize=12.sp,color=Color.White.copy(alpha=.6f))
