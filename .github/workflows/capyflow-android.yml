@@ -65,7 +65,7 @@ jobs:
           test "$("$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest debuggable app/build/outputs/apk/release/app-release.apk)" = "false"
       - uses: actions/upload-artifact@v4
         with:
-          name: CapyFlow-Android-1.0.8
+          name: CapyFlow-Android-1.0.9
           path: capyflow-android/app/build/outputs/apk/release/app-release.apk
       - uses: actions/upload-artifact@v4
         if: always()
@@ -112,7 +112,7 @@ jobs:
           git archive --format=zip --output=dist/CapyFlow-Backend.zip HEAD backend
       - uses: actions/upload-artifact@v4
         with:
-          name: CapyFlow-Backend-1.0.8
+          name: CapyFlow-Backend-1.0.9
           path: dist/CapyFlow-Backend.zip
 
   publish:
@@ -128,11 +128,11 @@ jobs:
           node-version: '22'
       - uses: actions/download-artifact@v4
         with:
-          name: CapyFlow-Android-1.0.8
+          name: CapyFlow-Android-1.0.9
           path: dist
       - uses: actions/download-artifact@v4
         with:
-          name: CapyFlow-Backend-1.0.8
+          name: CapyFlow-Backend-1.0.9
           path: dist
       - name: Publish stable Android release
         env:

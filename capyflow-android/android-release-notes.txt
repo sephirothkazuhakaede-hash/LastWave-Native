@@ -1,9 +1,9 @@
-CapyFlow 1.0.8 — Stable
+CapyFlow 1.0.9 — Stable
 
-• Add an animated Capy parade cover from Profile → Edit profile → Profile cover. Choose Default to remove it.
-• Your cover choice is saved to your account and visible to other listeners on Android and iOS.
-• The profile photo overlaps the cover in one integrated header.
-• The animated cover is cropped to fit the profile card and plays without a separate download.
-• Includes the compact chat player, centered avatars, grouped bubbles, timestamps below messages and song/album search history improvements from 1.0.7.
+• Choose profile banners from a compact, scrollable menu without expanding the profile editor.
+• New animated banners published to the shared library appear without another app update.
+• Downloaded banners are cached, with the bundled Capy parade available as an offline fallback.
+• Banner selections are shared across Android and iOS, with the profile photo integrated into the cover header.
+• Preserves the compact chat player, centered avatars, grouped bubbles, timestamps below messages and song/album search history improvements.
 
 Your account, messages, playlists and downloads stay with you when updating.
