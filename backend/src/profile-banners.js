@@ -38,12 +38,16 @@ export function inspectGIF(data) {
 
 export async function readBody(request, maximum) {
   let size = 0; const chunks = [];
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > maximum) throw new HttpError(413, 'banner_too_large', 'The upload exceeds the size limit.');
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
+  const timeout = setTimeout(() => request.destroy(new Error('Upload timed out.')), 30_000);
+  timeout.unref();
+  try {
+    for await (const chunk of request) {
+      size += chunk.length;
+      if (size > maximum) throw new HttpError(413, 'banner_too_large', 'The upload exceeds the size limit.');
+      chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+  } finally { clearTimeout(timeout); }
 }
 
 export class ProfileBannerStore {

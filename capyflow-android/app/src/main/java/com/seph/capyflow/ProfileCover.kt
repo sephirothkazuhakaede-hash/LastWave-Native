@@ -45,7 +45,7 @@ object ProfileCoverChoice {
     }
     DisposableEffect(loader) { onDispose { loader.shutdown() } }
     val request = remember(context, lifecycle,asset,coverID) {
-        ImageRequest.Builder(context).data(asset ?: if(coverID==ProfileCoverChoice.PARADE) R.drawable.capy_profile_parade else null)
+        ImageRequest.Builder(context).data(asset ?: R.drawable.capy_profile_parade)
             .lifecycle(lifecycle).size(720, 300).allowHardware(false).build()
     }
     AsyncImage(model=request, imageLoader=loader, contentDescription=null,

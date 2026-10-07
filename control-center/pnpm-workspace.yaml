@@ -1,2 +1,9 @@
 minimumReleaseAgeExclude:
   - electron@44.6.0
+allowBuilds:
+  '@firebase/util': false
+  electron: true
+  electron-winstaller: false
+  esbuild: true
+  protobufjs: false
+verifyDepsBeforeRun: false

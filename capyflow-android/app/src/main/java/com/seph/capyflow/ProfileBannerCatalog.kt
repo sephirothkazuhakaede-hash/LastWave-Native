@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -16,6 +18,10 @@ data class ProfileBannerLibrary(val banners:List<ProfileBanner> = emptyList(),va
     fun shows(id:String)=banners.any{it.id==id} || (!hasCatalog && id==ProfileCoverChoice.PARADE)
 }
 internal object ProfileBannerRepository {
+    private val refreshLock=Mutex()
+    private val assetLock=Mutex()
+    private var lastRefresh=0L
+    private var current:ProfileBannerLibrary?=null
     private val http=OkHttpClient.Builder().connectTimeout(5,TimeUnit.SECONDS).readTimeout(15,TimeUnit.SECONDS).followRedirects(false).build()
     private fun directory(context:Context)=File(context.cacheDir,"profile-banners").apply{mkdirs()}
     private fun parse(raw:String,root:String):ProfileBannerLibrary {
@@ -33,8 +39,11 @@ internal object ProfileBannerRepository {
         parse(saved.getString("catalog"),saved.getString("root"))
     }.getOrDefault(ProfileBannerLibrary())
     suspend fun refresh(context:Context):ProfileBannerLibrary=withContext(Dispatchers.IO) {
+      refreshLock.withLock {
         val prefs=context.getSharedPreferences("capyflow",0)
         var root=prefs.getString("server","").orEmpty().trimEnd('/')
+        val savedRoot=root.removeSuffix("/v1")
+        current?.let { if(System.currentTimeMillis()-lastRefresh<45_000 && (savedRoot.isBlank() || savedRoot==it.root)) return@withLock it }
         if(root.isBlank()) {
             val raw=read("https://raw.githubusercontent.com/sephirothkazuhakaede-hash/LastWave-Native/runtime/backend-discovery/backend.json",262144)
             root=JSONObject(String(raw)).getString("url").trimEnd('/')
@@ -44,16 +53,19 @@ internal object ProfileBannerRepository {
         val raw=String(read("$root/v1/profile-banners",262144));val parsed=parse(raw,root)
         val file=File(directory(context),"catalog.json");val temp=File(directory(context),"catalog-${java.util.UUID.randomUUID()}.tmp")
         temp.writeText(JSONObject().put("root",root).put("catalog",raw).toString());check(temp.renameTo(file))
-        parsed
+        current=parsed;lastRefresh=System.currentTimeMillis();parsed
+      }
     }
     suspend fun asset(context:Context,library:ProfileBannerLibrary,banner:ProfileBanner):File=withContext(Dispatchers.IO) {
+      assetLock.withLock {
         val file=File(directory(context),"${banner.id}-${banner.revision}.gif")
-        if(file.exists())return@withContext file
+        if(file.exists())return@withLock file
         val data=read(library.root+banner.path,5*1024*1024)
         require(data.size>=6 && String(data,0,6) in listOf("GIF87a","GIF89a"))
         val temp=File(directory(context),"${banner.id}-${java.util.UUID.randomUUID()}.tmp");temp.writeBytes(data);check(temp.renameTo(file))
         directory(context).listFiles()?.filter{it.extension=="gif"}?.sortedByDescending{it.lastModified()}?.drop(20)?.forEach{it.delete()}
         file
+      }
     }
     private fun read(url:String,limit:Int):ByteArray=http.newCall(Request.Builder().url(url).build()).execute().use { response ->
         check(response.isSuccessful);val body=response.body ?: error("Missing banner response")
