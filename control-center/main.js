@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, Tray, Menu } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import http from 'node:http';
@@ -6,11 +6,24 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { backendRoot, bannerID } from './policy.js';
 import { firebaseConfig } from './firebase-config.js';
+import { LocalBackend } from './local-backend.js';
+import os from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const exec = promisify(execFile);
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const smokeTest = process.argv.includes('--smoke-test');
 let window, server, root = '', nonce = '', loginURL = '', idToken = '', refreshToken = '', expiresAt = 0;
 let picked = null;
+let localBackend, settings = {};
+let tray, quitting = false;
+let pendingPush = null;
+async function saveSettings() {
+  await fs.mkdir(app.getPath('userData'), { recursive: true });
+  await fs.writeFile(path.join(app.getPath('userData'), 'settings.json'), JSON.stringify({ ...settings, backend: root }));
+}
+function itemID(value) { if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/u.test(value)) throw Error('Invalid item ID.'); return value; }
 const clearSession = () => { idToken = ''; refreshToken = ''; expiresAt = 0; nonce = ''; picked = null; };
 async function token(force = false) {
   if (!refreshToken) throw new Error('Sign in first.');
@@ -36,7 +49,11 @@ async function request(route, { method = 'GET', body, type = 'application/json',
   }
 }
 app.whenReady().then(async () => {
-  try { root = backendRoot(JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')).backend); } catch { }
+  try { settings = JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); root = backendRoot(settings.backend); } catch { }
+  const existingData = path.join(os.homedir(), 'CapyFlowBackend-dev11/backend');
+  let dataDirectory = settings.dataDirectory;
+  if (!dataDirectory) { try { await fs.access(path.join(existingData, '.env')); dataDirectory = existingData; } catch { dataDirectory = path.join(app.getPath('userData'), 'backend-data'); } }
+  localBackend = new LocalBackend({ resources: app.isPackaged ? process.resourcesPath : path.join(directory, 'runtime'), dataDirectory, executable: process.execPath });
   if (!root) {
     try {
       const response = await fetch('https://raw.githubusercontent.com/sephirothkazuhakaede-hash/LastWave-Native/runtime/backend-discovery/backend.json', { signal: AbortSignal.timeout(5_000) });
@@ -75,6 +92,24 @@ app.whenReady().then(async () => {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   await window.loadFile(path.join(directory, 'index.html'));
+  if (!smokeTest) {
+    tray = new Tray(await app.getFileIcon(process.execPath));
+    tray.setToolTip('CapyFlow Control Center');
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Open Control Center', click: () => { window.show(); window.focus(); } },
+      { label: 'Stop managed backend and quit', click: async () => {
+        try {
+          if ((await localBackend.status()).managed) await localBackend.stop();
+          if (localBackend.tunnel && localBackend.tunnel.exitCode === null) localBackend.tunnel.kill();
+          quitting = true; app.quit();
+        } catch (error) { await dialog.showMessageBox(window, { type: 'info', message: error.message }); }
+      } },
+    ]));
+    tray.on('double-click', () => { window.show(); window.focus(); });
+    window.on('close', event => {
+      if (!quitting && (localBackend.child?.exitCode === null || localBackend.tunnel?.exitCode === null)) { event.preventDefault(); window.hide(); }
+    });
+  }
   if (smokeTest) { console.log('CapyFlow Control Center window loaded.'); clearSession(); server.close(); app.exit(0); }
 });
 function trusted(event) {
@@ -83,16 +118,69 @@ function trusted(event) {
 ipcMain.handle('control', async (event, action, value) => {
   trusted(event);
   switch (action) {
-    case 'settings': return { backend: root, connected: Boolean(refreshToken) };
+    case 'settings': return { backend: root, connected: Boolean(refreshToken), dataDirectory: localBackend.dataDirectory };
     case 'connect': {
       root = backendRoot(value); clearSession(); nonce = randomBytes(32).toString('hex');
-      await fs.mkdir(app.getPath('userData'), { recursive: true });
-      await fs.writeFile(path.join(app.getPath('userData'), 'settings.json'), JSON.stringify({ backend: root }));
+      await saveSettings();
       await shell.openExternal(loginURL + '#' + nonce); return true;
     }
     case 'logout': clearSession(); return true;
     case 'list': return request('banners');
     case 'status': return request('status');
+    case 'users': return request(`users?q=${encodeURIComponent(value?.query || '')}&page=${encodeURIComponent(value?.page || '')}`);
+    case 'set-user': return request(`users/${itemID(value.uid)}`, { method: 'PATCH', body: JSON.stringify({ disabled: value.disabled }) });
+    case 'messages': return request('global-messages');
+    case 'moderate': return request(`global-messages/${itemID(value.id)}`, { method: 'PATCH', body: JSON.stringify({ restore: value.restore }) });
+    case 'announcements': return request('announcements');
+    case 'save-announcement': return request(`announcements/${itemID(value.id)}`, { method: 'PUT', body: JSON.stringify({ title: value.title, body: value.body, published: value.published }) });
+    case 'push-preview': return request('push');
+    case 'send-push': {
+      const fingerprint = JSON.stringify([value.title, value.body]);
+      if (!pendingPush || pendingPush.fingerprint !== fingerprint) pendingPush = { fingerprint, id: randomBytes(16).toString('hex') };
+      const result = await request('push', { method: 'POST', body: JSON.stringify({ id: pendingPush.id, title: value.title, body: value.body }) });
+      pendingPush = null; return result;
+    }
+    case 'audit': return request('audit');
+    case 'local-status': return localBackend.status();
+    case 'local-start': return localBackend.start();
+    case 'local-stop': return localBackend.stop();
+    case 'local-restart': return localBackend.restart();
+    case 'local-folder': {
+      const result = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Choose your existing CapyFlow backend data folder' });
+      if (result.canceled) return null;
+      await fs.access(path.join(result.filePaths[0], '.env'));
+      if ((await localBackend.status()).managed) throw Error('Stop the managed backend before changing its data folder.');
+      localBackend.dataDirectory = result.filePaths[0]; settings.dataDirectory = localBackend.dataDirectory; await saveSettings(); return localBackend.status();
+    }
+    case 'releases': {
+      const response = await fetch('https://api.github.com/repos/sephirothkazuhakaede-hash/LastWave-Native/releases?per_page=20', { headers: { 'User-Agent': 'CapyFlow-Control-Center' }, signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw Error('Could not load published app updates.');
+      const releases = await response.json(); return releases.filter(release => !release.draft).map(release => ({ name: release.name, tag: release.tag_name, prerelease: release.prerelease, notes: release.body?.slice(0,6000) ?? '', publishedAt: release.published_at }));
+    }
+    case 'release-notes': {
+      await request('status');
+      if (!/^android-dev[0-9]+$/u.test(value.tag) || typeof value.notes !== 'string' || !value.notes.trim() || value.notes.length > 6000) throw Error('Choose an Android release and notes of up to 6,000 characters.');
+      const url = `https://github.com/sephirothkazuhakaede-hash/LastWave-Native/releases/download/${value.tag}/android-update.json`;
+      const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      if (!response.ok) throw Error('The Android update manifest is unavailable.');
+      const bytes = Buffer.from(await response.arrayBuffer()); if (bytes.length > 100000) throw Error('Unexpected update manifest size.');
+      const manifest = JSON.parse(bytes);
+      if (String(manifest.versionCode) !== value.tag.slice(11) || !/^[a-f0-9]{64}$/u.test(manifest.sha256 || '') || manifest.apkURL !== url.replace('android-update.json', 'CapyFlow.apk')) throw Error('Unexpected update metadata.');
+      manifest.releaseNotes = value.notes.trim();
+      const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'capyflow-release-'));
+      const manifestFile = path.join(folder, 'android-update.json'), notesFile = path.join(folder, 'notes.txt');
+      try {
+        await fs.writeFile(manifestFile, JSON.stringify(manifest, null, 2)); await fs.writeFile(notesFile, manifest.releaseNotes);
+        await exec('gh.exe', ['release', 'upload', value.tag, manifestFile, '--clobber', '--repo', 'sephirothkazuhakaede-hash/LastWave-Native'], { windowsHide: true, timeout: 30000 });
+        await exec('gh.exe', ['release', 'edit', value.tag, '--notes-file', notesFile, '--repo', 'sephirothkazuhakaede-hash/LastWave-Native'], { windowsHide: true, timeout: 30000 });
+      } finally { await fs.unlink(manifestFile).catch(() => {}); await fs.unlink(notesFile).catch(() => {}); await fs.rmdir(folder).catch(() => {}); }
+      return { note: 'Android release notes updated. The APK, version number and checksum are unchanged.' };
+    }
+    case 'publish-android': {
+      await request('status');
+      await exec('gh.exe', ['workflow', 'run', 'capyflow-android.yml', '--repo', 'sephirothkazuhakaede-hash/LastWave-Native', '--ref', 'feature/capyflow-android'], { windowsHide: true, timeout: 30000 });
+      return { note: 'Android stable build requested. The existing workflow publishes only after its checks pass. Change the app version in source before publishing a new update.' };
+    }
     case 'pick': {
       const selection = await dialog.showOpenDialog(window, { properties: ['openFile'], filters: [{ name: 'Animated GIF', extensions: ['gif'] }] });
       if (selection.canceled) return null;

@@ -4,9 +4,9 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const sourceDirectory = path.dirname(fileURLToPath(import.meta.url));
-export const backendRoot = path.resolve(sourceDirectory, '..');
+export const backendRoot = process.env.CAPYFLOW_DATA_DIR ? path.resolve(process.env.CAPYFLOW_DATA_DIR) : path.resolve(sourceDirectory, '..');
 
-export function loadEnvironment(filePath = path.join(backendRoot, '.env')) {
+export function loadEnvironment(filePath = process.env.CAPYFLOW_ENV_FILE || path.join(backendRoot, '.env')) {
   if (!fs.existsSync(filePath)) return;
   const text = fs.readFileSync(filePath, 'utf8');
   for (const rawLine of text.split(/\r?\n/u)) {

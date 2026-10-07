@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { ControlAdmin } from './control-admin.js';
 import { ProfileBannerStore, MAX_GIF_BYTES, readBody, authorizeBannerAdmin, mirrorBannerPermission } from './profile-banners.js';
 import { LyricsResolver, defaultLyricsAdapters } from './lyrics.js';
 import path from 'node:path';
@@ -51,8 +52,10 @@ export function createServer({
   lyricsResolver = null,
   bannerStore = null,
   bannerPermissionMirror = null,
+  controlAdmin = null,
 }) {
   const startedAt = Date.now();
+  const administration = controlAdmin ?? new ControlAdmin(config);
   const banners = bannerStore ?? new ProfileBannerStore(config.bannerDir || path.join(config.cacheDir || '.', '..', 'data', 'profile-banners'));
   const lyrics = lyricsResolver ?? new LyricsResolver({ providers: defaultLyricsAdapters(fetchImpl), root: config.cacheDir ? path.join(config.cacheDir, "lyrics") : null });
 
@@ -83,7 +86,34 @@ export function createServer({
         const mirror = bannerPermissionMirror ?? ((id, published) => mirrorBannerPermission(id, published, token, config, fetchImpl));
         if (request.method === 'GET' && pathname === '/v1/admin/status') {
           json(response, 200, { service: 'CapyFlow Control Center', uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
-            banners: (await banners.list(true)).length, authMode: config.authMode }); return;
+            banners: (await banners.list(true)).length, authMode: config.authMode, controlVersion: 2,
+            cache: await cache.stats(), ytDlpInstalled: Boolean(ytDlpVersion),
+            pushConfigured: Boolean(config.pushEnabled && config.pushCredentials), adminConfigured: Boolean(config.pushCredentials),
+            platform: process.platform, pid: process.pid }); return;
+        }
+        if (/^\/v1\/admin\/(users|global-messages|announcements|push|audit)(\/|$)/u.test(pathname)) {
+          const actor = await administration.actor(token);
+          const body = async () => {
+            let value; try { value = JSON.parse((await readBody(request, 16384)).toString('utf8')); }
+            catch (error) { if (error instanceof HttpError) throw error; throw new HttpError(400, 'invalid_json', 'Invalid request.'); }
+            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'invalid_json', 'Invalid request.');
+            return value;
+          };
+          if (pathname === '/v1/admin/users' && request.method === 'GET') { json(response, 200, await administration.users(url.searchParams.get('q') || '', url.searchParams.get('page') || '')); return; }
+          const user = /^\/v1\/admin\/users\/([A-Za-z0-9_-]{1,128})$/u.exec(pathname);
+          if (user && request.method === 'PATCH') { json(response, 200, await administration.setUser(actor, user[1], await body())); return; }
+          if (pathname === '/v1/admin/global-messages' && request.method === 'GET') { json(response, 200, await administration.messages()); return; }
+          const message = /^\/v1\/admin\/global-messages\/([A-Za-z0-9_-]{1,128})$/u.exec(pathname);
+          if (message && request.method === 'PATCH') {
+            const value = await body(); if (typeof value.restore !== 'boolean' || Object.keys(value).some(key => key !== 'restore')) throw new HttpError(400, 'invalid_moderation', 'Choose hide or restore.');
+            json(response, 200, await administration.moderate(actor, message[1], value.restore)); return;
+          }
+          if (pathname === '/v1/admin/announcements' && request.method === 'GET') { json(response, 200, await administration.announcements()); return; }
+          const announcement = /^\/v1\/admin\/announcements\/([A-Za-z0-9_-]{1,96})$/u.exec(pathname);
+          if (announcement && request.method === 'PUT') { json(response, 200, await administration.saveAnnouncement(actor, announcement[1], await body())); return; }
+          if (pathname === '/v1/admin/push' && request.method === 'GET') { json(response, 200, await administration.pushPreview()); return; }
+          if (pathname === '/v1/admin/push' && request.method === 'POST') { json(response, 200, await administration.sendPush(actor, await body())); return; }
+          if (pathname === '/v1/admin/audit' && request.method === 'GET') { json(response, 200, await administration.history()); return; }
         }
         if (request.method === 'GET' && pathname === '/v1/admin/banners') {
           json(response, 200, { schemaVersion: 1, banners: await banners.list(true) }); return;

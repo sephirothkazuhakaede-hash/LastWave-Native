@@ -1,3 +1,7 @@
 node_modules/
 dist/
+bundled-backend/
+bundled-tools/
+runtime/
+desktop-*.log
 release/

@@ -82,6 +82,7 @@ async function main() {
   };
   process.once('SIGINT', () => stop('SIGINT'));
   process.once('SIGTERM', () => stop('SIGTERM'));
+  process.on('message', message => { if (message?.type === 'capyflow-shutdown') void stop('Control Center'); });
 }
 
 main().catch((error) => {

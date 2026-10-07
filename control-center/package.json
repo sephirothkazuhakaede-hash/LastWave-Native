@@ -1,6 +1,6 @@
 {
   "name": "capyflow-control-center",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Separate Windows administration app for CapyFlow",
   "type": "module",
@@ -9,14 +9,42 @@
     "test": "node --test test/*.test.js",
     "build": "esbuild auth.js --bundle --format=esm --outfile=dist/auth.js",
     "start": "npm run build && electron .",
-    "dist": "npm run build && electron-builder --win portable --x64"
+    "dist": "npm run build && npm run prepare:backend && electron-builder --win portable --x64",
+    "prepare:backend": "node prepare-backend.mjs"
   },
-  "devDependencies": { "firebase": "12.19.0", "electron": "44.6.0", "electron-builder": "26.15.3", "esbuild": "0.28.2" },
+  "devDependencies": {
+    "firebase": "12.19.0",
+    "electron": "44.6.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2"
+  },
   "build": {
     "appId": "com.seph.capyflow.controlcenter",
     "productName": "CapyFlow Control Center",
-    "files": ["main.js", "preload.cjs", "policy.js", "index.html", "renderer.js", "style.css", "dist/auth.js", "firebase-config.js"],
-    "win": { "target": "portable" },
-    "artifactName": "CapyFlow-Control-Center-${version}-Windows.${ext}"
+    "files": [
+      "main.js",
+      "preload.cjs",
+      "policy.js",
+      "index.html",
+      "renderer.js",
+      "style.css",
+      "dist/auth.js",
+      "firebase-config.js",
+      "local-backend.js"
+    ],
+    "win": {
+      "target": "portable"
+    },
+    "artifactName": "CapyFlow-Control-Center-${version}-Windows.${ext}",
+    "extraResources": [
+      {
+        "from": "bundled-backend",
+        "to": "backend"
+      },
+      {
+        "from": "bundled-tools",
+        "to": "tools"
+      }
+    ]
   }
 }
