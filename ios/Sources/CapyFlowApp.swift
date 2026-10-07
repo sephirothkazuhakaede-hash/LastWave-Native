@@ -474,7 +474,6 @@ private struct ProfileDrawerContainer: View {
 
     @State private var dragOffset: CGFloat
     @State private var suppressActions = false
-    @State private var friendActivityFrame: CGRect = .zero
 
     init(
         width: CGFloat,
@@ -528,70 +527,6 @@ private struct ProfileDrawerContainer: View {
             .shadow(color: .black.opacity(0.45), radius: 30, x: 12)
             .transition(.move(edge: .leading))
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 10, coordinateSpace: .named("profile-drawer"))
-                .onChanged { value in
-                    guard !friendActivityFrame.contains(value.startLocation) else { return }
-                    let horizontal =
-                        abs(value.translation.width) >
-                        abs(value.translation.height)
-
-                    guard horizontal,
-                          value.translation.width < 0 else {
-                        return
-                    }
-
-                    suppressActions = true
-                    dragOffset = value.translation.width
-                }
-                .onEnded { value in
-                    guard !friendActivityFrame.contains(value.startLocation) else { return }
-                    let horizontal =
-                        abs(value.translation.width) >
-                        abs(value.translation.height)
-
-                    let shouldClose =
-                        horizontal &&
-                        (
-                            value.translation.width < -(width * 0.28) ||
-                            value.predictedEndTranslation.width < -(width * 0.50)
-                        )
-
-                    if shouldClose {
-                        withAnimation(
-                            .spring(
-                                response: 0.30,
-                                dampingFraction: 0.90
-                            )
-                        ) {
-                            dragOffset = -width
-                        }
-
-                        DispatchQueue.main.asyncAfter(
-                            deadline: .now() + 0.12
-                        ) {
-                            close()
-                        }
-                    } else {
-                        withAnimation(
-                            .spring(
-                                response: 0.30,
-                                dampingFraction: 0.86
-                            )
-                        ) {
-                            dragOffset = 0
-                        }
-                    }
-
-                    DispatchQueue.main.asyncAfter(
-                        deadline: .now() + 0.18
-                    ) {
-                        suppressActions = false
-                    }
-                }
-        )
-        .coordinateSpace(name: "profile-drawer")
-        .onPreferenceChange(FriendActivityFramePreference.self) { friendActivityFrame = $0 }
         .onAppear {
             withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
                 dragOffset = 0
@@ -735,14 +670,6 @@ private struct ProfileDrawerView: View {
                     }
                 )
                 .padding(18)
-                .background {
-                    GeometryReader { geometry in
-                        Color.clear.preference(
-                            key: FriendActivityFramePreference.self,
-                            value: geometry.frame(in: .named("profile-drawer"))
-                        )
-                    }
-                }
 
                 Text(
                     "Your music and downloads work even when social features are offline."
