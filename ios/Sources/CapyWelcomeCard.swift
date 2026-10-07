@@ -59,7 +59,10 @@ final class CapyGIFCanvas: UIView {
         }
     }
 
-    override convenience init(frame: CGRect) { self.init(); self.frame = frame }
+    override convenience init(frame: CGRect) {
+        self.init(resourceName: "capy-welcome", contentMode: .scaleAspectFit)
+        self.frame = frame
+    }
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
 
     override func layoutSubviews() {
