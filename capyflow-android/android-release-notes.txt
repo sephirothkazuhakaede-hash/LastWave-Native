@@ -1,5 +1,9 @@
-• See who is currently active in Global Chat with the new live “In chat” presence display.
-• Tap the active-user display to view everyone currently in Global Chat and open their profiles.
-• Fixed Global Chat background notifications so they work independently from direct-message notifications.
-• Improved Global Chat presence handling when entering, leaving, or backgrounding CapyFlow.
-• Includes the existing repeat-song control, improved message banners, compact profile panel, and Global Chat improvements from 1.0.5.
+CapyFlow 1.0.7 — Stable
+
+• Search history now remembers songs you play and albums you open from search, with artwork, replay, individual removal and clear controls in the CapyFlow style.
+• More compact chat bubbles with timestamps underneath and connected groups for consecutive messages.
+• Profile pictures line up with the center of the latest bubble in each group. Message status appears below your profile picture in direct messages.
+• Removed the dark outline around the compact chat music player while keeping its glass background and playback controls.
+• Includes the recent player, search, Global Chat presence and notification fixes.
+
+Your account, messages, playlists and downloads stay with you when updating.
