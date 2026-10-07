@@ -288,15 +288,15 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
     BoxWithConstraints(Modifier.fillMaxWidth().padding(top=if(previousSame)2.dp else 8.dp)){
         val bubbleMaxWidth=minOf(280.dp,(maxWidth-37.dp).coerceAtLeast(0.dp))
         Row(Modifier.align(if(own)Alignment.CenterEnd else Alignment.CenterStart),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(7.dp)){
-            if(!own){if(!nextSame)Box(Modifier.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,30)} else Spacer(Modifier.width(30.dp))}
-            Column(horizontalAlignment=if(own)Alignment.End else Alignment.Start){
+            if(!own){if(!nextSame)Box(Modifier.alignBy{it.measuredHeight/2}.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,30)} else Spacer(Modifier.alignBy{0}.width(30.dp))}
+            Column(Modifier.alignBy(ChatBubbleCenter),horizontalAlignment=if(own)Alignment.End else Alignment.Start){
                 if(!previousSame && person!=null)Text(person.displayName,color=Violet,fontSize=12.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
-                Surface(shape=RoundedCornerShape(if(previousSame||nextSame)13.dp else 19.dp),color=if(own)Violet else Raised,modifier=Modifier.padding(top=if(!previousSame && person!=null)3.dp else 0.dp)){
+                Surface(shape=RoundedCornerShape(if(previousSame||nextSame)13.dp else 19.dp),color=if(own)Violet else Raised,modifier=Modifier.padding(top=if(!previousSame && person!=null)3.dp else 0.dp).chatBubbleCenter()){
                     Text(message.text,color=if(own)Night else Color.White,modifier=Modifier.widthIn(max=bubbleMaxWidth).padding(horizontal=13.dp,vertical=9.dp))
                 }
                 Text(if(message.pending)"Sending…" else chatTime(message.date),fontSize=10.sp,color=Color.White.copy(alpha=.5f),modifier=Modifier.padding(top=2.dp))
             }
-            if(own){if(!nextSame)Box(Modifier.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,30)} else Spacer(Modifier.width(30.dp))}
+            if(own){if(!nextSame)Box(Modifier.alignBy{it.measuredHeight/2}.clickable(enabled=person!=null){person?.let(onProfile)}){ProfileAvatar(person,30)} else Spacer(Modifier.alignBy{0}.width(30.dp))}
         }
     }
 }

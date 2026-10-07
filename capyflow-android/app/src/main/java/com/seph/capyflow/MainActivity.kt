@@ -110,6 +110,17 @@ class MainActivity : ComponentActivity() {
     val searchPrefs = remember { updateContext.getSharedPreferences("capyflow-search-history", android.content.Context.MODE_PRIVATE) }
     var songHistory by remember { mutableStateOf(loadSearchHistory(searchPrefs, "songs")) }
     var albumHistory by remember { mutableStateOf(loadSearchHistory(searchPrefs, "albums")) }
+    var searchedSongs by remember { mutableStateOf(SearchHistory.songs(searchPrefs.getString("played-songs-v1", "[]").orEmpty())) }
+    var viewedAlbums by remember { mutableStateOf(SearchHistory.albums(searchPrefs.getString("viewed-albums-v1", "[]").orEmpty())) }
+    fun rememberSong(track: Track) {
+        searchedSongs = SearchHistory.rememberSong(searchedSongs, track)
+        searchPrefs.edit().putString("played-songs-v1", SearchHistory.encodeSongs(searchedSongs)).apply()
+    }
+    fun rememberAlbum(album: Album) {
+        viewedAlbums = SearchHistory.rememberAlbum(viewedAlbums, album)
+        searchPrefs.edit().putString("viewed-albums-v1", SearchHistory.encodeAlbums(viewedAlbums)).apply()
+    }
+
     fun rememberSearch(term: String) {
         val clean = term.trim()
         if(clean.isEmpty()) return
@@ -189,22 +200,46 @@ class MainActivity : ComponentActivity() {
                             Row(Modifier.padding(vertical=12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(album.artwork,96);Column(Modifier.padding(start=16.dp)){Text(album.title,fontSize=23.sp,fontWeight=FontWeight.Bold);Text(album.artist,color=Violet);album.year?.let{Text(it,fontSize=12.sp)}}}
                             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){TextButton(onClick={vm.addAlbumToPlaylist(album,vm.albumTracks)},enabled=vm.albumTracks.isNotEmpty()){Icon(Icons.Default.PlaylistAdd,null);Text("Add as playlist")};TextButton(onClick={vm.downloadAll(vm.albumTracks)},enabled=vm.albumTracks.isNotEmpty()){Icon(Icons.Default.Download,null);Text("Download all")}}
                             if(vm.albumLoading)LinearProgressIndicator(Modifier.fillMaxWidth())
-                            LazyColumn { items(vm.albumTracks,key={it.id}) { t -> TrackRow(t,{vm.play(t,vm.albumTracks)},vm,{addTrack=t}) };if(!vm.albumLoading && vm.albumTracks.isEmpty())item{EmptyState("No tracks loaded","Tap Refresh to try again.",Icons.Default.Album)} }
+                            LazyColumn { items(vm.albumTracks,key={it.id}) { t -> TrackRow(t,{rememberSong(t);vm.play(t,vm.albumTracks)},vm,{addTrack=t}) };if(!vm.albumLoading && vm.albumTracks.isEmpty())item{EmptyState("No tracks loaded","Tap Refresh to try again.",Icons.Default.Album)} }
                         } else {
                             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Glass).padding(4.dp)) { listOf(false to "Songs",true to "Albums").forEach { (mode,label) -> Text(label,color=if(albumsOnly==mode)Violet else Color.White.copy(alpha=.6f),fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f).clip(RoundedCornerShape(20.dp)).background(if(albumsOnly==mode)Violet.copy(alpha=.14f) else Color.Transparent).clickable{albumsOnly=mode}.padding(12.dp)) } }
-                            OutlinedTextField(query,{query=it},placeholder={Text(if(albumsOnly)"Search albums or artists" else "Search songs or artists")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(top=12.dp),shape=RoundedCornerShape(24.dp),trailingIcon={IconButton(onClick={rememberSearch(query);vm.search(query,albumsOnly)}){Icon(Icons.Default.Search,"Search")}})
+                            OutlinedTextField(query,{query=it},placeholder={Text(if(albumsOnly)"Search albums or artists" else "Search songs or artists")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(top=12.dp),shape=RoundedCornerShape(24.dp),trailingIcon={Row{if(query.isNotEmpty())IconButton(onClick={query=""}){Icon(Icons.Default.Close,"Clear search")};IconButton(onClick={rememberSearch(query);vm.search(query,albumsOnly)}){Icon(Icons.Default.Search,"Search")}}})
                             LaunchedEffect(query,albumsOnly){kotlinx.coroutines.delay(400);vm.search(query,albumsOnly)}
                             if(vm.searching)LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical=12.dp))
                             LazyColumn(Modifier.padding(top=12.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                                 if(query.isBlank()){
                                     val history=if(albumsOnly)albumHistory else songHistory
-                                    item { Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("Recent searches",fontSize=21.sp,fontWeight=FontWeight.Bold);Text(if(albumsOnly)"Albums" else "Songs",fontSize=12.sp,color=Color.White.copy(alpha=.55f))};if(history.isNotEmpty())TextButton(onClick={saveSearchHistory(searchPrefs,if(albumsOnly)"albums" else "songs",emptyList());if(albumsOnly)albumHistory=emptyList() else songHistory=emptyList()}){Text("Clear")}} }
-                                    if(history.isEmpty())item{EmptyState("No recent searches","Your recent searches will appear here.",Icons.Default.History)}
-                                    else items(history,key={it}){term->Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Glass).padding(start=14.dp),verticalAlignment=Alignment.CenterVertically){Row(Modifier.weight(1f).clickable{query=term;vm.search(term,albumsOnly)}.padding(vertical=15.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.History,null,tint=Violet);Spacer(Modifier.width(12.dp));Text(term,maxLines=1,overflow=TextOverflow.Ellipsis)};IconButton(onClick={val updated=history.filterNot{it==term};saveSearchHistory(searchPrefs,if(albumsOnly)"albums" else "songs",updated);if(albumsOnly)albumHistory=updated else songHistory=updated}){Icon(Icons.Default.Close,"Remove")}}}
+                                    val hasSelections=if(albumsOnly)viewedAlbums.isNotEmpty() else searchedSongs.isNotEmpty()
+                                    item { Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
+                                        Column(Modifier.weight(1f)){Text("Recent searches",fontSize=21.sp,fontWeight=FontWeight.Bold);Text(if(albumsOnly)"Albums you opened" else "Songs you played",fontSize=12.sp,color=Color.White.copy(alpha=.55f))}
+                                        if(hasSelections || history.isNotEmpty())TextButton(onClick={
+                                            saveSearchHistory(searchPrefs,if(albumsOnly)"albums" else "songs",emptyList())
+                                            if(albumsOnly){albumHistory=emptyList();viewedAlbums=emptyList();searchPrefs.edit().remove("viewed-albums-v1").apply()}
+                                            else{songHistory=emptyList();searchedSongs=emptyList();searchPrefs.edit().remove("played-songs-v1").apply()}
+                                        }){Text("Clear")}
+                                    } }
+                                    if(!hasSelections && history.isEmpty())item{EmptyState("No recent searches",if(albumsOnly)"Albums you open from search will appear here." else "Songs you play from search will appear here.",Icons.Default.History)}
+                                    if(albumsOnly)items(viewedAlbums,key={"recent-album:"+it.id}){a ->
+                                        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Glass).padding(12.dp),verticalAlignment=Alignment.CenterVertically){
+                                            Row(Modifier.weight(1f).clickable{rememberAlbum(a);selectedAlbum=a;vm.openAlbum(a)},verticalAlignment=Alignment.CenterVertically){
+                                                Artwork(a.artwork,56)
+                                                Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(a.title,maxLines=2,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold);Text(a.artist,color=Violet,fontSize=12.sp,maxLines=1,overflow=TextOverflow.Ellipsis)}
+                                            }
+                                            IconButton(onClick={viewedAlbums=viewedAlbums.filterNot{it.id==a.id};searchPrefs.edit().putString("viewed-albums-v1",SearchHistory.encodeAlbums(viewedAlbums)).apply()}){Icon(Icons.Default.Close,"Remove album from history")}
+                                        }
+                                    }
+                                    else items(searchedSongs,key={"recent-song:"+it.playableID}){t ->
+                                        Row(verticalAlignment=Alignment.CenterVertically){
+                                            Box(Modifier.weight(1f)){TrackRow(t,{rememberSong(t);vm.play(t,searchedSongs)},vm,{addTrack=t})}
+                                            IconButton(onClick={searchedSongs=searchedSongs.filterNot{it.playableID==t.playableID};searchPrefs.edit().putString("played-songs-v1",SearchHistory.encodeSongs(searchedSongs)).apply()}){Icon(Icons.Default.Close,"Remove song from history")}
+                                        }
+                                    }
+                                    if(history.isNotEmpty())item{Text("Search terms",fontSize=14.sp,color=Color.White.copy(alpha=.55f),modifier=Modifier.padding(top=10.dp))}
+                                    items(history,key={"term:"+it}){term->Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Glass).padding(start=14.dp),verticalAlignment=Alignment.CenterVertically){Row(Modifier.weight(1f).clickable{query=term;vm.search(term,albumsOnly)}.padding(vertical=15.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.History,null,tint=Violet);Spacer(Modifier.width(12.dp));Text(term,maxLines=1,overflow=TextOverflow.Ellipsis)};IconButton(onClick={val updated=history.filterNot{it==term};saveSearchHistory(searchPrefs,if(albumsOnly)"albums" else "songs",updated);if(albumsOnly)albumHistory=updated else songHistory=updated}){Icon(Icons.Default.Close,"Remove search term")}}}
                                 }
                                 else if(!vm.searching && (if(albumsOnly)vm.albums.isEmpty() else vm.results.isEmpty()))item{EmptyState("No results found","Try another title or artist.",Icons.Default.Search)}
-                                if(albumsOnly)items(vm.albums,key={it.id}){a -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Glass).clickable{selectedAlbum=a;vm.openAlbum(a)}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(a.artwork,72);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(a.title,fontWeight=FontWeight.Bold);Text(a.artist,color=Violet,fontSize=13.sp);a.year?.let{Text(it,fontSize=12.sp)}};Icon(Icons.Default.ChevronRight,null)} }
-                                else items(vm.results,key={it.id}){t -> TrackRow(t,{vm.play(t,vm.results)},vm,{addTrack=t})}
+                                if(query.isNotBlank() && albumsOnly)items(vm.albums,key={it.id}){a -> Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Glass).clickable{rememberAlbum(a);selectedAlbum=a;vm.openAlbum(a)}.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Artwork(a.artwork,72);Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(a.title,fontWeight=FontWeight.Bold);Text(a.artist,color=Violet,fontSize=13.sp);a.year?.let{Text(it,fontSize=12.sp)}};Icon(Icons.Default.ChevronRight,null)} }
+                                else if(query.isNotBlank())items(vm.results,key={it.id}){t -> TrackRow(t,{rememberSong(t);vm.play(t,vm.results)},vm,{addTrack=t})}
                             }
                         }
                     }
@@ -450,14 +485,17 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
                     val nextSame=index>0 && ordered[index-1].sender==m.sender && chatDay(ordered[index-1].date)==chatDay(m.date)
                     val avatar=if(own)social.ownProfile else profile
                     Row(Modifier.fillMaxWidth().padding(top=if(previousSame)2.dp else 8.dp),horizontalArrangement=if(own)Arrangement.End else Arrangement.Start,verticalAlignment=Alignment.Bottom){
-                        if(!own){if(!nextSame)ProfileAvatar(avatar,30) else Spacer(Modifier.width(30.dp));Spacer(Modifier.width(7.dp))}
-                        Column(Modifier.weight(1f,fill=false),horizontalAlignment=if(own)Alignment.End else Alignment.Start){
-                            Surface(shape=RoundedCornerShape(if(previousSame||nextSame)13.dp else 19.dp),color=if(own)Violet.copy(alpha=.22f) else Glass){
+                        if(!own){Box(Modifier.alignBy{it.measuredHeight/2}.width(30.dp)){if(!nextSame)ProfileAvatar(avatar,30)};Spacer(Modifier.width(7.dp))}
+                        Column(Modifier.weight(1f,fill=false).alignBy(ChatBubbleCenter),horizontalAlignment=if(own)Alignment.End else Alignment.Start){
+                            Surface(modifier=Modifier.chatBubbleCenter(),shape=RoundedCornerShape(if(previousSame||nextSame)13.dp else 19.dp),color=if(own)Violet.copy(alpha=.22f) else Glass){
                                 Text(m.text,modifier=Modifier.widthIn(max=280.dp).padding(horizontal=13.dp,vertical=9.dp))
                             }
-                            Row(Modifier.padding(top=2.dp),horizontalArrangement=Arrangement.spacedBy(5.dp)){if(m.date>0)Text(chatTime(m.date),fontSize=10.sp,color=Color.White.copy(alpha=.5f));if(own)Text(social.messageStatus(m),fontSize=10.sp,color=Color.White.copy(alpha=.5f))}
+                            if(m.date>0)Text(chatTime(m.date),modifier=Modifier.padding(top=2.dp),fontSize=10.sp,color=Color.White.copy(alpha=.5f))
                         }
-                        if(own){Spacer(Modifier.width(7.dp));if(!nextSame)ProfileAvatar(avatar,30) else Spacer(Modifier.width(30.dp))}
+                        if(own){Spacer(Modifier.width(7.dp));Column(Modifier.width(52.dp).alignBy(ChatBubbleCenter),horizontalAlignment=Alignment.CenterHorizontally){
+                            Box(Modifier.chatBubbleCenter()){if(!nextSame)ProfileAvatar(avatar,30) else Spacer(Modifier.width(30.dp))}
+                            if(!nextSame)Text(social.messageStatus(m),fontSize=10.sp,color=Color.White.copy(alpha=.5f),maxLines=1,modifier=Modifier.padding(top=2.dp))
+                        }}
                     }
                 }
             }
