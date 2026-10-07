@@ -260,13 +260,13 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
     Spacer(Modifier.height(8.dp))
 }
             if(chat.loading)LinearProgressIndicator(Modifier.fillMaxWidth(),color=Violet)
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,reverseLayout=true,verticalArrangement=Arrangement.spacedBy(14.dp),contentPadding=PaddingValues(vertical=12.dp)){
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,reverseLayout=true,verticalArrangement=Arrangement.spacedBy(0.dp),contentPadding=PaddingValues(vertical=12.dp)){
                 val ordered=chat.messages.reversed()
                 if(ordered.isEmpty() && !chat.loading && chat.error==null)item{Text("Say hello to the CapyFlow community.",color=Color.White.copy(alpha=.6f))}
                 itemsIndexed(ordered,key={_,m->m.id}){index,m ->
                     Column{
                         if(index==ordered.lastIndex || chatDay(m.date)!=chatDay(ordered[index+1].date))Text(chatDateLabel(m.date),fontSize=12.sp,color=Color.White.copy(alpha=.55f),modifier=Modifier.fillMaxWidth().padding(vertical=10.dp))
-                        GlobalMessageRow(m,chat.profiles[m.sender],m.sender==vm.user?.uid,onProfile,previousSame=index+1<ordered.size && ordered[index+1].sender==m.sender,nextSame=index>0 && ordered[index-1].sender==m.sender)
+                        GlobalMessageRow(m,chat.profiles[m.sender],m.sender==vm.user?.uid,onProfile,previousSame=index+1<ordered.size && ordered[index+1].sender==m.sender && chatDay(ordered[index+1].date)==chatDay(m.date),nextSame=index>0 && ordered[index-1].sender==m.sender && chatDay(ordered[index-1].date)==chatDay(m.date))
                     }
                 }
                 if(chat.hasMore)item{TextButton(onClick={chat.loadOlder()},enabled=!chat.loadingOlder){Text(if(chat.loadingOlder)"Loading…" else "Load older messages")}}
@@ -291,7 +291,7 @@ private fun loadPresenceProfiles(ids:List<String>,epoch:Int) {
             Column(horizontalAlignment=if(own)Alignment.End else Alignment.Start){
                 if(!previousSame && person!=null)Text(person.displayName,color=Violet,fontSize=12.sp,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis)
                 Surface(shape=RoundedCornerShape(if(previousSame||nextSame)13.dp else 19.dp),color=if(own)Violet else Raised,modifier=Modifier.padding(top=if(!previousSame && person!=null)3.dp else 0.dp)){
-                    Text(message.text,color=if(own)Night else Color.White,modifier=Modifier.widthIn(max=280.dp).padding(horizontal=13.dp,vertical=9.dp))
+                    Text(message.text,color=if(own)Night else Color.White,modifier=Modifier.widthIn(max=minOf(280.dp,maxWidth-37.dp)).padding(horizontal=13.dp,vertical=9.dp))
                 }
                 Text(if(message.pending)"Sending…" else chatTime(message.date),fontSize=10.sp,color=Color.White.copy(alpha=.5f),modifier=Modifier.padding(top=2.dp))
             }

@@ -441,17 +441,17 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
     DisposableEffect(peer){PushNotices.activePeer=peer;onDispose{if(PushNotices.activePeer==peer)PushNotices.activePeer=null}}
     Column(Modifier.fillMaxSize().statusBarsPadding().imePadding().navigationBarsPadding().padding(16.dp)) {
         Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick=onClose){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")};Row(Modifier.clickable{profile?.let(onProfile)},verticalAlignment=Alignment.CenterVertically){ProfileAvatar(profile,40);Text(profile?.displayName ?: "Messages",fontSize=22.sp,fontWeight=FontWeight.Bold,modifier=Modifier.padding(start=10.dp))}}
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,verticalArrangement=Arrangement.spacedBy(10.dp),reverseLayout=true){
+        LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,verticalArrangement=Arrangement.spacedBy(0.dp),reverseLayout=true){
             itemsIndexed(ordered,key={_,m->m.id}){index,m ->
                 Column {
                     if(index==ordered.lastIndex || chatDay(m.date)!=chatDay(ordered[index+1].date))Text(chatDateLabel(m.date),fontSize=12.sp,color=Color.White.copy(alpha=.55f),modifier=Modifier.fillMaxWidth().padding(vertical=10.dp))
                     val own=m.sender==vm.user?.uid
-                    val previousSame=index+1<ordered.size && ordered[index+1].sender==m.sender
-                    val nextSame=index>0 && ordered[index-1].sender==m.sender
+                    val previousSame=index+1<ordered.size && ordered[index+1].sender==m.sender && chatDay(ordered[index+1].date)==chatDay(m.date)
+                    val nextSame=index>0 && ordered[index-1].sender==m.sender && chatDay(ordered[index-1].date)==chatDay(m.date)
                     val avatar=if(own)social.ownProfile else profile
                     Row(Modifier.fillMaxWidth().padding(top=if(previousSame)2.dp else 8.dp),horizontalArrangement=if(own)Arrangement.End else Arrangement.Start,verticalAlignment=Alignment.Bottom){
                         if(!own){if(!nextSame)ProfileAvatar(avatar,30) else Spacer(Modifier.width(30.dp));Spacer(Modifier.width(7.dp))}
-                        Column(horizontalAlignment=if(own)Alignment.End else Alignment.Start){
+                        Column(Modifier.weight(1f,fill=false),horizontalAlignment=if(own)Alignment.End else Alignment.Start){
                             Surface(shape=RoundedCornerShape(if(previousSame||nextSame)13.dp else 19.dp),color=if(own)Violet.copy(alpha=.22f) else Glass){
                                 Text(m.text,modifier=Modifier.widthIn(max=280.dp).padding(horizontal=13.dp,vertical=9.dp))
                             }
@@ -473,7 +473,7 @@ fun clock(seconds: Double): String {val value=if(seconds.isFinite())seconds.toIn
     }
 }
 @Composable fun ChatMiniPlayer(track:Track,vm:CapyModel,onOpen:()->Unit){
-    Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(20.dp)).background(Raised.copy(alpha=.96f)).border(1.dp,Color.White.copy(alpha=.12f),RoundedCornerShape(20.dp)).clickable(onClick=onOpen).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
+    Row(Modifier.fillMaxWidth().height(58.dp).clip(RoundedCornerShape(20.dp)).background(Raised.copy(alpha=.96f)).clickable(onClick=onOpen).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically){
         Artwork(track.artwork,42)
         Column(Modifier.weight(1f).padding(horizontal=9.dp)){Text(track.title,maxLines=1,overflow=TextOverflow.Ellipsis,fontWeight=FontWeight.SemiBold,fontSize=13.sp);Text(track.artist,maxLines=1,overflow=TextOverflow.Ellipsis,color=Violet,fontSize=11.sp)}
         if(vm.loading)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp) else IconButton(onClick={vm.toggle()},modifier=Modifier.size(40.dp)){Icon(if(vm.playing)Icons.Default.Pause else Icons.Default.PlayArrow,"Play or pause",tint=Violet,modifier=Modifier.size(22.dp))}
