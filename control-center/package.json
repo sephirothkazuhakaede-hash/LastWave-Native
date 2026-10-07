@@ -30,7 +30,8 @@
       "style.css",
       "dist/auth.js",
       "firebase-config.js",
-      "local-backend.js"
+      "local-backend.js",
+      "github-admin.js"
     ],
     "win": {
       "target": "portable"

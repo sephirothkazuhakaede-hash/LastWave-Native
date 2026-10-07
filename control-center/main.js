@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { backendRoot, bannerID } from './policy.js';
 import { firebaseConfig } from './firebase-config.js';
 import { LocalBackend } from './local-backend.js';
+import { publishAndroid } from './github-admin.js';
 import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -178,8 +179,7 @@ ipcMain.handle('control', async (event, action, value) => {
     }
     case 'publish-android': {
       await request('status');
-      await exec('gh.exe', ['workflow', 'run', 'capyflow-android.yml', '--repo', 'sephirothkazuhakaede-hash/LastWave-Native', '--ref', 'feature/capyflow-android'], { windowsHide: true, timeout: 30000 });
-      return { note: 'Android stable build requested. The existing workflow publishes only after its checks pass. Change the app version in source before publishing a new update.' };
+      return publishAndroid(value);
     }
     case 'pick': {
       const selection = await dialog.showOpenDialog(window, { properties: ['openFile'], filters: [{ name: 'Animated GIF', extensions: ['gif'] }] });

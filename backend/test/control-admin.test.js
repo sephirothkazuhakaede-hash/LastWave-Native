@@ -45,3 +45,13 @@ test('IDs and announcement lengths are bounded before any database work', () => 
   for (const value of ['../users', 'a/b', '', 'x'.repeat(129)]) assert.throws(() => adminID(value));
   assert.throws(() => announcementText({ title: 'Title', body: 'x'.repeat(3501) }));
 });
+test('revoked administrator sessions produce an authentication challenge', async () => {
+  const { service } = fixture(); service.dependencies.auth.verifyIdToken = async () => { throw Object.assign(Error('Revoked'), { code: 'auth/id-token-revoked' }); };
+  await assert.rejects(service.actor('owner'), { statusCode: 401 });
+});
+test('an announcement cannot take over a normal user message with a colliding ID', async () => {
+  const { service, documents } = fixture(); documents.set('globalMessages/announcement-news', { senderID: 'listener', text: 'User message', createdAt: 'original-time' });
+  await assert.rejects(service.saveAnnouncement('owner', 'news', { title: 'News', body: 'Announcement', published: true }), { statusCode: 409 });
+  assert.equal(documents.get('globalMessages/announcement-news').text, 'User message');
+  assert.equal(documents.has('controlCenterAnnouncements/news'), false);
+});

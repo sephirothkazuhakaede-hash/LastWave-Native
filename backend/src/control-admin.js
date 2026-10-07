@@ -37,7 +37,14 @@ export class ControlAdmin {
   }
   async actor(token) {
     const { auth } = await this.ready();
-    const claims = await auth.verifyIdToken(token, true);
+    let claims;
+    try { claims = await auth.verifyIdToken(token, true); }
+    catch (error) {
+      if (['auth/id-token-revoked', 'auth/id-token-expired', 'auth/user-disabled', 'auth/user-not-found', 'auth/invalid-id-token'].includes(error.code))
+        throw new HttpError(401, 'admin_sign_in_required', 'Your administrator session expired. Sign in again.');
+      if (error.code === 'auth/insufficient-permission') throw new HttpError(503, 'admin_permissions_required', 'The existing service account needs Firebase Authentication administration permissions for these tools.');
+      throw error;
+    }
     if (!this.config.adminUIDs.includes(claims.uid)) throw new HttpError(403, 'admin_required', 'Administrator access required.');
     return claims.uid;
   }
@@ -109,6 +116,8 @@ export class ControlAdmin {
     const ref = db.doc(`controlCenterAnnouncements/${id}`), message = db.doc(`globalMessages/announcement-${id}`);
     await db.runTransaction(async tx => {
       const [old, priorMessage] = await Promise.all([tx.get(ref), tx.get(message)]);
+      if (value.published && priorMessage.exists && (!old.exists || !this.config.adminUIDs.includes(priorMessage.get('senderID'))))
+        throw new HttpError(409, 'announcement_id_reserved', 'This announcement ID collides with an existing chat message. Choose another ID.');
       tx.set(ref, { title: content.title, body: content.body, published: value.published, actor, updatedAt: stamp() });
       if (value.published) {
         if (priorMessage.exists) tx.update(message, { text: content.text });

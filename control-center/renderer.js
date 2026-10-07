@@ -2,6 +2,13 @@ const $ = id => document.getElementById(id);
 const call = (action, value) => window.control.call(action, value);
 let busy = false;
 let activePage = 'banners', nextUserPage = '';
+function clearPrivateViews() {
+  for (const id of ['library', 'users-list', 'announcements-list', 'messages-list', 'audit-list']) $(id).replaceChildren();
+  for (const id of ['user-query', 'announcement-id', 'announcement-title', 'announcement-body', 'push-title', 'push-body']) $(id).value = '';
+  $('push-result').textContent = ''; $('push-audience').textContent = 'Sign in to load the audience.'; $('status').textContent = '';
+  $('local-preview').hidden = true; $('local-preview').removeAttribute('src'); $('release-editor').hidden = true;
+  $('connection').textContent = 'Not connected'; nextUserPage = ''; $('next-users').hidden = true;
+}
 function localSummary(status) {
   return `${status.healthy ? 'Backend online' : 'Backend offline'}\n${status.managed ? 'Running inside Control Center' : 'Existing external backend'}\nData folder: ${status.dataDirectory}\nPublic connection: ${status.publicURL || 'Existing tunnel / automatic discovery'}${status.publication ? '\n' + status.publication : ''}${status.exitError ? '\n' + status.exitError : ''}${status.note ? '\n' + status.note : ''}\n\nRecent server log\n${(status.logs || []).slice(-12).join('\n')}`;
 }
@@ -10,7 +17,7 @@ function serverSummary(status) {
 }
 async function run(operation) {
   if (busy) return; busy = true; $('message').textContent = '';
-  try { await operation(); } catch (error) { $('message').textContent = error.message; }
+  try { await operation(); } catch (error) { if (/sign in first|sign-in expired|session expired/iu.test(error.message)) clearPrivateViews(); $('message').textContent = error.message; }
   finally { busy = false; }
 }
 async function refreshBanners() {
@@ -32,8 +39,8 @@ async function refreshBanners() {
   }
   if (!catalog.banners.length) $('library').textContent = 'Your library is empty. Upload a GIF to create the first draft.';
 }
-$('connect').onclick = () => run(async () => { await call('connect', $('backend').value); $('message').textContent = 'Complete Google sign-in in your browser, then return here.'; });
-$('logout').onclick = () => run(async () => { await call('logout'); $('connection').textContent = 'Not connected'; $('library').replaceChildren(); $('status').textContent = ''; });
+$('connect').onclick = () => run(async () => { clearPrivateViews(); await call('connect', $('backend').value); $('message').textContent = 'Complete Google sign-in in your browser, then return here.'; });
+$('logout').onclick = () => run(async () => { await call('logout'); clearPrivateViews(); });
 $('refresh').onclick = () => run(refresh);
 $('pick').onclick = () => run(async () => { const selected = await call('pick'); if (selected) { $('local-preview').src = selected.preview; $('local-preview').hidden = false; $('preview-label').hidden = true; $('file-name').textContent = selected.fileName; } });
 $('upload').onclick = () => run(async () => { await call('upload', { id: $('banner-id').value.trim(), name: $('name').value.trim() }); $('message').textContent = 'Draft uploaded. Preview it in the library, then publish when ready.'; $('local-preview').hidden = true; $('preview-label').hidden = false; $('file-name').textContent = 'Nothing selected'; await refresh(); });
@@ -103,7 +110,10 @@ for (const action of ['local-start', 'local-stop', 'local-restart', 'local-folde
   if (['local-stop', 'local-restart'].includes(action) && !confirm('This briefly interrupts music and remote banner access. Continue when downloads have finished?')) return;
   const result = await call(action); if (result) $('local-status').textContent = localSummary(result);
 });
-$('publish-android').onclick = () => run(async () => { if (!confirm('Build and publish the current Android branch as a stable update for everyone? The workflow must pass first.')) return; $('message').textContent = (await call('publish-android')).note; });
+$('publish-android').onclick = () => run(async () => {
+  if (!confirm(`Publish Android ${$('new-version').value} (build ${$('new-build').value}) for everyone after its checks pass?\nThis creates a version/release-notes commit on the Android branch and starts a stable build.`)) return;
+  $('message').textContent = (await call('publish-android', { versionName: $('new-version').value, versionCode: $('new-build').value, notes: $('new-release-notes').value })).note;
+});
 $('save-release-notes').onclick = () => run(async () => { if (!confirm(`Update the published notes for ${$('release-tag').value}? The APK and its checksum will stay the same.`)) return; const result = await call('release-notes', { tag: $('release-tag').value, notes: $('release-notes').value }); await refresh(); $('message').textContent = result.note; });
 window.control.onConnected(() => run(refresh));
 const settings = await call('settings'); $('backend').value = settings.backend;

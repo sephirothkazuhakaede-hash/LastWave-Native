@@ -57,6 +57,7 @@ export class LocalBackend {
     if (this.tunnel && this.tunnel.exitCode === null) return;
     this.tunnel = spawn(path.join(tools, 'cloudflared.exe'), ['tunnel', '--url', 'http://localhost:8787', '--no-autoupdate'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     this.tunnel.on('error', () => { this.exitError = 'Public tunnel could not start.'; });
+    this.tunnel.stdout.resume();
     let pending = '';
     this.tunnel.stderr.on('data', bytes => { pending += bytes.toString(); const lines = pending.split(/\r?\n/u); pending = lines.pop(); for (const line of lines) {
       const url = line.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/u)?.[0];

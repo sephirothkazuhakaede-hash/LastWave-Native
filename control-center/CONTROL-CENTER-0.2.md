@@ -17,7 +17,7 @@ The Windows app includes the music/backend source, its dependencies, Cloudflared
 - **Announcements:** draft privately, then publish to the existing Global Chat on both clients. First publication follows existing Android Global Chat push preferences. Withdrawal leaves a placeholder; republishing the same ID restores the message without sending another new-message push.
 - **Global Chat:** hide or restore the latest 50 messages. Sender and timestamp are preserved. Original text is retained in a private moderation record. DMs are not exposed by this tool.
 - **Notifications:** preview the registered audience and send to existing Android Global Chat push opt-ins. Your devices are excluded. Requests are idempotent during retries; acceptance by Firebase does not guarantee display on a phone. iOS push is not supported by the current client and requires a future iOS integration.
-- **App updates:** view releases, edit Android release notes while preserving the APK/checksum, and request the existing Android stable workflow. GitHub CLI must already be signed in on the PC. A genuinely new APK needs a new source version number. iOS keeps its existing signing/distribution workflow.
+- **App updates:** view releases, edit Android release notes while preserving the APK/checksum, and enter a new Android version/build/release notes and request the existing stable workflow. GitHub CLI must already be signed in on the PC. The app safely commits the new version and release notes before starting the build; concurrent branch changes cannot be overwritten. iOS keeps its existing signing/distribution workflow.
 - **Admin history:** account, moderation, announcement and notification actions are recorded in private Firestore collections.
 
 ## Security and compatibility
