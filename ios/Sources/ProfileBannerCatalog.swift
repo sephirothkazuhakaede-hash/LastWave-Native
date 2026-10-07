@@ -23,6 +23,7 @@ struct ProfileBannerEnvelope: Codable { let schemaVersion: Int; let banners: [Pr
     @Published private(set) var offline = false
     private var refreshTask: Task<Void, Never>?
     private let cacheFile: URL
+    private var downloads: [String: Task<Data, Error>] = [:]
 
     private init() {
         let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("profile-banners")
@@ -55,6 +56,13 @@ struct ProfileBannerEnvelope: Codable { let schemaVersion: Int; let banners: [Pr
         banners.contains { $0.id == id } || (!hasCatalog && id == ProfileCoverChoice.parade)
     }
     func data(for banner: ProfileBanner) async throws -> Data {
+        if let pending = downloads[banner.revision] { return try await pending.value }
+        let pending = Task { try await download(banner) }
+        downloads[banner.revision] = pending
+        defer { downloads.removeValue(forKey: banner.revision) }
+        return try await pending.value
+    }
+    private func download(_ banner: ProfileBanner) async throws -> Data {
         let file = cacheFile.deletingLastPathComponent().appendingPathComponent("\(banner.id)-\(banner.revision).gif")
         if let data = try? Data(contentsOf: file) { return data }
         guard let root = baseURL ?? BackendConfiguration.active?.baseURL else { throw URLError(.notConnectedToInternet) }

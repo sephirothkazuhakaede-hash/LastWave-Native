@@ -21,7 +21,7 @@ struct ProfileCoverView: View {
     @ViewBuilder var body: some View {
         if catalog.shows(coverID) {
             CapyGIFImage(playing: appeared && scenePhase == .active && !reduceMotion,
-                         resourceName: coverID == ProfileCoverChoice.parade ? "capy-profile-parade" : "", contentMode: .scaleAspectFill, gifData: data)
+                         resourceName: "capy-profile-parade", contentMode: .scaleAspectFill, gifData: data)
                 .id(data)
                 .frame(height: 150)
                 .frame(maxWidth: .infinity)
