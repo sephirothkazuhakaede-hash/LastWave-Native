@@ -116,5 +116,6 @@ $('publish-android').onclick = () => run(async () => {
 });
 $('save-release-notes').onclick = () => run(async () => { if (!confirm(`Update the published notes for ${$('release-tag').value}? The APK and its checksum will stay the same.`)) return; const result = await call('release-notes', { tag: $('release-tag').value, notes: $('release-notes').value }); await refresh(); $('message').textContent = result.note; });
 window.control.onConnected(() => run(refresh));
+window.control.onBackendAddress?.(address => { $('backend').value = address; });
 const settings = await call('settings'); $('backend').value = settings.backend;
 if (settings.connected) await run(refresh);

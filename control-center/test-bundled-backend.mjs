@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createRequire } from 'node:module';
+import { LocalBackend } from './local-backend.js';
 const root = path.resolve(import.meta.dirname, 'dist/win-unpacked');
 const resources = path.join(root, 'resources/backend'), data = await fs.mkdtemp(path.join(os.tmpdir(), 'capyflow-package-test-'));
 const require = createRequire(path.join(resources, 'package.json'));
@@ -23,3 +24,11 @@ try {
   if (code !== 0) throw Error('Graceful shutdown failed.');
   console.log('Packaged Firebase modules, music resolver, animated fallback, startup and graceful shutdown passed with synthetic settings.');
 } finally { clearTimeout(timer); if (child.exitCode === null) child.kill(); }
+const manager = new LocalBackend({ resources: path.join(root, 'resources'), dataDirectory: data, executable: path.join(root, 'CapyFlow Control Center.exe'), port: 18887, tunneling: false });
+try {
+  const started = await manager.start();
+  if (!started.healthy || !started.managed) throw Error('Control Center did not manage its packaged backend.');
+  const stopped = await manager.stop();
+  if (stopped.healthy || stopped.managed) throw Error('Control Center did not stop its managed backend.');
+  console.log('Control Center managed start/status/stop also passed on the isolated test port.');
+} finally { clearInterval(manager.monitor); if (manager.child?.exitCode === null) manager.child.kill(); }

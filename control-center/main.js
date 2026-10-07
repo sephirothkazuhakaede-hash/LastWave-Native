@@ -54,7 +54,11 @@ app.whenReady().then(async () => {
   const existingData = path.join(os.homedir(), 'CapyFlowBackend-dev11/backend');
   let dataDirectory = settings.dataDirectory;
   if (!dataDirectory) { try { await fs.access(path.join(existingData, '.env')); dataDirectory = existingData; } catch { dataDirectory = path.join(app.getPath('userData'), 'backend-data'); } }
-  localBackend = new LocalBackend({ resources: app.isPackaged ? process.resourcesPath : path.join(directory, 'runtime'), dataDirectory, executable: process.execPath });
+  localBackend = new LocalBackend({ resources: app.isPackaged ? process.resourcesPath : path.join(directory, 'runtime'), dataDirectory, executable: process.execPath, logger: () => {
+    if (localBackend?.publicURL && root.includes('.trycloudflare.com') && root !== localBackend.publicURL) {
+      root = localBackend.publicURL; void saveSettings(); window?.webContents.send('backend-address', root);
+    }
+  } });
   if (!root) {
     try {
       const response = await fetch('https://raw.githubusercontent.com/sephirothkazuhakaede-hash/LastWave-Native/runtime/backend-discovery/backend.json', { signal: AbortSignal.timeout(5_000) });
