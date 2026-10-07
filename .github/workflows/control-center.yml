@@ -26,6 +26,11 @@ jobs:
       - run: pnpm dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify desktop startup
+        run: |
+          $desktopApp = Join-Path $PWD 'dist/win-unpacked/CapyFlow Control Center.exe'
+          $desktopCheck = Start-Process -FilePath $desktopApp -ArgumentList '--smoke-test' -WindowStyle Hidden -Wait -PassThru
+          if ($desktopCheck.ExitCode -ne 0) { throw 'Control Center startup failed' }
       - uses: actions/upload-artifact@v4
         with:
           name: CapyFlow-Control-Center-Windows

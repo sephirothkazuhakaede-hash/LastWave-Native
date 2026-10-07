@@ -8,6 +8,7 @@ import { backendRoot, bannerID } from './policy.js';
 import { firebaseConfig } from './firebase-config.js';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
+const smokeTest = process.argv.includes('--smoke-test');
 let window, server, root = '', nonce = '', loginURL = '', idToken = '', refreshToken = '', expiresAt = 0;
 let picked = null;
 const clearSession = () => { idToken = ''; refreshToken = ''; expiresAt = 0; nonce = ''; picked = null; };
@@ -36,6 +37,12 @@ async function request(route, { method = 'GET', body, type = 'application/json',
 }
 app.whenReady().then(async () => {
   try { root = backendRoot(JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'settings.json'), 'utf8')).backend); } catch { }
+  if (!root) {
+    try {
+      const response = await fetch('https://raw.githubusercontent.com/sephirothkazuhakaede-hash/LastWave-Native/runtime/backend-discovery/backend.json', { signal: AbortSignal.timeout(5_000) });
+      if (response.ok) root = backendRoot((await response.json()).url);
+    } catch { }
+  }
   server = http.createServer(async (req, res) => {
     try {
       const expected = new URL(loginURL).host;
@@ -63,11 +70,12 @@ app.whenReady().then(async () => {
   server.requestTimeout = 20_000;
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   loginURL = `http://localhost:${server.address().port}/login`;
-  window = new BrowserWindow({ width: 1180, height: 820, minWidth: 850, minHeight: 650, backgroundColor: '#101318',
+  window = new BrowserWindow({ show: !smokeTest, width: 1180, height: 820, minWidth: 850, minHeight: 650, backgroundColor: '#101318',
     webPreferences: { preload: path.join(directory, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   await window.loadFile(path.join(directory, 'index.html'));
+  if (smokeTest) { console.log('CapyFlow Control Center window loaded.'); clearSession(); server.close(); app.exit(0); }
 });
 function trusted(event) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('Untrusted window.');
