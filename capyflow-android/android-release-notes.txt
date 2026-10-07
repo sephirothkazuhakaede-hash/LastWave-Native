@@ -1,9 +1,3 @@
-CapyFlow 1.0.9 — Stable
+CapyFlow 1.0.10 — Stable
 
-• Choose profile banners from a compact, scrollable menu without expanding the profile editor.
-• New animated banners published to the shared library appear without another app update.
-• Downloaded banners are cached, with the bundled Capy parade available as an offline fallback.
-• Banner selections are shared across Android and iOS, with the profile photo integrated into the cover header.
-• Preserves the compact chat player, centered avatars, grouped bubbles, timestamps below messages and song/album search history improvements.
-
-Your account, messages, playlists and downloads stay with you when updating.
+Works with CapyFlow Control Center: choose newly published animated profile banners without another app update; Global Chat displays admin announcements and moderation changes. Keeps the compact banner selector, cached GIFs, chat avatars, timestamps, music-player fixes, and search history improvements. Administrator tools remain in the separate Windows Control Center.
