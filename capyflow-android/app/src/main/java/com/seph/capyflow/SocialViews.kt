@@ -78,12 +78,44 @@ import kotlinx.coroutines.*
         Section("Edit profile");ProfileAvatar(profile.copy(avatarData=photo ?: profile.avatarData),88);TextButton(onClick={picker.launch("image/*")},enabled=!preparing){Text(if(preparing)"Preparing picture…" else "Change picture")}
         Section("Profile cover")
         ProfileCover(coverID)
-        Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(8.dp)){
-            FilterChip(selected=coverID==ProfileCoverChoice.NONE,onClick={coverID=ProfileCoverChoice.NONE},label={Text("Default")})
-            if(!bannerLibrary.hasCatalog) FilterChip(selected=coverID==ProfileCoverChoice.PARADE,onClick={coverID=ProfileCoverChoice.PARADE},label={Text("Capy parade")})
-            bannerLibrary.banners.forEach { banner -> FilterChip(selected=coverID==banner.id,onClick={coverID=banner.id},label={Text(banner.name)}) }
-            if(coverID!=ProfileCoverChoice.NONE && !bannerLibrary.shows(coverID)) Text("This banner is unavailable. Default appearance is shown.",fontSize=12.sp,color=Color.White.copy(alpha=.6f))
+        var bannerMenuExpanded by remember { mutableStateOf(false) }
+        val selectedBannerName = when {
+            coverID == ProfileCoverChoice.NONE -> "Default"
+            !bannerLibrary.hasCatalog && coverID == ProfileCoverChoice.PARADE -> "Capy parade"
+            else -> bannerLibrary.banners.firstOrNull { it.id == coverID }?.name ?: "Unavailable banner"
         }
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { bannerMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                Text(selectedBannerName, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose profile banner")
+            }
+            DropdownMenu(
+                expanded = bannerMenuExpanded,
+                onDismissRequest = { bannerMenuExpanded = false },
+                modifier = Modifier.heightIn(max = 320.dp),
+                containerColor = Night
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Default") },
+                    onClick = { coverID = ProfileCoverChoice.NONE; bannerMenuExpanded = false },
+                    trailingIcon = { if (coverID == ProfileCoverChoice.NONE) Icon(Icons.Default.Check, "Selected", tint = Violet) }
+                )
+                if (!bannerLibrary.hasCatalog) DropdownMenuItem(
+                    text = { Text("Capy parade") },
+                    onClick = { coverID = ProfileCoverChoice.PARADE; bannerMenuExpanded = false },
+                    trailingIcon = { if (coverID == ProfileCoverChoice.PARADE) Icon(Icons.Default.Check, "Selected", tint = Violet) }
+                )
+                bannerLibrary.banners.forEach { banner ->
+                    DropdownMenuItem(
+                        text = { Text(banner.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        onClick = { coverID = banner.id; bannerMenuExpanded = false },
+                        trailingIcon = { if (coverID == banner.id) Icon(Icons.Default.Check, "Selected", tint = Violet) }
+                    )
+                }
+            }
+        }
+        if (coverID != ProfileCoverChoice.NONE && !bannerLibrary.shows(coverID))
+            Text("This banner is unavailable. Default appearance is shown.", fontSize = 12.sp, color = Color.White.copy(alpha = .6f))
         Text("Visible on your profile to CapyFlow listeners on Android and iOS.",fontSize=12.sp,color=Color.White.copy(alpha=.6f))
         OutlinedTextField(username,{username=it},label={Text("Username")},prefix={Text("@")},singleLine=true,modifier=Modifier.fillMaxWidth());Text("Usernames can be changed once every 14 days. Your first custom username is free to choose.",fontSize=12.sp,color=Color.White.copy(alpha=.6f))
         OutlinedTextField(name,{if(it.length<=60)name=it},label={Text("Display name")},singleLine=true,modifier=Modifier.fillMaxWidth());OutlinedTextField(bio,{if(it.length<=160)bio=it},label={Text("Bio")},supportingText={Text("${bio.length}/160")},modifier=Modifier.fillMaxWidth())
