@@ -1058,7 +1058,7 @@ private struct SearchHomeView: View {
                     } else if mode == .albums {
                         albumSectionHeader
                         ForEach(albums) { album in
-                            NavigationLink { AlbumDetailView(album: album).onAppear { rememberAlbum(album) } } label: { AlbumResultRow(album: album) }
+                            NavigationLink { AlbumDetailView(album: album, onPlay: rememberSong).onAppear { rememberAlbum(album) } } label: { AlbumResultRow(album: album) }
                                 .buttonStyle(.plain)
                         }
                     } else {
@@ -1155,7 +1155,7 @@ private struct SearchHomeView: View {
                 ForEach(viewedAlbums) { album in
                     HStack(spacing: 6) {
                         NavigationLink {
-                            AlbumDetailView(album: album).onAppear { rememberAlbum(album) }
+                            AlbumDetailView(album: album, onPlay: rememberSong).onAppear { rememberAlbum(album) }
                         } label: { AlbumResultRow(album: album) }
                             .buttonStyle(.plain)
                         historyRemoveButton("Remove \(album.title) from search history") {
@@ -1603,14 +1603,16 @@ private struct AlbumResultRow: View {
 private struct AlbumDetailView: View {
     @EnvironmentObject var player: WavePlayer
     let album: Album
+    private let onPlay: ((Track) -> Void)?
     private let fixtureTracks: [Track]?
     @State private var tracks: [Track]
     @State private var loading: Bool
     @State private var showDelete = false
     @State private var showRemoveDownloads = false
 
-    init(album: Album, fixtureTracks: [Track]? = nil) {
+    init(album: Album, fixtureTracks: [Track]? = nil, onPlay: ((Track) -> Void)? = nil) {
         self.album = album
+        self.onPlay = onPlay
         self.fixtureTracks = fixtureTracks
         _tracks = State(initialValue: fixtureTracks ?? [])
         _loading = State(initialValue: fixtureTracks == nil)
@@ -1642,7 +1644,7 @@ private struct AlbumDetailView: View {
                                 DownloadBatchStatusView(summary: summary)
                             }
                             CapySectionHeader("Track list", subtitle: "Actual playback time replaces catalog estimates")
-                            ForEach(tracks) { TrackCard(track: $0) }
+                            ForEach(tracks) { TrackCard(track: $0, onPlay: onPlay) }
                         }
                     }
                     .padding(.top, 18).padding(.bottom, 120)
@@ -1727,7 +1729,7 @@ private struct AlbumDetailView: View {
 
     private func play(_ ordered: [Track]) {
         player.queue = Array(ordered.dropFirst())
-        if let first = ordered.first { Task { await player.play(first) } }
+        if let first = ordered.first { onPlay?(first); Task { await player.play(first) } }
         CapyHaptics.impact(.medium)
     }
 }
