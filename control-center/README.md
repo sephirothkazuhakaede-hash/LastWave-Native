@@ -22,7 +22,7 @@ The Windows app includes the music/backend source, its dependencies, Cloudflared
 
 ## Security and compatibility
 
-Remote admin endpoints still require a verified Firebase token and the server UID allowlist. New sensitive modules additionally check disabled/revoked admin sessions through Firebase Admin. The existing service account is read only on the backend; it is not distributed in the executable. No new client permissions or Firestore rule grants are required: the existing default-deny rules protect the new admin collections, and the server SDK uses its existing IAM permissions.
+Remote admin endpoints still require a verified Firebase token and the server UID allowlist. New sensitive modules additionally check disabled/revoked admin sessions through Firebase Admin. The existing service-account credential stays on the backend; it is not distributed in the executable. Account administration needs Firebase Authentication Admin, and moderation/announcements/admin history need Cloud Datastore User on that backend account. No new client permissions or Firestore rule grants are required: the existing default-deny rules protect the new admin collections, and the server SDK uses its existing IAM permissions.
 
 New public content works through the interfaces already implemented in the clients. New mobile screens, dedicated announcement feeds, notification behavior, or additional update sources still require client changes. Admin controls cannot add native features to an already installed IPA/APK.
 
