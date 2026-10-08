@@ -66,6 +66,7 @@ app.whenReady().then(async () => {
     } catch { }
   }
   server = http.createServer(async (req, res) => {
+    const signInNonce = nonce;
     try {
       const expected = new URL(loginURL).host;
       if (req.headers.host !== expected) { res.writeHead(403); res.end(); return; }
@@ -78,7 +79,7 @@ app.whenReady().then(async () => {
         res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store' }); res.end(await fs.readFile(path.join(directory, 'dist/auth.js'))); return;
       }
       if (req.url !== '/session' || req.method !== 'POST' || !nonce || req.headers['x-control-nonce'] !== nonce || req.headers.origin !== new URL(loginURL).origin) {
-        res.writeHead(403); res.end(); return;
+        res.writeHead(403); res.end('This sign-in session has expired. Close this tab and connect again from Control Center.'); return;
       }
       let length = 0; const chunks = [];
       for await (const chunk of req) { length += chunk.length; if (length > 32768) throw new Error('Sign-in response too large.'); chunks.push(chunk); }
@@ -87,7 +88,14 @@ app.whenReady().then(async () => {
       idToken = result.idToken; refreshToken = result.refreshToken; expiresAt = Date.now() + 3_300_000;
       await request('status'); nonce = ''; res.writeHead(200); res.end('Connected');
       window?.webContents.send('connected');
-    } catch { clearSession(); res.writeHead(403); res.end('Could not connect this administrator.'); }
+    } catch (error) {
+      const retryNonce = nonce || signInNonce;
+      clearSession(); nonce = retryNonce;
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(/administrator|admin|sign-in expired|sign in first/iu.test(error.message)
+        ? error.message
+        : 'Could not reach the backend. Check Backend & status and the server address, then try again.');
+    }
   });
   server.requestTimeout = 20_000;
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

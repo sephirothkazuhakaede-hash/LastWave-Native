@@ -11,7 +11,7 @@ button.addEventListener('click', async () => {
     const result = await signInWithPopup(auth, new GoogleAuthProvider());
     const response = await fetch('/session', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Control-Nonce': nonce },
       body: JSON.stringify({ idToken: await result.user.getIdToken(), refreshToken: result.user.refreshToken }) });
-    if (!response.ok) throw new Error('This account could not connect. Check the server admin allowlist.');
+    if (!response.ok) throw new Error((await response.text()).trim() || 'Connection failed. Close this tab and connect again from Control Center.');
     await signOut(auth); status.textContent = 'Connected. Return to CapyFlow Control Center. You can close this tab.';
   } catch (error) { status.textContent = error.message; button.disabled = false; }
 });

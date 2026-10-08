@@ -1,6 +1,6 @@
 {
   "name": "capyflow-control-center",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Separate Windows administration app for CapyFlow",
   "type": "module",
